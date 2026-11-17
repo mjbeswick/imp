@@ -1,0 +1,1 @@
+/Users/michael/Projects/mote-impl/target/release/mote: /Users/michael/Projects/mote-impl/src/agent.rs /Users/michael/Projects/mote-impl/src/api.rs /Users/michael/Projects/mote-impl/src/config.rs /Users/michael/Projects/mote-impl/src/http.rs /Users/michael/Projects/mote-impl/src/main.rs /Users/michael/Projects/mote-impl/src/perm.rs /Users/michael/Projects/mote-impl/src/tools.rs

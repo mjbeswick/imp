@@ -2,17 +2,17 @@
 
 ## 1. Skeleton and binary budget
 
-- [ ] 1.1 `cargo init --name mote`; add `serde_json` as the only crate; declare `extern "C"` bindings for libcurl and termios; set the release profile from design.md. Verify: `cargo build --release` succeeds and `ls -lh target/release/mote` is recorded.
-- [ ] 1.2 Hand-parse `~/.config/mote/config` as `key=value` with env overrides for key, model, base URL, permissions, no-colour. Verify: unit tests for comments, blank lines, unknown keys, and env precedence.
-- [ ] 1.3 Size check script failing over 1.5 MB. Verify: exits non-zero with the threshold lowered to 0.5 MB, and the real binary is under the limit.
+- [x] 1.1 `cargo init --name mote`; add `serde_json` as the only crate; declare `extern "C"` bindings for libcurl and termios; set the release profile from design.md. Verify: `cargo build --release` succeeds and `ls -lh target/release/mote` is recorded.
+- [x] 1.2 Hand-parse `~/.config/mote/config` as `key=value` with env overrides for key, model, base URL, permissions, no-colour. Verify: unit tests for comments, blank lines, unknown keys, and env precedence.
+- [x] 1.3 Size check script failing over 1.5 MB. Verify: exits non-zero with the threshold lowered to 0.5 MB, and the real binary is under the limit.
 
 ## 2. HTTP and API client
 
 - [ ] 2.0 libcurl FFI: init, URL, headers, POST body, write callback, timeout, cleanup, error string. Verify: a request to a local test server streams chunks to the callback and reports a non-200 status correctly.
 - [ ] 2.1 Build request bodies with serde_json: model, messages, tools, `thinking`, `reasoning_effort`, `max_tokens`. Verify: snapshot of the exact JSON for a two-message history.
-- [ ] 2.2 Parse SSE from the write callback, buffering by line: `data:` chunks, `[DONE]`, keep-alive comments. Verify: fixture test yields expected text and final usage.
-- [ ] 2.3 Assemble tool-call deltas by `index`, id and name from the first fragment, empty names ignored. Verify: fixtures for split arguments, interleaved calls, and a late fragment with an empty name.
-- [ ] 2.4 Map errors and finish reasons to retryable and terminal outcomes. Verify: table test over 400/401/429/500, `aborted`, `insufficient_system_resource`, `length`, `content_filter`.
+- [x] 2.2 Parse SSE from the write callback, buffering by line: `data:` chunks, `[DONE]`, keep-alive comments. Verify: fixture test yields expected text and final usage.
+- [x] 2.3 Assemble tool-call deltas by `index`, id and name from the first fragment, empty names ignored. Verify: fixtures for split arguments, interleaved calls, and a late fragment with an empty name.
+- [x] 2.4 Map errors and finish reasons to retryable and terminal outcomes. Verify: table test over 400/401/429/500, `aborted`, `insufficient_system_resource`, `length`, `content_filter`.
 - [ ] 2.5 Search and Fetch client for `/v1/tools/search` and `/v1/tools/fetch` with the same auth and retry rules. Verify: fixture tests for a five-result response, an empty result list, 404, and 429.
 
 ## 3. Agent loop
@@ -24,12 +24,12 @@
 
 ## 4. Tools
 
-- [ ] 4.1 `bash`: `sh -c`, null stdin, 30 s timeout, process group, exit code, cancel via SIGTERM then SIGKILL. Verify: tests for timeout, a command reading stdin, and cancel.
-- [ ] 4.2 Spill: inline cap 4 KB, larger output to the session output directory, result carries head, tail, path, size. Verify: a 1 MB write produces a 4 KB result plus a readable spill file.
-- [ ] 4.3 `read` with `paths[]`, line numbers, 2,000-line default per file, explicit errors for missing, directory, non-UTF-8. Verify: three files in one call; each error path covered.
-- [ ] 4.4 `write`: directory creation, 5 MB refusal, unread-overwrite refusal. Verify: unit tests for each refusal and the happy path.
-- [ ] 4.5 `edit` with `edits[]` applied atomically, exact-single-match, unchanged-replacement rejection, failure naming the offending pair and its match count. Verify: five hunks succeed; a bad fourth hunk leaves the file unchanged.
-- [ ] 4.6 Path jail: canonicalize, resolve symlinks, reject `..` and outside-root paths. Verify: `../../etc/passwd`, an escaping symlink, and an allowed in-tree symlink.
+- [x] 4.1 `bash`: `sh -c`, null stdin, 30 s timeout, process group, exit code, cancel via SIGTERM then SIGKILL. Verify: tests for timeout, a command reading stdin, and cancel.
+- [x] 4.2 Spill: inline cap 4 KB, larger output to the session output directory, result carries head, tail, path, size. Verify: a 1 MB write produces a 4 KB result plus a readable spill file.
+- [x] 4.3 `read` with `paths[]`, line numbers, 2,000-line default per file, explicit errors for missing, directory, non-UTF-8. Verify: three files in one call; each error path covered.
+- [x] 4.4 `write`: directory creation, 5 MB refusal, unread-overwrite refusal. Verify: unit tests for each refusal and the happy path.
+- [x] 4.5 `edit` with `edits[]` applied atomically, exact-single-match, unchanged-replacement rejection, failure naming the offending pair and its match count. Verify: five hunks succeed; a bad fourth hunk leaves the file unchanged.
+- [x] 4.6 Path jail: canonicalize, resolve symlinks, reject `..` and outside-root paths. Verify: `../../etc/passwd`, an escaping symlink, and an allowed in-tree symlink.
 - [ ] 4.7 Permission classification: three modes, safe list, deny list, prompt on mutation outside the session directory, refusal returned as a tool result. Verify: `ls` runs unprompted, `npm install` prompts, `sudo` is refused without a prompt, and each mode is asserted.
 - [ ] 4.8 `search` and `fetch` tool wiring: five summaries, no page bodies, `fetch` capped and spilled, errors carrying the API reason. Verify: fixture tests for both operations.
 - [ ] 4.9 `ask` tool: question plus optional choices, blocking on the answer channel, choice and free-text results, dismissal result, more than six choices rejected. Verify: tests for each result shape and for the option cap.
