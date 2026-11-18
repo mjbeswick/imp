@@ -143,7 +143,7 @@ pub fn builtin_skills() -> Vec<(String, String, String)> {
 
 /// Global, project, then extra roots; project entries shadow global by name.
 pub fn agent_dirs(cfg: &Config, root: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![root.join(".mote").join("agents")];
+    let mut dirs = vec![root.join(".imp").join("agents")];
     if let Some(extra) = &cfg.skills_dir {
         dirs.push(extra.with_file_name("agents"));
     }
@@ -191,6 +191,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn project_dir_is_dot_imp() {
+        let root = Path::new("/tmp/project");
+        let cfg = Config::default();
+        assert!(agent_dirs(&cfg, root).contains(&root.join(".imp").join("agents")));
+    }
+
+    #[test]
+    fn dot_imp_marks_a_project() {
+        let d = tmp();
+        std::fs::create_dir_all(d.join(".imp")).unwrap();
+        assert!(is_project(&d));
     }
 
     #[test]
@@ -479,7 +493,7 @@ impl Memory {
     pub fn discover(cfg: &Config, root: &Path) -> Self {
         let mut dirs = Vec::new();
         if is_project(root) {
-            dirs.push(root.join(".mote").join("memory"));
+            dirs.push(root.join(".imp").join("memory"));
         }
         dirs.push(crate::config::dirs_state().join("imp").join("memory"));
         let _ = cfg;
@@ -578,7 +592,7 @@ pub fn format_session(meta: &Meta, now_secs: u64) -> String {
 }
 
 pub fn is_project(root: &Path) -> bool {
-    root.join(".git").exists() || root.join(".jj").exists() || root.join(".mote").exists()
+    root.join(".git").exists() || root.join(".jj").exists() || root.join(".imp").exists()
 }
 
 // ------------------------------------------------------------------ skills
@@ -604,7 +618,7 @@ pub fn load_skills(cfg: &Config, root: &Path) -> Vec<Skill> {
 
     let mut dirs = Vec::new();
     if is_project(root) {
-        dirs.push(root.join(".mote").join("skills"));
+        dirs.push(root.join(".imp").join("skills"));
     }
     if let Some(extra) = &cfg.skills_dir {
         dirs.push(extra.clone());
