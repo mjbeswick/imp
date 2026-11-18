@@ -7,15 +7,19 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard only
 
-The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a newline, Esc to cancel, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C twice to quit.
+The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a newline, Esc to cancel, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C to exit when idle or to cancel a running turn and then exit on the next press.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
 - **THEN** the text is sent and the input clears
 
 #### Scenario: Quit guard
-- **WHEN** the user presses Ctrl+C once
-- **THEN** the status line asks for a second press, and no second press within two seconds returns to normal
+- **WHEN** the session is idle and the user presses Ctrl+C
+- **THEN** the app exits on that press
+
+#### Scenario: Cancel then exit
+- **WHEN** a turn is running and the user presses Ctrl+C
+- **THEN** the turn is cancelled, the status row offers a second press to exit, and pressing Ctrl+C again exits even if the turn has not finished unwinding
 
 #### Scenario: Start a second line
 - **WHEN** the user types a line and presses Shift+Enter
@@ -307,7 +311,7 @@ The system SHALL show a menu of matching commands as soon as the input begins wi
 
 ### Requirement: The interface uses colour with meaning
 
-The system SHALL colour by role rather than by text, SHALL use at least six roles — user prompt, assistant text, thinking, tool line, error, accent — SHALL detect truecolor, 256-colour, and no-colour terminals, and SHALL honour `NO_COLOR` and a `color=auto|always|never` setting.
+The system SHALL colour by role rather than by text, SHALL use at least six roles — user prompt, assistant text, thinking, tool line, error, accent — SHALL paint inline code bold in the tool colour and keep fenced blocks and quotes dim, SHALL detect truecolor, 256-colour, and no-colour terminals, and SHALL honour `NO_COLOR` and a `color=auto|always|never` setting.
 
 #### Scenario: Truecolor terminal
 - **WHEN** `COLORTERM` advertises truecolor
@@ -325,9 +329,17 @@ The system SHALL colour by role rather than by text, SHALL use at least six role
 - **WHEN** a tool exits non-zero or a request fails
 - **THEN** that line renders in the error role and remains readable without colour
 
+#### Scenario: Inline code is not dim
+- **WHEN** a reply contains `` `bash` `` inside a sentence
+- **THEN** that span is bold in the tool colour, not the thinking grey
+
+#### Scenario: Fenced code stays dim
+- **WHEN** a reply contains a fenced block
+- **THEN** its lines are dim and not bold
+
 ### Requirement: Shell commands run from the input line
 
-The system SHALL run any input beginning with `!` as a local shell command instead of sending it to the model, SHALL show the command and its output in the transcript, and SHALL cap that output at 4 KB with the usual spill rule.
+The system SHALL run any input beginning with `!` as a local shell command instead of sending it to the model, SHALL show the command and its output in the transcript, SHALL show `$ ` as the prompt and a shell status while such a draft is open, and SHALL cap that output at 4 KB with the usual spill rule.
 
 #### Scenario: Run a command
 - **WHEN** the user types `!git status` and presses Enter
@@ -340,6 +352,14 @@ The system SHALL run any input beginning with `!` as a local shell command inste
 #### Scenario: Large output
 - **WHEN** the command writes 1 MB
 - **THEN** the transcript shows a short head and tail plus the spill path
+
+#### Scenario: Shell draft
+- **WHEN** the composer holds `!git status`
+- **THEN** the prompt reads `$ ` and the status row says the command is local
+
+#### Scenario: Back to the model
+- **WHEN** the draft no longer starts with `!`
+- **THEN** the prompt returns to `> ` and the status row reports model and cost
 
 ### Requirement: Typed commands bypass confirmation but not denial
 
