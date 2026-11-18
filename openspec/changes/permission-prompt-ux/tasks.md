@@ -8,3 +8,4 @@
 - [x] 1.7 Stop the worker before it can send another request after a timeout. Verify: an end-to-end run shows the stop line, no stale prompt, and no further model output.
 - [x] 1.5 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
 - [x] 1.8 Keep the deny list and the sudo gate in `yolo`. Verify: tests deny every listed command in `yolo`, allow `ls` and `npm install`, and refuse `sudo` without `allow_sudo` while still asking with it.
+- [x] 1.9 Keep `y/N` and the countdown visible on a long command. Verify: a frame test finds the hint on an 80-column row and the row is no wider than the terminal.

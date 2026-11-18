@@ -1362,7 +1362,9 @@ impl App {
                     format!("{title}: {}", shown.join("  "))
                 }
                 Pending::Confirm { what, .. } => {
-                    format!("{what}? y/N  ({}s)", self.seconds_left())
+                    let suffix = format!("? y/N  ({}s)", self.seconds_left());
+                    let room = cols.saturating_sub(suffix.chars().count()).max(12);
+                    format!("{} {}", middle(what, room), suffix)
                 }
                 Pending::ConfirmDelete { id } => format!("delete {id}? y/N"),
                 Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
@@ -1522,6 +1524,23 @@ fn tail(text: &str, width: usize) -> String {
     }
     let keep: String = text.chars().skip(count - (width - 1)).collect();
     format!("…{keep}")
+}
+
+/// Keep both ends of a row, so a command still shows what it starts and ends with.
+fn middle(text: &str, width: usize) -> String {
+    let count = text.chars().count();
+    if count <= width {
+        return text.to_string();
+    }
+    if width < 3 {
+        return tail(text, width);
+    }
+    let room = width - 1;
+    let head = (room * 3) / 5;
+    let kept_tail = room - head;
+    let start: String = text.chars().take(head).collect();
+    let end: String = text.chars().skip(count - kept_tail).collect();
+    format!("{start}…{end}")
 }
 
 fn previous_boundary(s: &str, mut i: usize) -> usize {
@@ -1899,6 +1918,24 @@ mod tests {
         assert_eq!(a.input, "aa\nbbb", "Up left the composer");
         assert_eq!(a.cursor, 2, "Up did not land on the row above");
         assert!(a.hist_pos.is_none(), "Up recalled history from the last row");
+    }
+
+    #[test]
+    fn a_long_prompt_keeps_its_answer_hint() {
+        let mut a = app();
+        let long = format!("run `{}`", "cat openspec/changes/thing.md; ".repeat(8));
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm { what: long, reply });
+        let out = a.frame(80, 12);
+        let row = out
+            .lines()
+            .find(|l| l.contains("y/N"))
+            .unwrap_or_else(|| panic!("no answer hint in {out:?}"));
+        assert!(row.contains('s'), "no seconds left: {row:?}");
+        assert!(
+            strip(row).chars().count() <= 80,
+            "the prompt row is wider than the terminal"
+        );
     }
 
     #[test]
