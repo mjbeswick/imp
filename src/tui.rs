@@ -876,6 +876,22 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
+        // Ctrl+C leaves the session from any prompt except a command confirmation,
+        // which keeps refusing and stopping the turn.
+        if matches!(key, Key::Ctrl('c'))
+            && matches!(
+                self.pending,
+                Some(
+                    Pending::Choose { .. }
+                        | Pending::Question { .. }
+                        | Pending::Prompt { .. }
+                        | Pending::ConfirmDelete { .. }
+                )
+            )
+        {
+            self.quit = true;
+            return;
+        }
         if let Some(pending) = self.pending.take() {
             self.answer(pending, key, tx);
             if self.pending.is_none() {
@@ -2673,6 +2689,52 @@ mod tests {
             reply,
         });
         assert!(a.frame(80, 12).contains("approve? y/N"));
+    }
+
+    #[test]
+    fn ctrl_c_exits_from_a_picker() {
+        let mut a = app();
+        a.pending = Some(Pending::Choose {
+            title: "session".into(),
+            options: vec!["one".into()],
+            index: 0,
+            action: ChooseKind::Session,
+        });
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.quit, "Ctrl+C did not exit from a picker");
+    }
+
+    #[test]
+    fn ctrl_c_exits_from_a_question() {
+        let mut a = app();
+        let (reply, _rx) = channel();
+        a.pending = Some(Pending::Question {
+            q: "which?".into(),
+            opts: vec!["a".into(), "b".into()],
+            reply,
+            mode: AskMode::Choose,
+            typed: String::new(),
+        });
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.quit, "Ctrl+C did not exit from a question");
+    }
+
+    #[test]
+    fn ctrl_c_still_refuses_a_confirmation() {
+        let mut a = app();
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm {
+            what: "run `ls`".into(),
+            reply,
+        });
+        a.status.streaming = true;
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(!a.quit, "Ctrl+C quit instead of refusing the command");
+        assert_eq!(rx.try_recv().ok(), Some(false));
+        assert!(a.pending.is_none());
     }
 
 }
