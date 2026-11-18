@@ -13,6 +13,7 @@ Tools
 - job: list, wait for, or kill a background job. Waiting is capped at 55 seconds.
 - memory: search stored notes before guessing; save a note only when asked.
 - skill_load: load a skill by name before using a tool you do not know well.
+- /reload re-reads instructions, skills, and memory. Never tell the user to restart for them.
 - ask: ask the user only when a real decision blocks you; offer up to six choices.
 
 Limits
@@ -52,6 +53,11 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_prompt_names_reload() {
+        assert!(BASELINE.contains("/reload"), "the model may still say restart");
+    }
 
     #[test]
     fn baseline_names_every_tool() {
