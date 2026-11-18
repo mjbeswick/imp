@@ -1276,7 +1276,7 @@ fn save_history(history: &[String]) {
 pub fn run(session: Session, cfg: Config) -> Result<(), String> {
     install_guards();
     let _raw = RawMode::enter();
-    if std::env::var_os("MOTE_FORCE_PANIC").is_some() {
+    if std::env::var_os("IMP_FORCE_PANIC").is_some() {
         panic!("forced panic for the terminal-guard test");
     }
     let mut app = App::new(cfg);

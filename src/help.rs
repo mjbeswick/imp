@@ -116,9 +116,9 @@ pub fn usage(width: usize) -> String {
         "ENVIRONMENT",
         &[
             ("DEEPSEEK_API_KEY", "required"),
-            ("MOTE_MODEL", "overrides the model"),
-            ("MOTE_PERMISSIONS", "overrides the permission mode"),
-            ("MOTE_COMPACT_AT", "token budget for compaction"),
+            ("IMP_MODEL", "overrides the model"),
+            ("IMP_PERMISSIONS", "overrides the permission mode"),
+            ("IMP_COMPACT_AT", "token budget for compaction"),
             ("NO_COLOR", "disable colour"),
         ],
         width,

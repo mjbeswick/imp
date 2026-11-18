@@ -132,31 +132,31 @@ impl Config {
         if let Some(v) = set("DEEPSEEK_API_KEY") {
             self.api_key = v;
         }
-        if let Some(v) = set("MOTE_MODEL") {
+        if let Some(v) = set("IMP_MODEL") {
             self.model = v;
         }
-        if let Some(v) = set("MOTE_BASE_URL") {
+        if let Some(v) = set("IMP_BASE_URL") {
             self.base_url = v.trim_end_matches('/').to_string();
         }
-        if let Some(v) = set("MOTE_PERMISSIONS") {
+        if let Some(v) = set("IMP_PERMISSIONS") {
             self.permissions = Permissions::parse(&v)?;
         }
-        if let Some(v) = set("MOTE_ALLOW_SUDO") {
+        if let Some(v) = set("IMP_ALLOW_SUDO") {
             self.allow_sudo = parse_bool(&v)?;
         }
-        if let Some(v) = set("MOTE_PRUNE_AT") {
-            self.prune_at = parse_u32("MOTE_PRUNE_AT", &v)?;
+        if let Some(v) = set("IMP_PRUNE_AT") {
+            self.prune_at = parse_u32("IMP_PRUNE_AT", &v)?;
         }
-        if let Some(v) = set("MOTE_COMPACT_AT") {
-            self.compact_at = parse_u32("MOTE_COMPACT_AT", &v)?;
+        if let Some(v) = set("IMP_COMPACT_AT") {
+            self.compact_at = parse_u32("IMP_COMPACT_AT", &v)?;
         }
-        if let Some(v) = set("MOTE_MAX_TOKENS") {
-            self.max_tokens = parse_u32("MOTE_MAX_TOKENS", &v)?;
+        if let Some(v) = set("IMP_MAX_TOKENS") {
+            self.max_tokens = parse_u32("IMP_MAX_TOKENS", &v)?;
         }
-        if let Some(v) = set("MOTE_SKILLS_DIR") {
+        if let Some(v) = set("IMP_SKILLS_DIR") {
             self.skills_dir = Some(PathBuf::from(v));
         }
-        if let Some(v) = set("MOTE_COLOR") {
+        if let Some(v) = set("IMP_COLOR") {
             self.color = ColorMode::parse(&v)?;
         }
         if set("NO_COLOR").is_some() {
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn env_overrides_file() {
         let mut cfg = Config::from_str("model=from-file\n").unwrap();
-        cfg.apply_env(env(&[("MOTE_MODEL", "from-env")])).unwrap();
+        cfg.apply_env(env(&[("IMP_MODEL", "from-env")])).unwrap();
         assert_eq!(cfg.model, "from-env");
     }
 
