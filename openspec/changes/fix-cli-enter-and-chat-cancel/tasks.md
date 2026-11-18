@@ -6,4 +6,5 @@
 - [x] 1.4 Set and restore raw mode with termios on normal exit, panic, SIGINT, and SIGTERM. Verify: the pty test passes and `cargo test` passes.
 - [x] 1.5 Add a test that Esc asks a running turn to stop. Verify: the test fails, Esc only queues a command.
 - [x] 1.6 Write the session cancel flag from Esc and Ctrl+C while streaming. Verify: the test passes and a manual turn stops on Esc.
-- [ ] 1.7 Validate the change and size budget. Verify: `openspec validate --all --strict` and `./scripts/size.sh` pass.
+- [x] 1.7 Line mode turns the CR-to-NL mapping on for its own terminal and restores it. Verify: a pty check with the mapping cleared submits `/quit` on a bare carriage return, and the mode matches afterwards.
+- [x] 1.8 Validate the change and size budget. Verify: `openspec validate --all --strict` and `./scripts/size.sh` pass.

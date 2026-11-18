@@ -242,6 +242,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
     let tty = unsafe { isatty(0) } != 0;
+    let _line_mode = if tty { Some(tui::LineMode::enter()) } else { None };
     loop {
         if tty {
             print!("> ");

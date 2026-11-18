@@ -204,6 +204,52 @@ impl Drop for RawMode {
     }
 }
 
+/// Keep Enter readable in line mode.
+///
+/// Canonical mode holds input until it sees a line delimiter, so a terminal
+/// with its CR-to-NL mapping off never delivers a typed Enter. Turn the
+/// mapping on for the session and put the original mode back on exit.
+pub struct LineMode {
+    saved: Option<Termios>,
+}
+
+const ICRNL: u64 = 0x100;
+const IGNCR: u64 = 0x80;
+
+impl LineMode {
+    pub fn enter() -> Self {
+        let mut saved = Termios {
+            iflag: 0,
+            oflag: 0,
+            cflag: 0,
+            lflag: 0,
+            cc: [0; NUM_CC],
+            ispeed: 0,
+            ospeed: 0,
+        };
+        if unsafe { tcgetattr(0, &mut saved) } != 0 {
+            return Self { saved: None };
+        }
+        let mut tuned = saved;
+        tuned.iflag |= ICRNL;
+        tuned.iflag &= !IGNCR;
+        unsafe {
+            tcsetattr(0, TCSANOW, &tuned);
+        }
+        Self { saved: Some(saved) }
+    }
+}
+
+impl Drop for LineMode {
+    fn drop(&mut self) {
+        if let Some(saved) = self.saved {
+            unsafe {
+                tcsetattr(0, TCSANOW, &saved);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     User,

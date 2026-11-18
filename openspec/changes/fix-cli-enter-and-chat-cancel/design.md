@@ -23,10 +23,16 @@ The escape sequences stay as they are. Only the terminal-mode half moves off
 `stdin.read_line` waits for `\n`. Enter may arrive as `\r` when the CR-to-NL
 mapping is off, which is exactly the state a previous imp run can leave behind.
 
-Read line-mode entries by byte instead. An entry ends on either `\r` or `\n`,
-and `\r\n` counts as one ending. End of file with no bytes returns `None`, so
-the caller can exit. The reader stays generic over `BufRead`, so tests drive it
-with a cursor and no terminal.
+Reading bytes alone does not fix this: in canonical mode the line discipline
+holds the input until it sees a line delimiter, so a bare `\r` is never handed
+over. Measured on a pty with the mapping cleared, a byte reader blocks exactly
+as `read_line` does.
+
+So line mode repairs what it reads from. For the duration of the session it
+turns the CR-to-NL mapping on for its own terminal and restores the original
+mode on exit. `read_entry` still ends on either `\r` or `\n`, which keeps the
+prompt working if a terminal delivers a carriage return anyway. The reader
+stays generic over `BufRead`, so tests drive it with a cursor and no terminal.
 
 ## Esc writes the session flag, not the queue
 
