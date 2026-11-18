@@ -23,7 +23,7 @@ The system SHALL write exactly one agent example and one skill example, SHALL wr
 
 #### Scenario: Template contents
 - **WHEN** the config template is created
-- **THEN** every meaningful key is present and commented, and `api_key` is absent
+- **THEN** every meaningful key is present and commented, including `links`, and `api_key` is absent
 
 #### Scenario: Examples are real
 - **WHEN** the two example files are read
