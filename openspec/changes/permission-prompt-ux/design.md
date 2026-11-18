@@ -14,9 +14,10 @@
 
 ## Decisions
 
-- The wait lives in `WorkerHooks::confirm`. On timeout it sends a stop event
-  with the reason and returns false, so the tool result says the command did not
-  run and the worker loop ends the turn at its next check.
+- The wait lives in `WorkerHooks::confirm`. On timeout it sets the shared cancel
+  flag, sends a stop event with the reason, and returns false. Setting the flag
+  before returning matters: the worker otherwise reaches its next request before
+  the UI thread processes the event, and the turn runs on.
 - Refusal by key keeps the turn running. Only an unanswered prompt stops it,
   because the user may have answered from another window or stepped away.
 - The countdown is drawn from `pending_since`, so no timer thread is needed and
