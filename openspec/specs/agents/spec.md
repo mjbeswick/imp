@@ -7,10 +7,10 @@ Defines agents as named profiles — instructions, tool subset, model, thinking 
 
 ### Requirement: An agent is a markdown file
 
-The system SHALL load agents from `agents/<name>.md` under the global config directory, the project's `.mote/` directory, and any extra directory passed at launch, with the file's first heading or filename as its name, its body as instructions, and optional frontmatter keys `tools`, `model`, and `thinking`.
+The system SHALL load agents from `agents/<name>.md` under the global config directory, the project's `.imp/` directory, and any extra directory passed at launch, with the file's first heading or filename as its name, its body as instructions, and optional frontmatter keys `tools`, `model`, and `thinking`.
 
 #### Scenario: Project agent
-- **WHEN** `.mote/agents/reviewer.md` exists
+- **WHEN** `.imp/agents/reviewer.md` exists
 - **THEN** it appears in the agent list and its body joins the instructions
 
 #### Scenario: Restricted tools
@@ -26,7 +26,7 @@ The system SHALL load agents from `agents/<name>.md` under the global config dir
 The system SHALL accept `--agent <name>` at launch, SHALL provide an agent picker during a conversation, and SHALL keep the conversation history when the agent changes.
 
 #### Scenario: Launch with a profile
-- **WHEN** the user runs `mote --agent explore`
+- **WHEN** the user runs `imp --agent explore`
 - **THEN** the session starts with that profile's instructions and tools
 
 #### Scenario: Switch mid-conversation

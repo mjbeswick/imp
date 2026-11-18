@@ -78,7 +78,7 @@ The system SHALL render every tool call as a single dim line containing the tool
 The system SHALL offer a line mode and a full-screen chat mode, SHALL pick the full-screen mode when both stdin and stdout are terminals, SHALL pick the line mode otherwise, and SHALL allow either to be forced with `--cli` or `--chat`.
 
 #### Scenario: Interactive launch
-- **WHEN** the user runs `mote` in a terminal
+- **WHEN** the user runs `imp` in a terminal
 - **THEN** the full-screen chat opens
 
 #### Scenario: Scripted launch
@@ -190,7 +190,7 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reloa
 The system SHALL render `--help` with titled sections (usage, sessions, running, other, examples, environment, files), aligned columns, defaults in brackets, and descriptions wrapped to the terminal width, and SHALL render `/help` from the same command table in both front-ends.
 
 #### Scenario: Flag help
-- **WHEN** the user runs `mote --help` in an 80-column terminal
+- **WHEN** the user runs `imp --help` in an 80-column terminal
 - **THEN** no line exceeds 80 columns, every flag appears once, and defaults are shown
 
 #### Scenario: Same commands everywhere

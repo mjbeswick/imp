@@ -7,10 +7,10 @@ Creates the file layout on first use, with one real example of each thing a user
 
 ### Requirement: One command creates the layout
 
-The system SHALL provide `mote init`, which creates the config directory, the state directories, and both parent directories for skills, agents, memory, sessions, and spilled output, and prints each path with `created` or `kept`.
+The system SHALL provide `imp init`, which creates the config directory, the state directories, and both parent directories for skills, agents, memory, sessions, and spilled output, and prints each path with `created` or `kept`.
 
 #### Scenario: Fresh machine
-- **WHEN** the user runs `mote init` with no config present
+- **WHEN** the user runs `imp init` with no config present
 - **THEN** the directories and two example files are created and each is reported
 
 #### Scenario: Second run
@@ -34,7 +34,7 @@ The system SHALL write exactly one agent example and one skill example, SHALL wr
 The system SHALL make no network request, SHALL prompt for nothing, SHALL complete in under a second, and SHALL print the next step as a single line.
 
 #### Scenario: Runs in a pipeline
-- **WHEN** `mote init` is run with no terminal attached
+- **WHEN** `imp init` is run with no terminal attached
 - **THEN** it completes successfully and prints plain lines with no escape sequences
 
 #### Scenario: No key needed

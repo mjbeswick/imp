@@ -46,7 +46,7 @@ The system SHALL title a new session from its first user message, truncated to a
 The system SHALL start a new session by default, continue the most recent with `-c`, resume a named one with `-r <id>`, and open a picker in the interface that lists sessions newest first and starts a new one on request.
 
 #### Scenario: Continue
-- **WHEN** the user runs `mote -c`
+- **WHEN** the user runs `imp -c`
 - **THEN** the newest session is loaded and the input is ready
 
 #### Scenario: Picker
@@ -62,15 +62,15 @@ The system SHALL start a new session by default, continue the most recent with `
 The system SHALL provide `-l`/`--list` to print sessions newest first with id, title, age, and message count, and exit without starting the interface, and SHALL accept `--rename <id> <title>` and `--delete <id>` for scripted use.
 
 #### Scenario: List and exit
-- **WHEN** the user runs `mote --list`
+- **WHEN** the user runs `imp --list`
 - **THEN** a table of sessions prints and the process exits without opening the interface
 
 #### Scenario: Scripted rename
-- **WHEN** the user runs `mote --rename 20261117-1042 "flaky rsync"`
+- **WHEN** the user runs `imp --rename 20261117-1042 "flaky rsync"`
 - **THEN** the sidecar title changes and the transcript is untouched
 
 #### Scenario: Scripted delete
-- **WHEN** the user runs `mote --delete 20261117-1042`
+- **WHEN** the user runs `imp --delete 20261117-1042`
 - **THEN** the session moves to trash after confirmation
 
 ### Requirement: The picker manages sessions in place

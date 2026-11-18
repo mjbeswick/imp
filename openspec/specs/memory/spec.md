@@ -19,11 +19,11 @@ The system SHALL store each note as a single `.md` file whose name is a slug of 
 
 ### Requirement: Notes live in two directories
 
-The system SHALL read notes from a global directory and, when the session directory contains `.git`, `.jj`, or `.mote`, from the project's `.mote/memory/` directory, and SHALL treat project notes and global notes as one set for search.
+The system SHALL read notes from a global directory and, when the session directory contains `.git`, `.jj`, or `.imp`, from the project's `.imp/memory/` directory, and SHALL treat project notes and global notes as one set for search.
 
 #### Scenario: Project note
 - **WHEN** the session is inside a jj repository
-- **THEN** notes saved there land in `.mote/memory/` and are found by search
+- **THEN** notes saved there land in `.imp/memory/` and are found by search
 
 #### Scenario: Global note
 - **WHEN** the session is outside any repository
@@ -82,7 +82,7 @@ The system SHALL treat a write, edit, or delete of a memory file as an ordinary 
 - **THEN** the write prompts in `normal` mode because it is outside the session directory
 
 #### Scenario: Project note save
-- **WHEN** the model saves a note under the project's `.mote/memory/`
+- **WHEN** the model saves a note under the project's `.imp/memory/`
 - **THEN** the write follows the same rule as any other write inside the session directory
 
 ### Requirement: Durable facts are captured at compaction

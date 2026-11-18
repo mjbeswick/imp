@@ -50,7 +50,7 @@ The system SHALL send a compiled baseline prompt on every request covering tool 
 - **THEN** the build fails a test that checks every tool name appears in the baseline
 
 #### Scenario: Inspectable
-- **WHEN** the user runs `mote prompt`
+- **WHEN** the user runs `imp prompt`
 - **THEN** the baseline prints, and nothing else is composed with it
 
 #### Scenario: Budget
@@ -71,10 +71,10 @@ The system SHALL load instructions once at session start and SHALL NOT re-read t
 
 ### Requirement: Skills and agents load from the same roots
 
-The system SHALL discover skills in `skills/<name>/SKILL.md` and agents in `agents/<name>.md` under the global config directory, the project's `.mote/` directory, and any extra directory passed at launch, with project entries shadowing global ones by name.
+The system SHALL discover skills in `skills/<name>/SKILL.md` and agents in `agents/<name>.md` under the global config directory, the project's `.imp/` directory, and any extra directory passed at launch, with project entries shadowing global ones by name.
 
 #### Scenario: Project agent
-- **WHEN** `.mote/agents/reviewer.md` exists
+- **WHEN** `.imp/agents/reviewer.md` exists
 - **THEN** the agent is available and its file path is shown in the interface
 
 #### Scenario: Shadowing
