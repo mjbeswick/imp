@@ -445,7 +445,11 @@ pub enum Cmd {
 pub enum Ev {
     Token(String),
     Think(String),
-    ToolStart { name: String, args: String },
+    ToolStart {
+        name: String,
+        summary: String,
+        args: String,
+    },
     ToolEnd { ok: bool, preview: String },
     Info(String),
     Error(String),
@@ -474,7 +478,11 @@ impl Hooks for WorkerHooks {
         let ev = match event {
             Ui::Content(t) => Ev::Token(t),
             Ui::Reasoning(t) => Ev::Think(t),
-            Ui::ToolStart { name, args } => Ev::ToolStart { name, args },
+            Ui::ToolStart { name, summary, args } => Ev::ToolStart {
+                name,
+                summary,
+                args,
+            },
             Ui::ToolEnd { ok, preview } => Ev::ToolEnd { ok, preview },
             Ui::Info(t) => Ev::Info(t),
             Ui::Error(t) => Ev::Error(t),
@@ -557,6 +565,22 @@ struct Entry {
     text: String,
 }
 
+/// The tool call on screen: one row, updated in place when it finishes.
+struct ToolRow {
+    index: usize,
+    summary: String,
+    args: String,
+    output: String,
+    ok: bool,
+    ms: u128,
+    expanded: bool,
+}
+
+fn tool_row_text(row: &ToolRow) -> String {
+    let mark = if row.ok { "✓" } else { "✗" };
+    format!("{mark} {} · {} ms", row.summary, row.ms)
+}
+
 pub struct App {
     cfg: Config,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -580,6 +604,7 @@ pub struct App {
     quit: bool,
     spinner: usize,
     tool_started: Option<Instant>,
+    tool: Option<ToolRow>,
 }
 
 enum Pending {
@@ -650,6 +675,7 @@ impl App {
             quit: false,
             spinner: 0,
             tool_started: None,
+            tool: None,
         }
     }
 
@@ -686,9 +712,19 @@ impl App {
                 }
                 self.push(Role::Thinking, t);
             }
-            Ev::ToolStart { name, args } => {
+            Ev::ToolStart { name, summary, args } => {
+                let _ = name;
                 self.tool_started = Some(Instant::now());
-                self.push(Role::Tool, format!("{name}  {args}"))
+                self.tool = Some(ToolRow {
+                    index: self.entries.len(),
+                    summary: summary.clone(),
+                    args,
+                    output: String::new(),
+                    ok: true,
+                    ms: 0,
+                    expanded: false,
+                });
+                self.push(Role::Tool, format!("⠹ {summary}"))
             }
             Ev::ToolEnd { ok, preview } => {
                 let ms = self
@@ -697,7 +733,23 @@ impl App {
                     .map(|t| t.elapsed().as_millis())
                     .unwrap_or(0);
                 let role = if ok { Role::Tool } else { Role::Error };
-                self.push(role, format!("  {} {preview}  · {ms} ms", if ok { "✓" } else { "✗" }))
+                match self.tool.take() {
+                    Some(mut row) => {
+                        row.ok = ok;
+                        row.ms = ms;
+                        row.output = preview;
+                        let text = tool_row_text(&row);
+                        if let Some(entry) = self.entries.get_mut(row.index) {
+                            entry.role = role;
+                            entry.text = text;
+                        }
+                        self.tool = Some(row);
+                    }
+                    None => self.push(
+                        role,
+                        format!("  {} {preview}  · {ms} ms", if ok { "✓" } else { "✗" }),
+                    ),
+                }
             }
             Ev::Info(t) => self.push(Role::Info, t),
             Ev::Error(t) => self.push(Role::Error, t),
@@ -2202,14 +2254,20 @@ mod tests {
         let mut a = app();
         a.apply(Ev::ToolStart {
             name: "bash".into(),
-            args: "false".into(),
+            summary: "run `false`".into(),
+            args: "{\"command\":\"false\"}".into(),
         });
+        assert_eq!(a.entries.len(), 1, "a call should start as one row");
+        assert!(a.entries[0].text.contains("⠹"), "no spinner while running");
         a.apply(Ev::ToolEnd {
             ok: false,
             preview: "exit 1".into(),
         });
-        assert_eq!(a.entries.last().unwrap().role, Role::Error);
-        assert!(a.entries.last().unwrap().text.contains("ms"));
+        assert_eq!(a.entries.len(), 1, "the finish added a second row");
+        assert_eq!(a.entries[0].role, Role::Error);
+        assert!(a.entries[0].text.contains("✗"), "{}", a.entries[0].text);
+        assert!(a.entries[0].text.contains("run `false`"));
+        assert!(a.entries[0].text.contains("ms"));
     }
 
     fn picker() -> App {

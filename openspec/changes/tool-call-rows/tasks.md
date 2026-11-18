@@ -1,7 +1,7 @@
 # Tasks
 
 - [x] 1.1 Summarise a call by tool from its parsed arguments. Verify: tests cover `bash`, `write`, `edit`, `read`, `search`, `memory`, `ask`, and `skill_load` shapes.
-- [ ] 1.2 Draw one row per call and update it in place on finish. Verify: a frame test after start and finish shows one row per call with `✓` and the duration.
+- [x] 1.2 Draw one row per call and update it in place on finish. Verify: a frame test after start and finish shows one row per call with `✓` and the duration.
 - [ ] 1.3 Time only the tool, not the confirmation wait. Verify: a test with a slow confirmation reports milliseconds for a fast command.
 - [ ] 1.4 Report the tool's own success flag. Verify: a refused write renders as an error with its reason.
 - [ ] 1.5 Add Ctrl+O to expand the last call. Verify: a key test pushes the full arguments and output, and a second press collapses it.

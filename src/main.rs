@@ -364,8 +364,9 @@ fn print_ui(event: Ui) {
             // Reasoning is collapsed unless asked for; a single marker is enough.
             let _ = t;
         }
-        Ui::ToolStart { name, args } => {
-            println!("\n\u{25b8} {name}  {args}");
+        Ui::ToolStart { name, summary, .. } => {
+            println!("\n\u{25b8} {summary}");
+            let _ = name;
         }
         Ui::ToolEnd { ok, preview, .. } => {
             let mark = if ok { "" } else { "!" };

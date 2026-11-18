@@ -25,7 +25,7 @@ pub trait Hooks {
 pub enum Ui {
     Content(String),
     Reasoning(String),
-    ToolStart { name: String, args: String },
+    ToolStart { name: String, summary: String, args: String },
     ToolEnd { ok: bool, preview: String },
     Info(String),
     Error(String),
@@ -506,7 +506,8 @@ impl Session {
         };
         hooks.ui(Ui::ToolStart {
             name: call.name.clone(),
-            args: describe(&call.name, &args),
+            summary: describe(&call.name, &args),
+            args: call.arguments.clone(),
         });
 
         let out = self.run_tool(&call.name, &args, hooks);
