@@ -1446,9 +1446,9 @@ impl App {
             screen.push_str("\r\n");
         }
 
-        screen.push_str("\x1b[2K");
+        screen.push_str("\x1b[2K\x1b[J");
         screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
-        screen.push_str("\x1b[J\x1b[?7h");
+        screen.push_str("\x1b[?7h");
 
         screen
     }
@@ -2201,6 +2201,7 @@ mod tests {
     }
 
     #[test]
+    #[test]
     fn ctrl_o_expands_the_last_tool_call() {
         let mut a = app();
         a.apply(Ev::ToolStart {
@@ -2225,6 +2226,14 @@ mod tests {
     }
 
     #[test]
+    fn frame_clears_below_the_status_row_before_drawing_it() {
+        let a = app();
+        let out = a.frame(40, 10);
+        let row = &out[out.rfind("\x1b[2K").expect("status row")..];
+        let erase = row.find("\x1b[J").expect("nothing clears below the status");
+        let text = row.find('·').expect("no status text");
+        assert!(erase < text, "erase below runs after the status text: {row:?}");
+    }
     fn composer_draws_one_row_per_line() {
         let mut a = app();
         a.input = "line one\nline two".into();

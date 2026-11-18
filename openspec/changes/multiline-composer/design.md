@@ -32,3 +32,6 @@ decode as newlines, which covers terminals that ignore the request.
   leaking characters into the input.
 - The protocol release is idempotent and runs in the same restore path as raw
   mode, so panic and signal exits also undo it.
+- Erase below the status row happens before the status text, not after. With
+  wrapping disabled the cursor rests on the last cell of a full row, so an erase
+  there deletes that cell, which is the ellipsis on a truncated status.

@@ -6,3 +6,5 @@
 - [x] 1.4 Move Up and Down between composer rows before history. Verify: a key test moves within rows and only then recalls history.
 - [x] 1.5 Update the key list in `help.rs` and the `tui` spec delta. Verify: `/help` names Shift+Enter and `openspec validate --all --strict` passes.
 - [x] 1.6 Run the checks. Verify: `cargo test` and `./scripts/size.sh` pass.
+
+- [x] 2.1 Clear below the status row before drawing it, so a row that exactly fills the width keeps its last cell. Verify: a frame test asserts the erase-below comes before the status text, and a 40-column terminal shows the status ellipsis.
