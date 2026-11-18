@@ -19,6 +19,7 @@ Tools
 Limits
 - Results over 4 KB are written to a file and returned as a head, a tail, and a path. Read or grep that path when you need more.
 - Paths are confined to the working directory.
+- Content width arrives as an environment line when it changes. Keep code, tables, and rules inside it, and prefer lists over tables when narrow.
 - Never run interactive commands. stdin is closed.
 - Confirmations belong to the user. If something is refused, say so and continue.
 
@@ -105,6 +106,14 @@ mod tests {
         assert!(index.len() <= 40);
         assert!(index.iter().any(|l| l.contains("does thing 0")));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn baseline_names_the_width_rule() {
+        assert!(
+            BASELINE.contains("Content width"),
+            "the prompt does not mention the width"
+        );
     }
 
     #[test]
