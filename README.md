@@ -1,4 +1,4 @@
-# mote
+# imp
 
 A small terminal agent for DeepSeek. One binary, a chat interface, and a
 deliberately short list of tools.
@@ -8,19 +8,19 @@ deliberately short list of tools.
 ```
 
 Measured on an M1 MacBook Air, release profile `lto = "fat"`, `opt-level = "z"`,
-`panic = "abort"`, stripped. Cold start is the median of 30 runs of `mote
+`panic = "abort"`, stripped. Cold start is the median of 30 runs of `imp
 --version`; RSS is the full-screen interface idle for two seconds.
 
 ## Install
 
 ```sh
 cargo build --release
-install -m 755 target/release/mote ~/.local/bin/mote
-mote init
+install -m 755 target/release/imp ~/.local/bin/imp
+imp init
 export DEEPSEEK_API_KEY=...
 ```
 
-`mote init` creates `~/.config/mote/` and `~/.local/state/mote/`, writes a
+`imp init` creates `~/.config/imp/` and `~/.local/state/imp/`, writes a
 commented config and one example agent and skill, and overwrites nothing.
 
 Needs libcurl at runtime: present on macOS and on any Linux with curl installed.
@@ -28,11 +28,11 @@ Needs libcurl at runtime: present on macOS and on any Linux with curl installed.
 ## Use
 
 ```sh
-mote                                  # full-screen chat
-mote "why is the build failing?"      # one request, then exit
-mote -c                               # continue the last session
-mote -r 3k9a0aa                       # resume a specific session
-printf 'ls\n/quit\n' | mote           # scripted line mode
+imp                                  # full-screen chat
+imp "why is the build failing?"      # one request, then exit
+imp -c                               # continue the last session
+imp -r 3k9a0aa                       # resume a specific session
+printf 'ls\n/quit\n' | imp           # scripted line mode
 ```
 
 Both front-ends share the session, tools, and history. Line mode is chosen when
@@ -70,7 +70,7 @@ skills that teach `bash`.
 
 ## Configuration
 
-`~/.config/mote/config`, `key=value`; environment overrides everything.
+`~/.config/imp/config`, `key=value`; environment overrides everything.
 
 ```
 # model=deepseek-flash
@@ -102,10 +102,10 @@ These are guardrails, not a sandbox the agent cannot leave.
 ```
 AGENTS.md                     global, repository root, then session directory
 .claude/CLAUDE.md             fallback when AGENTS.md is absent
-~/.config/mote/skills/<n>/SKILL.md
-./.mote/skills/<n>/SKILL.md
-~/.config/mote/agents/<n>.md
-./.mote/agents/<n>.md
+~/.config/imp/skills/<n>/SKILL.md
+./.imp/skills/<n>/SKILL.md
+~/.config/imp/agents/<n>.md
+./.imp/agents/<n>.md
 ```
 
 Agent frontmatter: `description`, `tools`, `model`, `thinking`. Skills use
@@ -114,7 +114,7 @@ Agent frontmatter: `description`, `tools`, `model`, `thinking`. Skills use
 ## Sessions
 
 One JSONL transcript plus a small sidecar per session under
-`~/.local/state/mote/sessions/`. Resume restores reasoning, tool calls, tool
+`~/.local/state/imp/sessions/`. Resume restores reasoning, tool calls, tool
 results and the compaction summary, so the model continues with real context.
 `--list`, `--rename`, `--delete` work headlessly; delete moves to trash.
 

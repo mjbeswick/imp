@@ -1,26 +1,26 @@
 ---
 name: config
-description: Change mote's own configuration, skills, agents, or memory. Use when asked to add a skill, create an agent, remember a preference, or explain where config lives. Cannot edit the main config file.
+description: Change imp's own configuration, skills, agents, or memory. Use when asked to add a skill, create an agent, remember a preference, or explain where config lives. Cannot edit the main config file.
 ---
 
-# Configuring mote
+# Configuring imp
 
 ## Layout
 
 ```
-~/.config/mote/config          settings, key=value, key stays in the environment
-~/.config/mote/skills/<n>/SKILL.md   global skills
-~/.config/mote/agents/<n>.md         global agent profiles
-~/.local/state/mote/sessions/        one JSONL transcript per session
-~/.local/state/mote/memory/<n>.md    global notes
-~/.local/state/mote/out/             spilled tool output and fetched pages
+~/.config/imp/config          settings, key=value, key stays in the environment
+~/.config/imp/skills/<n>/SKILL.md   global skills
+~/.config/imp/agents/<n>.md         global agent profiles
+~/.local/state/imp/sessions/        one JSONL transcript per session
+~/.local/state/imp/memory/<n>.md    global notes
+~/.local/state/imp/out/             spilled tool output and fetched pages
 
-./.mote/skills/<n>/SKILL.md     project skills, shadow global ones by name
-./.mote/agents/<n>.md           project agents
-./.mote/memory/<n>.md           project notes
+./.imp/skills/<n>/SKILL.md     project skills, shadow global ones by name
+./.imp/agents/<n>.md           project agents
+./.imp/memory/<n>.md           project notes
 ```
 
-`mote init` creates the directories and one example of each file.
+`imp init` creates the directories and one example of each file.
 
 ## Skills
 
@@ -67,7 +67,7 @@ title as read back. No frontmatter. Search matches filename and body.
 
 ## Rules
 
-- Do not modify `~/.config/mote/config`. It is refused: permission changes and
+- Do not modify `~/.config/imp/config`. It is refused: permission changes and
   model settings belong to the user, not to you.
 - Ask before adding a skill or agent, and say what it will route on.
 - Changes are files; there is no daemon to restart. Instructions and skills are
