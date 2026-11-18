@@ -12,8 +12,8 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-const ALT_ON: &str = "\x1b[?1049h\x1b[?25l";
-const ALT_OFF: &str = "\x1b[?25h\x1b[?1049l";
+const ALT_ON: &str = "\x1b[?1049h\x1b[?25l\x1b[>1u";
+const ALT_OFF: &str = "\x1b[<u\x1b[?25h\x1b[?1049l";
 
 #[repr(C)]
 struct Winsize {
@@ -106,7 +106,7 @@ const OPOST: u64 = 0x1;
 const TCSANOW: c_int = 0;
 
 static SAVED: std::sync::Mutex<Option<Termios>> = std::sync::Mutex::new(None);
-const RESTORE: &str = "\x1b[?25h\x1b[?1049l";
+const RESTORE: &str = "\x1b[<u\x1b[?25h\x1b[?1049l";
 
 extern "C" {
     fn write(fd: std::ffi::c_int, buf: *const u8, len: usize) -> isize;

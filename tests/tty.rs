@@ -270,6 +270,37 @@ fn tui_restores_the_terminal_on_sigterm() {
     assert_restored(Stop::Terminate);
 }
 
+/// The TUI asks for disambiguated keys and gives the request back.
+#[test]
+fn tui_pushes_and_pops_the_keyboard_protocol() {
+    let (mut master, slave) = open_pty();
+
+    let dir = std::env::temp_dir().join(format!("imp-keys-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_imp"))
+        .env("DEEPSEEK_API_KEY", "test-key")
+        .env("XDG_CONFIG_HOME", dir.join("config"))
+        .env("XDG_STATE_HOME", dir.join("state"))
+        .stdin(Stdio::from(slave.try_clone().expect("clone slave")))
+        .stdout(Stdio::from(slave.try_clone().expect("clone slave")))
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn imp");
+
+    let pushed = read_until(&mut master, b"\x1b[>1u", Duration::from_secs(5));
+    master.write_all(b"\x04").expect("send quit");
+    master.flush().ok();
+    let popped = read_until(&mut master, b"\x1b[<u", Duration::from_secs(5));
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(pushed, "the TUI never asked for disambiguated keys");
+    assert!(popped, "the TUI never released the keyboard protocol");
+}
+
 fn read_until(master: &mut File, needle: &[u8], limit: Duration) -> bool {
     let fd = std::os::fd::AsRawFd::as_raw_fd(master);
     unsafe {
