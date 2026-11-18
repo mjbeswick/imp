@@ -327,20 +327,12 @@ pub fn decode(buf: &mut Vec<u8>) -> Vec<Key> {
     while !buf.is_empty() {
         let b = buf[0];
         if b == 0x1b {
-            if buf.len() >= 3 && buf[1] == b'[' {
-                let k = match buf[2] {
-                    b'A' => Key::Up,
-                    b'B' => Key::Down,
-                    b'C' => Key::Right,
-                    b'D' => Key::Left,
-                    b'H' => Key::Home,
-                    b'F' => Key::End,
-                    b'Z' => Key::BackTab,
-                    _ => Key::Unknown,
-                };
-                buf.drain(..3);
-                keys.push(k);
-                continue;
+            if buf.len() >= 2 && buf[1] == b'[' {
+                if let Some((len, key)) = control_sequence(buf) {
+                    buf.drain(..len);
+                    keys.push(key);
+                    continue;
+                }
             }
             if buf.len() >= 2 && buf[1] == b'\r' {
                 buf.drain(..2);
@@ -374,6 +366,54 @@ pub fn decode(buf: &mut Vec<u8>) -> Vec<Key> {
         });
     }
     keys
+}
+
+/// One complete `ESC [ ... <final>` sequence: its length and the key it means.
+///
+/// Scanning to the final byte keeps longer forms working, such as
+/// `CSI 1 ; 2 A` for a modified arrow, instead of leaking the parameters as
+/// typed characters.
+fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
+    let mut i = 2;
+    while i < buf.len() {
+        let b = buf[i];
+        if (0x40..=0x7e).contains(&b) {
+            let params = &buf[2..i];
+            let key = match b {
+                b'A' => Key::Up,
+                b'B' => Key::Down,
+                b'C' => Key::Right,
+                b'D' => Key::Left,
+                b'H' => Key::Home,
+                b'F' => Key::End,
+                b'Z' => Key::BackTab,
+                b'u' => disambiguated(params),
+                _ => Key::Unknown,
+            };
+            return Some((i + 1, key));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `CSI <codepoint> ; <modifier> u`, the disambiguated form of a key.
+///
+/// The modifier is one plus a bit set: 1 shift, 2 alt, 4 ctrl.
+fn disambiguated(params: &[u8]) -> Key {
+    let text = std::str::from_utf8(params).unwrap_or("");
+    let mut parts = text.split(';');
+    let code: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let modifiers: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
+    let shift = modifiers.saturating_sub(1) & 1 == 1;
+    match code {
+        13 if shift => Key::Newline,
+        13 => Key::Enter,
+        9 => Key::Tab,
+        27 => Key::Esc,
+        127 => Key::Backspace,
+        _ => Key::Unknown,
+    }
 }
 
 fn utf8_len(b: u8) -> usize {
@@ -1628,6 +1668,32 @@ mod tests {
     fn alt_enter_is_newline() {
         let mut buf = b"\x1b\r".to_vec();
         assert!(matches!(decode(&mut buf)[0], Key::Newline));
+    }
+
+    #[test]
+    fn shift_enter_is_newline() {
+        let mut buf = b"\x1b[13;2u".to_vec();
+        let keys = decode(&mut buf);
+        assert_eq!(keys.len(), 1);
+        assert!(matches!(keys[0], Key::Newline));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn disambiguated_enter_and_escape() {
+        let mut buf = b"\x1b[13u\x1b[27u".to_vec();
+        let keys = decode(&mut buf);
+        assert_eq!(keys.len(), 2);
+        assert!(matches!(keys[0], Key::Enter));
+        assert!(matches!(keys[1], Key::Esc));
+    }
+
+    #[test]
+    fn modified_arrow_takes_no_parameters_as_text() {
+        let mut buf = b"\x1b[1;2A".to_vec();
+        let keys = decode(&mut buf);
+        assert_eq!(keys.len(), 1);
+        assert!(matches!(keys[0], Key::Up));
     }
 
     #[test]
