@@ -1227,7 +1227,10 @@ impl App {
     pub fn frame(&self, cols: usize, rows: usize) -> String {
         let menu = if self.menu_open { self.menu_matches() } else { Vec::new() };
         let menu_rows = menu.len().min(6);
-        let body_rows = rows.saturating_sub(2 + menu_rows).max(1);
+        let composer = self.composer(cols, rows);
+        let body_rows = rows
+            .saturating_sub(1 + menu_rows + composer.len())
+            .max(1);
 
         let mut lines: Vec<(Role, String)> = Vec::new();
         for entry in &self.entries {
@@ -1262,9 +1265,11 @@ impl App {
             screen.push_str("\r\n");
         }
 
-        screen.push_str("\x1b[2K");
-        screen.push_str(&self.input_line(cols));
-        screen.push_str("\r\n");
+        for row in &composer {
+            screen.push_str("\x1b[2K");
+            screen.push_str(row);
+            screen.push_str("\r\n");
+        }
 
         for (i, (name, desc)) in menu.iter().take(6).enumerate() {
             let line = fit(&format!(" {name:<10} {desc}"), cols);
@@ -1285,7 +1290,8 @@ impl App {
         screen
     }
 
-    fn input_line(&self, cols: usize) -> String {
+    /// A single row for an open question or confirmation, if any.
+    fn pending_row(&self, cols: usize) -> Option<String> {
         if let Some(pending) = &self.pending {
             let text = match pending {
                 Pending::Choose { title, options, index, .. } => {
@@ -1314,19 +1320,56 @@ impl App {
                     text
                 }
             };
-            return self.palette.paint(Role::Info, &fit(&text, cols));
+            return Some(self.palette.paint(Role::Info, &fit(&text, cols)));
         }
+        None
+    }
 
-        let cursor = self.cursor.min(self.input.len());
-        let before = &self.input[..cursor];
-        let after = &self.input[cursor..];
-        let mut body = format!("{before}\x1b[7m \x1b[0m{after}");
-        // Keep the tail visible when the line is longer than the screen.
-        let visible: String = body.chars().rev().take(cols.saturating_sub(2)).collect::<Vec<_>>().into_iter().rev().collect();
-        if visible.len() < body.len() {
-            body = format!("…{}", visible.chars().skip(1).collect::<String>());
+    /// The input area: one painted row per newline in the input.
+    ///
+    /// The caret keeps its own row visible, and the area never takes more than
+    /// eight rows or half the screen.
+    fn composer(&self, cols: usize, rows: usize) -> Vec<String> {
+        if let Some(row) = self.pending_row(cols) {
+            return vec![row];
         }
-        self.palette.paint(Role::User, "> ") + &body
+        let budget = (rows / 2).clamp(1, 8);
+        let (caret_row, caret_col) = self.caret_position();
+        let mut plain = Vec::new();
+        for (i, text) in self.input.split('\n').enumerate() {
+            let mut body = text.to_string();
+            if i == caret_row {
+                body.insert(caret_col.min(body.len()), CARET);
+            }
+            let prefix = if i == 0 { "> " } else { "  " };
+            plain.push(format!("{prefix}{body}"));
+        }
+        let mut start = plain.len().saturating_sub(budget);
+        if caret_row < start {
+            start = caret_row;
+        }
+        let end = (start + budget).min(plain.len());
+        plain[start..end]
+            .iter()
+            .map(|row| self.paint_composer_row(row, cols))
+            .collect()
+    }
+
+    /// Paint one composer row, keeping the tail when it is wider than the screen.
+    fn paint_composer_row(&self, row: &str, cols: usize) -> String {
+        let prefix = row.get(..2).unwrap_or(row);
+        let body = row.get(2..).unwrap_or("");
+        let fitted = tail(body, cols.saturating_sub(2));
+        self.palette.paint(Role::User, prefix) + &fitted.replace(CARET, "\x1b[7m \x1b[0m")
+    }
+
+    /// Row and byte column of the caret within the input.
+    fn caret_position(&self) -> (usize, usize) {
+        let cursor = self.cursor.min(self.input.len());
+        let upto = &self.input[..cursor];
+        let row = upto.matches('\n').count();
+        let col = upto.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        (row, cursor - col)
     }
 
     fn status_line(&self, cols: usize) -> String {
@@ -1376,6 +1419,23 @@ fn fit(text: &str, cols: usize) -> String {
     let mut out: String = text.chars().take(cols.saturating_sub(1)).collect();
     out.push('…');
     out
+}
+
+/// Marks the caret cell before colour escapes are added, so truncating a row
+/// can never cut a control sequence in half.
+const CARET: char = '\u{0}';
+
+/// Keep the end of a row, dropping the left and marking the cut with an ellipsis.
+fn tail(text: &str, width: usize) -> String {
+    let count = text.chars().count();
+    if count <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let keep: String = text.chars().skip(count - (width - 1)).collect();
+    format!("…{keep}")
 }
 
 fn previous_boundary(s: &str, mut i: usize) -> usize {
@@ -1766,6 +1826,43 @@ mod tests {
         a.push(Role::Assistant, "hi");
         let out = a.frame(80, 10);
         assert!(!out.replace("\r\n", "").contains('\n'), "bare line feed in frame");
+    }
+
+    #[test]
+    fn composer_draws_one_row_per_line() {
+        let mut a = app();
+        a.input = "line one\nline two".into();
+        a.cursor = a.input.len();
+        let out = a.frame(60, 12);
+        assert!(out.contains("> line one\r\n"), "{out:?}");
+        assert!(out.contains("  line two"), "{out:?}");
+        assert!(!out.contains('\u{0}'), "caret marker leaked into the frame");
+    }
+
+    #[test]
+    fn composer_keeps_the_caret_row_visible() {
+        let mut a = app();
+        a.input = (1..=12)
+            .map(|i| format!("row {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        a.cursor = a.input.len();
+        let out = a.frame(60, 12);
+        assert!(out.contains("  row 12"), "last row missing: {out:?}");
+        assert!(!out.contains("row 1\r\n"), "composer ignored its row budget");
+    }
+
+    #[test]
+    fn composer_rows_fit_the_terminal() {
+        let mut a = app();
+        a.input = format!("{}\n{}", "x".repeat(90), "y".repeat(9));
+        a.cursor = a.input.len();
+        let out = a.frame(40, 10);
+        for line in out.lines() {
+            let visible = strip(line);
+            assert!(visible.chars().count() <= 40, "{visible:?}");
+        }
+        assert!(out.contains("…"), "a wide row is not marked as cut");
     }
 
     #[test]
