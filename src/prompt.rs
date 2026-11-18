@@ -9,7 +9,7 @@ Tools
 - read: read one or more files with line numbers. Use it instead of cat.
 - edit: replace exact strings, several per call, all or nothing. Use it instead of sed.
 - write: create or replace a file. Read a file before overwriting it.
-- search: a web search returns summaries; a fetch returns one page as markdown with its outline. Search first, fetch only what you need.
+- search: a web search returns summaries; a fetch returns one page as markdown. Fetch a URL with search; use bash curl only for a plain-text endpoint, an authenticated call, or a stream, and never scrape a feed with curl piped into grep or sed.
 - job: list, wait for, or kill a background job. Waiting is capped at 55 seconds.
 - memory: search stored notes before guessing; save a note only when asked.
 - skill_load: load a skill by name before using a tool you do not know well.
@@ -106,6 +106,12 @@ mod tests {
         assert!(index.len() <= 40);
         assert!(index.iter().any(|l| l.contains("does thing 0")));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn baseline_prefers_fetch_over_curl() {
+        assert!(BASELINE.contains("Fetch a URL with search"), "no fetch rule");
+        assert!(BASELINE.contains("curl"), "no curl limit");
     }
 
     #[test]
