@@ -198,12 +198,11 @@ impl Session {
                 if !self.agent.allows(name) {
                     return false;
                 }
-                // 8. Feature tools only when the feature exists.
-                match name {
-                    "memory" => self.memory.dirs.iter().any(|d| d.exists()),
-                    "skill_load" => self.skills.iter().any(|s| s.path.is_some()),
-                    _ => true,
-                }
+                include_tool(
+                    name,
+                    self.memory.dirs.iter().any(|d| d.exists()),
+                    self.skills.iter().any(|s| s.path.is_some()),
+                )
             })
             .collect()
     }
@@ -268,11 +267,7 @@ impl Session {
                 }
             }
 
-            let lower = raw_error.to_ascii_lowercase();
-            if status == 400
-                && (lower.contains("context_length") || lower.contains("maximum context"))
-                && attempt == 1
-            {
+            if is_context_overflow(status, &raw_error) && attempt == 1 {
                 let freed = self.emergency_truncate();
                 hooks.ui(Ui::Info(format!(
                     "context full; dropped {freed} old tool results and retrying once"
@@ -389,12 +384,7 @@ impl Session {
             Message::user(prompt),
         ])?;
 
-        let mut facts: Vec<String> = summary
-            .lines()
-            .filter_map(|l| l.trim().strip_prefix("MEMORY:").map(|s| s.trim().to_string()))
-            .filter(|s| s.len() > 8)
-            .take(3)
-            .collect();
+        let mut facts = facts_from_summary(&summary);
         for fact in facts.drain(..) {
             let title: String = fact.chars().take(48).collect();
             if hooks.confirm(&format!("save note `{title}`")) {
@@ -807,6 +797,34 @@ impl Session {
 
 }
 
+/// A 400 that means the request was too long, not that it was malformed.
+pub fn is_context_overflow(status: u16, body: &str) -> bool {
+    if status != 400 {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("context_length") || lower.contains("maximum context")
+}
+
+/// Durable facts the summariser was asked to emit.
+pub fn facts_from_summary(summary: &str) -> Vec<String> {
+    summary
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("MEMORY:").map(|s| s.trim().to_string()))
+        .filter(|s| s.len() > 8)
+        .take(3)
+        .collect()
+}
+
+/// Feature tools ship only when the feature exists.
+pub fn include_tool(name: &str, has_memory: bool, has_skills: bool) -> bool {
+    match name {
+        "memory" => has_memory,
+        "skill_load" => has_skills,
+        _ => true,
+    }
+}
+
 fn outline_of(markdown: &str) -> String {
     let mut heads: Vec<&str> = markdown
         .lines()
@@ -829,4 +847,105 @@ pub fn summarise(text: &str) -> String {
         s.push('…');
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::{Agent, Log};
+
+    fn tmp() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "mote-agent-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn roster() -> Vec<Agent> {
+        let mut reviewer = Agent::builtin();
+        reviewer.name = "reviewer".into();
+        reviewer.description = "reviews".into();
+        vec![Agent::builtin(), reviewer]
+    }
+
+    #[test]
+    fn detects_context_overflow_only_on_400() {
+        assert!(is_context_overflow(
+            400,
+            r#"{"error":{"message":"This model's maximum context length is 65536"}}"#
+        ));
+        assert!(is_context_overflow(400, "context_length_exceeded"));
+        assert!(!is_context_overflow(400, "invalid argument"));
+        assert!(!is_context_overflow(500, "context_length_exceeded"));
+    }
+
+    #[test]
+    fn extracts_at_most_three_facts() {
+        let summary = "Did work.\nMEMORY: prefers jj over git\nMEMORY: uses make check\nMEMORY: no trailing lockfile\nMEMORY: fourth fact here\nMEMORY: short";
+        let facts = facts_from_summary(summary);
+        assert_eq!(facts.len(), 3);
+        assert_eq!(facts[0], "prefers jj over git");
+    }
+
+    #[test]
+    fn feature_tools_are_conditional() {
+        assert!(!include_tool("memory", false, true));
+        assert!(include_tool("memory", true, false));
+        assert!(!include_tool("skill_load", true, false));
+        assert!(include_tool("bash", false, false));
+    }
+
+    #[test]
+    fn last_event_reads_the_newest() {
+        let d = tmp();
+        let log = Log::create(&d.join("sessions"), &d, "deepseek-flash");
+        log.event("agent", "reviewer");
+        log.event("agent", "default");
+        assert_eq!(log.last_event("agent").as_deref(), Some("default"));
+        assert_eq!(log.last_event("nope"), None);
+    }
+
+    #[test]
+    fn resume_restores_the_active_agent() {
+        let d = tmp();
+        let sessions = d.join("sessions");
+        let log = Log::create(&sessions, &d, "deepseek-flash");
+        log.event("agent", "reviewer");
+
+        let mut session = Session::new(
+            crate::config::Config::default(),
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+        );
+        session.resume_id(&sessions, &log.id).unwrap();
+        assert_eq!(session.agent.name, "reviewer");
+    }
+
+    #[test]
+    fn resume_ignores_orphan_tool_results() {
+        let d = tmp();
+        let sessions = d.join("sessions");
+        let log = Log::create(&sessions, &d, "deepseek-flash");
+        log.append(&Message::tool("missing-call", "orphan"));
+        log.append(&Message::user("hello"));
+        let mut session = Session::new(
+            crate::config::Config::default(),
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+        );
+        session.resume_id(&sessions, &log.id).unwrap();
+        assert!(session.history.iter().all(|m| m.tool_call_id.is_none()));
+    }
 }

@@ -117,7 +117,7 @@
 - [ ] 11.3 Measure and record: binary size, RSS, cold start, cache hit share over ten turns. Verify: numbers in `README.md` compared with the budget.
 - [ ] 11.4 Mode selection: `--cli`, `--chat`, and the tty-based default, with the line mode emitting no escape sequences. Verify: a scripted run with stdout piped contains zero ESC bytes, and `--chat` in a terminal opens the alternate screen.
 - [ ] 11.5 Ship a starter skill set for common CLIs (git, rg, jq, gh, docker, macOS) with routing descriptions, reusing the existing llm-functions skill files where they fit. Verify: each skill loads, and a request naming the tool routes to it.
-- [ ] 11.6 `README.md`: install, key, keys, config, memory, skills, agents, instructions, sessions. Verify: a fresh clone reaches a first answer following only the README.
+- [x] 11.6 `README.md`: install, key, keys, config, memory, skills, agents, instructions, sessions. Verify: a fresh clone reaches a first answer following only the README.
 
 ## Workflow follow-up
 
@@ -130,8 +130,8 @@
 - [x] 12.2 Terminal restored on panic and on SIGTERM, not only on a normal exit. Verify: a forced panic and a SIGTERM both leave the terminal usable.
 - [x] 12.3 `bash` cannot rewrite the main config either: the command text is checked for the config path. Verify: `echo x > ~/.config/mote/config` is refused in `normal` and prompts in `yolo`.
 - [ ] 12.4 Mid-loop `context_length_exceeded`: truncate old tool results, retry once, then fail cleanly. Verify: a forced 400 with that body produces one retry and a second failure ends the turn.
-- [ ] 12.5 Agent switches are logged and restored on resume. Verify: switch, resume, and the same agent is active.
-- [ ] 12.6 Compaction proposes up to three memory saves and writes only what is approved. Verify: a fixture summary with `MEMORY:` lines produces proposals.
+- [x] 12.5 Agent switches are logged and restored on resume. Verify: switch, resume, and the same agent is active.
+- [x] 12.6 Compaction proposes up to three memory saves and writes only what is approved. Verify: a fixture summary with `MEMORY:` lines produces proposals.
 - [ ] 12.7 `/sessions` loads the chosen session in place. Verify: choosing an entry replaces the transcript and continues that session.
-- [ ] 12.8 `memory` and `skill_load` appear only when configured. Verify: with no memory directory and only built-in skills, the schema has neither.
+- [x] 12.8 `memory` and `skill_load` appear only when configured. Verify: with no memory directory and only built-in skills, the schema has neither.
 - [x] 12.9 `/reload` re-reads instructions and skills, rebuilds the prefix, and reports the cache reset. Verify: editing `AGENTS.md` changes the next request only after reload.
