@@ -4,8 +4,12 @@ A small terminal agent for DeepSeek. One binary, a chat interface, and a
 deliberately short list of tools.
 
 ```
-mote: 572 KB · ~8 MB RSS · 0 runtime dependencies
+572 KB binary · 6 ms cold start · 6.2 MB idle RSS · 0 runtime dependencies
 ```
+
+Measured on an M1 MacBook Air, release profile `lto = "fat"`, `opt-level = "z"`,
+`panic = "abort"`, stripped. Cold start is the median of 30 runs of `mote
+--version`; RSS is the full-screen interface idle for two seconds.
 
 ## Install
 

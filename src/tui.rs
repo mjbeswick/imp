@@ -756,12 +756,13 @@ impl App {
                 self.push(Role::Info, "reloading instructions and skills…");
             }
             "sessions" => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 let mut options: Vec<String> = crate::store::Log::list(&self.sessions_dir)
                     .into_iter()
-                    .map(|m| {
-                        let title = if m.title.is_empty() { "(untitled)" } else { &m.title };
-                        format!("{}  {title}  {} msgs", m.id, m.messages)
-                    })
+                    .map(|m| crate::store::format_session(&m, now))
                     .collect();
                 options.truncate(20);
                 self.pending = Some(Pending::Choose {

@@ -104,11 +104,41 @@ impl Agent {
 
 /// Skills compiled in, available without any files on disk.
 pub fn builtin_skills() -> Vec<(String, String, String)> {
-    vec![(
-        "config".to_string(),
-        "Change mote's own configuration, skills, agents, or memory. Use when asked to add a skill, create an agent, remember a preference, or explain where config lives. Cannot edit the main config file.".to_string(),
-        include_str!("../assets/skills/config/SKILL.md").to_string(),
-    )]
+    [
+        (
+            "config",
+            "Change mote's own configuration, skills, agents, or memory. Use when asked to add a skill, create an agent, remember a preference, or explain where config lives. Cannot edit the main config file.",
+            include_str!("../assets/skills/config/SKILL.md"),
+        ),
+        (
+            "rg",
+            "Search file contents with ripgrep. Use for finding text, symbols, TODOs, or which files mention something. Faster and safer than grep.",
+            include_str!("../assets/skills/rg/SKILL.md"),
+        ),
+        (
+            "jq",
+            "Query and reshape JSON with jq. Use for jq filters, extracting fields, formatting JSON output, or checking API responses.",
+            include_str!("../assets/skills/jq/SKILL.md"),
+        ),
+        (
+            "gh",
+            "Use the GitHub CLI for pull requests, issues, checks, and releases. Use for gh pr, gh issue, gh run, gh release, or repo metadata.",
+            include_str!("../assets/skills/gh/SKILL.md"),
+        ),
+        (
+            "docker",
+            "Inspect and run containers with docker or podman. Use for images, containers, logs, compose, ports, or disk usage.",
+            include_str!("../assets/skills/docker/SKILL.md"),
+        ),
+        (
+            "macos",
+            "Inspect and change things on macOS. Use for launchd services, defaults, brew, disk space, network, or system settings.",
+            include_str!("../assets/skills/macos/SKILL.md"),
+        ),
+    ]
+    .into_iter()
+    .map(|(n, d, body)| (n.to_string(), d.to_string(), body.to_string()))
+    .collect()
 }
 
 /// Global, project, then extra roots; project entries shadow global by name.
@@ -529,6 +559,24 @@ pub fn slugify(title: &str) -> String {
     }
 }
 
+/// One line for `--list` and the picker: id, age, title, messages.
+pub fn format_session(meta: &Meta, now_secs: u64) -> String {
+    let age = now_secs.saturating_sub(meta.updated);
+    let age = match age {
+        0..=59 => format!("{age}s"),
+        60..=3599 => format!("{}m", age / 60),
+        3600..=86399 => format!("{}h", age / 3600),
+        _ => format!("{}d", age / 86_400),
+    };
+    format!(
+        "{:<10} {:<5} {:<40} {:>4} msgs",
+        meta.id,
+        age,
+        if meta.title.is_empty() { "(untitled)" } else { &meta.title },
+        meta.messages
+    )
+}
+
 pub fn is_project(root: &Path) -> bool {
     root.join(".git").exists() || root.join(".jj").exists() || root.join(".mote").exists()
 }
@@ -714,4 +762,97 @@ pub fn repo_root(start: &Path) -> Option<PathBuf> {
         dir = d.parent().map(|p| p.to_path_buf());
     }
     None
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    fn tmp() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "mote-store-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn title_comes_from_the_first_user_message() {
+        let dir = tmp();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.append(&Message::system("base"));
+        log.append(&Message::user("fix the flaky rsync test"));
+        assert_eq!(log.meta().title, "fix the flaky rsync test");
+        assert_eq!(log.meta().messages, 2);
+    }
+
+    #[test]
+    fn list_is_newest_first_and_rename_keeps_the_transcript() {
+        let dir = tmp();
+        let older = Log::create(&dir, &dir, "deepseek-flash");
+        older.append(&Message::user("one"));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let newer = Log::create(&dir, &dir, "deepseek-flash");
+        newer.append(&Message::user("two"));
+        let listed = Log::list(&dir);
+        assert_eq!(listed[0].id, newer.id);
+        let before = std::fs::read(&older.path).unwrap();
+        Log::rename(&dir, &older.id, "renamed").unwrap();
+        assert_eq!(std::fs::read(&older.path).unwrap(), before);
+        assert_eq!(Log::open(&dir, &older.id).unwrap().meta().title, "renamed");
+    }
+
+    #[test]
+    fn delete_moves_both_files_to_trash() {
+        let dir = tmp();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.append(&Message::user("bye"));
+        Log::delete(&dir, &log.id).unwrap();
+        assert!(!log.path.exists());
+        assert!(!log.meta_path.exists());
+        assert!(dir.join(".trash").join(format!("{}.jsonl", log.id)).exists());
+        assert!(Log::list(&dir).is_empty());
+    }
+
+    #[test]
+    fn load_drops_orphan_tool_results() {
+        let dir = tmp();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.append(&Message::tool("gone", "orphan"));
+        log.append(&Message::user("hello"));
+        let loaded = log.load();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].content, "hello");
+    }
+
+    #[test]
+    fn session_rows_show_age_and_messages() {
+        let meta = Meta {
+            id: "abc".into(),
+            title: "flaky test".into(),
+            cwd: "/tmp".into(),
+            model: "m".into(),
+            messages: 7,
+            updated: 1_000,
+        };
+        let row = format_session(&meta, 1_090);
+        assert!(row.contains("abc"));
+        assert!(row.contains("1m"), "{row}");
+        assert!(row.contains("flaky test"));
+        assert!(row.contains("7 msgs"));
+    }
+
+    #[test]
+    fn sidecar_defaults_when_missing() {
+        let dir = tmp();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        std::fs::remove_file(&log.meta_path).unwrap();
+        assert_eq!(log.meta().id, log.id);
+        assert_eq!(log.meta().title, "");
+    }
 }

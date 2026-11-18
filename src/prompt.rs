@@ -73,6 +73,35 @@ mod tests {
     }
 
     #[test]
+    fn skill_index_is_one_line_each() {
+        let d = std::env::temp_dir().join(format!("mote-skills-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for i in 0..45 {
+            let dir = d.join(format!("s{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                format!("---\nname: s{i}\ndescription: does thing {i}\n---\nbody {i}\n"),
+            )
+            .unwrap();
+        }
+        let mut cfg = crate::config::Config::default();
+        cfg.skills_dir = Some(d.clone());
+        let root = std::env::temp_dir();
+        let skills = crate::store::load_skills(&cfg, &root);
+        assert_eq!(skills.len(), 40, "index must cap at 40");
+        let text = compose(&root, &cfg);
+        let tail = text
+            .split("Skills (load with skill_load when relevant):")
+            .nth(1)
+            .unwrap_or("");
+        let index: Vec<&str> = tail.lines().filter(|l| l.starts_with("- ")).collect();
+        assert!(index.len() <= 40);
+        assert!(index.iter().any(|l| l.contains("does thing 0")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn baseline_is_terse() {
         // Rough budget: 4 bytes per token, and this has to stay near 450 tokens.
         assert!(BASELINE.len() < 2400, "baseline is {} bytes", BASELINE.len());

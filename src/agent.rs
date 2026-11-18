@@ -4,6 +4,7 @@ use crate::api::{self, Accum, Message, RequestOptions, SseParser, ToolCall};
 use crate::config::Config;
 use crate::perm::{self, Decision};
 use crate::jobs::Jobs;
+use crate::transport::{Live, Transport};
 use crate::store::{Agent, Log, Memory, Skill};
 use crate::tools::Tools;
 use serde_json::{json, Value};
@@ -44,13 +45,14 @@ pub struct Session {
     pub cfg: Config,
     pub tools: Tools,
     pub history: Vec<Message>,
-    pub cancel: AtomicBool,
+    pub cancel: std::sync::Arc<AtomicBool>,
     pub agent: Agent,
     pub roster: Vec<Agent>,
     pub jobs: Jobs,
     pub job_dir: std::path::PathBuf,
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
+    pub transport: Box<dyn Transport>,
     pub memory: Memory,
     pub skills: Vec<Skill>,
 }
@@ -83,13 +85,14 @@ impl Session {
                 t
             },
             history,
-            cancel: AtomicBool::new(false),
+            cancel: std::sync::Arc::new(AtomicBool::new(false)),
             agent,
             roster,
             jobs: Jobs::default(),
             job_dir,
             log: None,
             last_usage: (0, 0, 0),
+            transport: Box::new(Live),
             memory,
             skills,
         }
@@ -186,7 +189,7 @@ impl Session {
         self.agent = agent;
     }
 
-    fn active_tools(&self) -> Vec<Value> {
+    pub fn active_tools(&self) -> Vec<Value> {
         schema()
             .into_iter()
             .filter(|t| {
@@ -231,11 +234,11 @@ impl Session {
             let mut raw_error = String::new();
             let mut raw = Vec::new();
 
-            let result = crate::http::post_stream(
+            let result = self.transport.post(
                 &url,
                 &headers,
                 body.to_string().as_bytes(),
-                |bytes| {
+                &mut |bytes| {
                     if raw.len() < 4096 {
                         raw.extend_from_slice(bytes);
                     }
@@ -251,13 +254,11 @@ impl Session {
             );
 
             match result {
-                Ok(r) if r.status == 200 => {
-                    status = r.status;
-                }
-                Ok(r) => {
-                    status = r.status;
-                    let body = String::from_utf8_lossy(&raw).to_string();
-                    raw_error = body.chars().take(300).collect();
+                Ok(code) => {
+                    status = code;
+                    if code != 200 {
+                        raw_error = String::from_utf8_lossy(&raw).chars().take(300).collect();
+                    }
                 }
                 Err(e) => {
                     if attempt == 1 {
@@ -418,23 +419,28 @@ impl Session {
         let headers = ["Content-Type: application/json", auth.as_str()];
         let mut parser = SseParser::default();
         let mut acc = Accum::default();
-        let result = crate::http::post_stream(&url, &headers, body.to_string().as_bytes(), |b| {
+        let result = self.transport.post(&url, &headers, body.to_string().as_bytes(), &mut |b| {
             for ev in parser.push(b) {
                 acc.apply(ev);
             }
         });
         match result {
-            Ok(r) if r.status == 200 => Ok(acc.content),
-            Ok(r) => Err(format!("summariser failed: HTTP {}", r.status)),
+            Ok(200) => Ok(acc.content),
+            Ok(code) => Err(format!("summariser failed: HTTP {code}")),
             Err(e) => Err(e),
         }
     }
 
     /// One user turn: stream, run tools, repeat until the model answers.
     pub fn turn(&mut self, user: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
+        self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
         self.say(Message::user(user));
 
         for step in 0..MAX_STEPS {
+            if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                hooks.ui(Ui::Info("cancelled".into()));
+                return Ok(());
+            }
             self.prune(hooks);
             if crate::api::estimate_tokens(&self.history) >= self.cfg.compact_at as u64 {
                 if let Err(e) = self.compact(hooks) {
@@ -714,15 +720,15 @@ impl Session {
         let auth = format!("Authorization: Bearer {}", self.cfg.api_key);
         let headers = ["Content-Type: application/json", auth.as_str()];
         let mut raw = Vec::new();
-        let resp = crate::http::post_stream(&url, &headers, body.to_string().as_bytes(), |b| {
+        let resp = self.transport.post(&url, &headers, body.to_string().as_bytes(), &mut |b| {
             if raw.len() < 2 * 1024 * 1024 {
                 raw.extend_from_slice(b);
             }
         });
         match resp {
-            Ok(r) if r.status == 200 => {}
-            Ok(r) => return format!("{} failed: HTTP {}", op, r.status),
-            Err(e) => return format!("{} failed: {e}", op),
+            Ok(200) => {}
+            Ok(code) => return format!("{op} failed: HTTP {code}"),
+            Err(e) => return format!("{op} failed: {e}"),
         }
         let text = String::from_utf8_lossy(&raw);
         let Ok(v) = serde_json::from_str::<Value>(&text) else {
@@ -897,6 +903,184 @@ mod tests {
     fn session(cfg: crate::config::Config) -> Session {
         let d = tmp();
         Session::new(cfg, d.clone(), d.join("out"), String::new(), Agent::builtin(), roster())
+    }
+
+    use crate::transport::{text_reply, tool_reply, Fake, Script};
+    use std::sync::Arc;
+
+    fn scripted(script: Vec<Script>) -> (Session, Arc<Fake>) {
+        let fake = Arc::new(Fake::new(script));
+        let mut s = session(crate::config::Config::default());
+        s.transport = Box::new(fake.clone());
+        (s, fake)
+    }
+
+    struct CancelOnTool(std::sync::Arc<AtomicBool>);
+    impl Hooks for CancelOnTool {
+        fn ui(&mut self, event: Ui) {
+            if matches!(event, Ui::ToolStart { .. }) {
+                self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        fn confirm(&mut self, _: &str) -> bool {
+            true
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn cancel_during_a_tool_call_stops_it() {
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(tool_reply("c1", "bash", "{\"command\":\"sleep 5\"}")),
+            Script::Ok(text_reply("never reached")),
+        ]);
+        let flag = s.cancel.clone();
+        let mut hooks = CancelOnTool(flag);
+        s.turn("run it", &mut hooks).unwrap();
+        let tool = s
+            .history
+            .iter()
+            .find(|m| m.role == crate::api::Role::Tool)
+            .expect("a tool result")
+            .content
+            .clone();
+        assert!(tool.contains("cancelled"), "{tool}");
+    }
+
+    #[test]
+    fn prior_reasoning_is_sent_back() {
+        let mut history = vec![Message::user("hi")];
+        let mut assistant = Message::assistant("hello");
+        assistant.reasoning = "because".into();
+        history.push(assistant);
+        let opts = RequestOptions {
+            model: "deepseek-flash".into(),
+            max_tokens: 10,
+            thinking: true,
+            temperature: None,
+        };
+        let body = api::build_request(&opts, &history, &[]);
+        assert_eq!(body["messages"][1]["reasoning_content"], "because");
+    }
+
+    #[test]
+    fn a_restricted_agent_loses_tools() {
+        let mut reviewer = Agent::builtin();
+        reviewer.name = "reviewer".into();
+        reviewer.tools = Some(vec!["read".into()]);
+        let mut s = session(crate::config::Config::default());
+        s.apply_agent(reviewer);
+        let names: Vec<String> = s
+            .active_tools()
+            .iter()
+            .map(|t| t["function"]["name"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert!(names.contains(&"read".to_string()));
+        assert!(!names.contains(&"bash".to_string()));
+    }
+
+    #[test]
+    fn retries_once_then_succeeds() {
+        let (mut s, fake) = scripted(vec![
+            Script::Fails(429, "slow down".into()),
+            Script::Ok(text_reply("done")),
+        ]);
+        s.turn("hi", &mut Null).unwrap();
+        assert_eq!(fake.attempts(), 2);
+        let seen: Vec<String> = s
+            .history
+            .iter()
+            .map(|m| format!("{}:{:?}", m.role.as_str(), m.content))
+            .collect();
+        assert!(
+            s.history.iter().any(|m| m.content == "done"),
+            "{}",
+            seen.join(" | ")
+        );
+    }
+
+    #[test]
+    fn terminal_error_does_not_retry() {
+        let (mut s, fake) = scripted(vec![Script::Fails(400, "bad request".into())]);
+        let err = s.turn("hi", &mut Null).unwrap_err();
+        assert_eq!(fake.attempts(), 1);
+        assert!(err.contains("400"), "{err}");
+    }
+
+    #[test]
+    fn context_overflow_truncates_and_retries() {
+        let (mut s, fake) = scripted(vec![
+            Script::Fails(
+                400,
+                "This model's maximum context length is 65536 tokens".into(),
+            ),
+            Script::Ok(text_reply("ok")),
+        ]);
+        for _ in 0..10 {
+            s.history.push(Message::tool("c", "y".repeat(4000)));
+        }
+        s.turn("hi", &mut Null).unwrap();
+        assert_eq!(fake.attempts(), 2);
+        assert!(s.history.iter().any(|m| m.content.contains("[dropped")));
+    }
+
+    #[test]
+    fn second_overflow_is_a_clean_error() {
+        let (mut s, fake) = scripted(vec![
+            Script::Fails(400, "context_length_exceeded".into()),
+            Script::Fails(400, "context_length_exceeded".into()),
+        ]);
+        for _ in 0..10 {
+            s.history.push(Message::tool("c", "y".repeat(4000)));
+        }
+        let err = s.turn("hi", &mut Null).unwrap_err();
+        assert_eq!(fake.attempts(), 2);
+        assert!(err.contains("400"), "{err}");
+    }
+
+    #[test]
+    fn tool_call_round_trip() {
+        let (mut s, fake) = scripted(vec![
+            Script::Ok(tool_reply("call_1", "bash", "{\"command\":\"echo hi\"}")),
+            Script::Ok(text_reply("done")),
+        ]);
+        s.turn("run echo", &mut Null).unwrap();
+        assert_eq!(fake.attempts(), 2);
+        let tool = s
+            .history
+            .iter()
+            .find(|m| m.role == crate::api::Role::Tool)
+            .expect("tool result");
+        assert!(tool.content.contains("hi"), "{}", tool.content);
+        assert!(fake.last_body().contains("call_1"));
+    }
+
+    #[test]
+    fn compaction_merges_a_summary_and_keeps_four_exchanges() {
+        let (mut s, fake) = scripted(vec![Script::Ok(text_reply(
+            "[compacted]\nDecisions: shipped v1.",
+        ))]);
+        s.history.push(Message::system("base"));
+        for i in 0..6 {
+            s.history.push(Message::user(format!("q{i}")));
+            s.history.push(Message::assistant(format!("a{i}")));
+        }
+        s.compact(&mut Null).unwrap();
+        assert_eq!(fake.attempts(), 1);
+        assert!(s
+            .history
+            .iter()
+            .any(|m| m.role == crate::api::Role::System && m.content.contains("[compacted]")));
+        assert_eq!(
+            s.history
+                .iter()
+                .filter(|m| m.role == crate::api::Role::User)
+                .count(),
+            4
+        );
+        assert_eq!(s.history[0].content, "base");
     }
 
     #[test]

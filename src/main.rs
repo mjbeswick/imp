@@ -10,6 +10,7 @@ mod pricing;
 mod prompt;
 mod store;
 mod tools;
+mod transport;
 mod tui;
 
 use agent::{Hooks, Session, Ui};
@@ -92,13 +93,12 @@ fn run() -> Result<(), String> {
     let sessions_dir = config::dirs_state().join("mote").join("sessions");
 
     if list {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         for m in store::Log::list(&sessions_dir) {
-            println!(
-                "{:<12} {:<40} {:>5} msgs",
-                m.id,
-                if m.title.is_empty() { "(untitled)" } else { &m.title },
-                m.messages
-            );
+            println!("{}", store::format_session(&m, now));
         }
         return Ok(());
     }
@@ -160,11 +160,7 @@ fn run() -> Result<(), String> {
         }
         None => {
             let interactive = unsafe { isatty(0) } != 0 && unsafe { isatty(1) } != 0;
-            let chat = match mode {
-                "chat" => true,
-                "cli" => false,
-                _ => interactive,
-            };
+            let chat = wants_chat(mode, interactive);
             if chat {
                 tui::run(session, tui_cfg)
             } else {
@@ -345,6 +341,15 @@ fn confirm(prompt: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
+/// `--chat` and `--cli` win; otherwise a real terminal decides.
+pub fn wants_chat(mode: &str, tty: bool) -> bool {
+    match mode {
+        "chat" => true,
+        "cli" => false,
+        _ => tty,
+    }
+}
+
 fn system_prompt(root: &std::path::Path, cfg: &config::Config) -> String {
     prompt::compose(root, cfg)
 }
@@ -355,4 +360,17 @@ fn next(args: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
         .filter(|v| !v.is_empty())
         .cloned()
         .ok_or_else(|| format!("{flag} needs a value"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_selection() {
+        assert!(wants_chat("auto", true));
+        assert!(!wants_chat("auto", false));
+        assert!(wants_chat("chat", false));
+        assert!(!wants_chat("cli", true));
+    }
 }
