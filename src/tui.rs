@@ -1082,7 +1082,10 @@ impl App {
             self.status.miss,
             self.status.output,
         )
-        .map(|c| format!(" · ${c:.4}"))
+        .map(|c| {
+            let micros = (c * 1_000_000.0).round() as u64;
+            format!(" · ${}.{:04}", micros / 1_000_000, micros % 1_000_000)
+        })
         .unwrap_or_default();
         fit(
             &format!(

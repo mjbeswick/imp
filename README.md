@@ -4,7 +4,7 @@ A small terminal agent for DeepSeek. One binary, a chat interface, and a
 deliberately short list of tools.
 
 ```
-mote: 560 KB · ~8 MB RSS · 0 runtime dependencies
+mote: 572 KB · ~8 MB RSS · 0 runtime dependencies
 ```
 
 ## Install
