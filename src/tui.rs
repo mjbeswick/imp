@@ -1717,22 +1717,6 @@ fn verb(what: &str) -> &'static str {
     }
 }
 
-/// Keep both ends of a row, so a command still shows what it starts and ends with.
-fn middle(text: &str, width: usize) -> String {
-    let count = text.chars().count();
-    if count <= width {
-        return text.to_string();
-    }
-    if width < 3 {
-        return tail(text, width);
-    }
-    let room = width - 1;
-    let head = (room * 3) / 5;
-    let kept_tail = room - head;
-    let start: String = text.chars().take(head).collect();
-    let end: String = text.chars().skip(count - kept_tail).collect();
-    format!("{start}…{end}")
-}
 
 fn previous_boundary(s: &str, mut i: usize) -> usize {
     if i == 0 {
