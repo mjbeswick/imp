@@ -211,13 +211,21 @@ extern "C" {
 fn repl(session: &mut Session, cli: &mut Cli) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
+    let tty = unsafe { isatty(0) } != 0;
     loop {
-        print!("> ");
-        out.flush().ok();
+        if tty {
+            print!("> ");
+            out.flush().ok();
+        }
         let mut line = String::new();
         if stdin.lock().read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-            println!();
+            if tty {
+                println!();
+            }
             return Ok(());
+        }
+        if tty {
+            println!();
         }
         let text = line.trim();
         if text.is_empty() {

@@ -18,6 +18,34 @@ The system SHALL provide Enter to send, Alt+Enter for a newline, Esc to cancel, 
 - **WHEN** the user presses Ctrl+C once
 - **THEN** the status line asks for a second press, and no second press within two seconds returns to normal
 
+### Requirement: Every rendered line fits the terminal
+
+The system SHALL clamp every drawn row to the terminal width, SHALL disable the terminal's automatic wrapping while drawing and restore it after, SHALL erase each row before writing it, and SHALL clear everything below the status line.
+
+#### Scenario: Narrow terminal
+- **WHEN** the terminal is 40 columns and the status line is longer
+- **THEN** the status is truncated with an ellipsis and no row wraps onto the next
+
+#### Scenario: Shrinking window
+- **WHEN** the window shrinks between frames
+- **THEN** the next frame has no leftover text from the wider one
+
+#### Scenario: No debris
+- **WHEN** a menu closes
+- **THEN** the rows it used are erased and the chat pane grows back
+
+### Requirement: Line mode frames each turn
+
+The system SHALL print a prompt only when stdin is a terminal, SHALL start model output on a fresh line, and SHALL NOT emit a prompt or escape sequences when piped.
+
+#### Scenario: Interactive line mode
+- **WHEN** the user types a message and presses Enter
+- **THEN** the answer begins on the next line, never appended to the typed line
+
+#### Scenario: Piped
+- **WHEN** input is a pipe
+- **THEN** output contains no `> ` prompt and no escape bytes
+
 ### Requirement: Output streams as it arrives
 
 The system SHALL render each token within 100 ms of receiving it, keep the newest line visible while streaming, and show a caret at the end of incomplete text.

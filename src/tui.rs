@@ -884,50 +884,77 @@ impl App {
 
     pub fn render(&mut self) {
         let (cols, rows) = size();
-        if rows < 4 || cols < 20 {
+        if rows < 5 || cols < 20 {
             return;
         }
-        let width = cols;
-        let body_rows = rows.saturating_sub(3);
-        let mut lines: Vec<(Role, String)> = Vec::new();
 
+        let menu = if self.menu_open { self.menu_matches() } else { Vec::new() };
+        let menu_rows = menu.len().min(6);
+        let body_rows = rows.saturating_sub(2 + menu_rows).max(1);
+
+        let mut lines: Vec<(Role, String)> = Vec::new();
         for entry in &self.entries {
-            for (i, part) in wrap(&entry.text, width.saturating_sub(2)).into_iter().enumerate() {
-                let text = if i == 0 {
+            for (i, part) in wrap(&entry.text, cols.saturating_sub(2)).into_iter().enumerate() {
+                let prefix = if i == 0 {
                     match entry.role {
-                        Role::User => format!("> {part}"),
-                        Role::Assistant => part,
-                        Role::Thinking => format!("~ {part}"),
-                        Role::Tool => format!("  {part}"),
-                        Role::Error | Role::Info => part,
+                        Role::User => "> ",
+                        Role::Thinking => "~ ",
+                        Role::Tool => "  ",
+                        _ => "",
                     }
                 } else {
-                    format!("  {part}")
+                    "  "
                 };
-                lines.push((entry.role, text));
+                lines.push((entry.role, format!("{prefix}{part}")));
             }
         }
 
         let total = lines.len();
         let scroll = self.scroll.min(total.saturating_sub(1));
-        let start = total.saturating_sub(body_rows + scroll);
-        let visible = &lines[start..total.saturating_sub(scroll).min(total)];
+        let end = total.saturating_sub(scroll);
+        let start = end.saturating_sub(body_rows);
+        let visible = &lines[start..end];
 
-        let mut screen = String::new();
-        screen.push_str(HOME);
+        let mut screen = String::from("\x1b[?7l\x1b[H");
         for _ in 0..body_rows.saturating_sub(visible.len()) {
-            screen.push_str(CLEAR_LINE);
-            screen.push('\n');
+            screen.push_str("\x1b[2K\n");
         }
         for (role, text) in visible.iter().take(body_rows) {
-            screen.push_str(&self.palette.paint(*role, text));
-            screen.push_str(CLEAR_LINE);
+            screen.push_str("\x1b[2K");
+            screen.push_str(&self.palette.paint(*role, &fit(text, cols)));
             screen.push('\n');
         }
 
-        // Input or pending prompt.
+        screen.push_str("\x1b[2K");
+        screen.push_str(&self.input_line(cols));
+        screen.push('\n');
+
+        for (i, (name, desc)) in menu.iter().take(6).enumerate() {
+            let line = fit(&format!(" {name:<10} {desc}"), cols);
+            let painted = if i == self.menu_index {
+                self.palette.paint(Role::User, &line)
+            } else {
+                line
+            };
+            screen.push_str("\x1b[2K");
+            screen.push_str(&painted);
+            screen.push('\n');
+        }
+
+        screen.push_str("\x1b[2K");
+        screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
+        screen.push_str("\x1b[J\x1b[?7h");
+
+        let mut out = std::io::stdout();
+        out.write_all(screen.as_bytes()).ok();
+        out.flush().ok();
+        self.dirty = false;
+        self.last_redraw = Instant::now();
+    }
+
+    fn input_line(&self, cols: usize) -> String {
         if let Some(pending) = &self.pending {
-            match pending {
+            let text = match pending {
                 Pending::Choose { title, options, index, .. } => {
                     let shown: Vec<String> = options
                         .iter()
@@ -937,56 +964,37 @@ impl App {
                             format!("{marker}{}. {o}", i + 1)
                         })
                         .collect();
-                    let line = format!("{title}: {}", shown.join("  "));
-                    screen.push_str(&self.palette.paint(Role::Info, &line));
+                    format!("{title}: {}", shown.join("  "))
                 }
-                Pending::Confirm { what, .. } => {
-                    screen.push_str(&self.palette.paint(
-                        Role::Info,
-                        &format!("{what}? y/N"),
-                    ));
-                }
+                Pending::Confirm { what, .. } => format!("{what}? y/N"),
                 Pending::Question { q, opts, mode, typed, .. } => {
                     let mut text = format!("{q}   ");
                     for (i, o) in opts.iter().enumerate() {
                         text.push_str(&format!("[{}] {o}  ", i + 1));
                     }
                     match mode {
-                        AskMode::Choose => text.push_str("[e] type an answer   Esc skips"),
+                        AskMode::Choose => text.push_str("[e] answer   Esc skip"),
                         AskMode::Custom => text.push_str(&format!("> {typed}_")),
                     }
-                    screen.push_str(&self.palette.paint(Role::Info, &text));
+                    text
                 }
-            }
-            screen.push_str(CLEAR_LINE);
-            screen.push('\n');
-        } else {
-            let (before, after) = self.input.split_at(self.cursor.min(self.input.len()));
-            screen.push_str(&self.palette.paint(Role::User, "> "));
-            screen.push_str(before);
-            screen.push_str("\x1b[7m \x1b[0m");
-            screen.push_str(after);
-            screen.push_str(CLEAR_LINE);
-            screen.push('\n');
+            };
+            return self.palette.paint(Role::Info, &fit(&text, cols));
         }
 
-        // Slash menu.
-        let menu = if self.menu_open { self.menu_matches() } else { Vec::new() };
-        if !menu.is_empty() {
-            for (i, (name, desc)) in menu.iter().take(6).enumerate() {
-                let line = format!(" {name:<10} {desc}");
-                let painted = if i == self.menu_index {
-                    self.palette.paint(Role::User, &line)
-                } else {
-                    line
-                };
-                screen.push_str(&painted);
-                screen.push_str(CLEAR_LINE);
-                screen.push('\n');
-            }
+        let cursor = self.cursor.min(self.input.len());
+        let before = &self.input[..cursor];
+        let after = &self.input[cursor..];
+        let mut body = format!("{before}\x1b[7m \x1b[0m{after}");
+        // Keep the tail visible when the line is longer than the screen.
+        let visible: String = body.chars().rev().take(cols.saturating_sub(2)).collect::<Vec<_>>().into_iter().rev().collect();
+        if visible.len() < body.len() {
+            body = format!("…{}", visible.chars().skip(1).collect::<String>());
         }
+        self.palette.paint(Role::User, "> ") + &body
+    }
 
-        // Status line.
+    fn status_line(&self, cols: usize) -> String {
         let hit_rate = if self.status.hit + self.status.miss > 0 {
             format!(
                 "{}%",
@@ -1001,22 +1009,26 @@ impl App {
         } else {
             "·".into()
         };
-        let status = format!(
-            " {spin} {}  {} tok  cache {hit_rate}  {}  {}",
-            self.cfg.model,
-            self.status.tokens,
-            self.cfg.permissions.as_str(),
-            if self.cfg.thinking { "think" } else { "" }
-        );
-        screen.push_str(&self.palette.paint(Role::Thinking, &status));
-        screen.push_str(CLEAR_LINE);
-
-        let mut out = std::io::stdout();
-        out.write_all(screen.as_bytes()).ok();
-        out.flush().ok();
-        self.dirty = false;
-        self.last_redraw = Instant::now();
+        let thinking = if self.cfg.thinking { " · think" } else { "" };
+        fit(
+            &format!(
+                " {spin} {} · {} tok · cache {hit_rate} · {}{thinking}",
+                self.cfg.model,
+                self.status.tokens,
+                self.cfg.permissions.as_str()
+            ),
+            cols,
+        )
     }
+}
+
+fn fit(text: &str, cols: usize) -> String {
+    if text.chars().count() <= cols {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(cols.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn previous_boundary(s: &str, mut i: usize) -> usize {
@@ -1258,6 +1270,14 @@ mod tests {
         let lines = wrap("alpha beta gamma delta", 10);
         assert!(lines.iter().all(|l| l.chars().count() <= 10), "{lines:?}");
         assert!(lines.len() > 1);
+    }
+
+    #[test]
+    fn fit_truncates_to_width() {
+        assert_eq!(fit("abcdef", 10), "abcdef");
+        let short = fit("abcdefghij", 5);
+        assert_eq!(short.chars().count(), 5);
+        assert!(short.ends_with('…'));
     }
 
     #[test]
