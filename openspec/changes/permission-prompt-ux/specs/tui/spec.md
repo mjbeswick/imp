@@ -25,3 +25,19 @@ The system SHALL ask before a destructive command or a memory write with a singl
 #### Scenario: Interrupt a prompt
 - **WHEN** the user presses Ctrl+C while a confirmation is open
 - **THEN** the prompt closes, the command does not run, and the turn stops
+
+### Requirement: Typed commands bypass confirmation but not denial
+
+The system SHALL treat a command typed by the user as already approved, SHALL NOT prompt for it, and SHALL still refuse anything on the deny list in every mode.
+
+#### Scenario: No prompt
+- **WHEN** the user types `!npm install`
+- **THEN** it runs without a confirmation prompt
+
+#### Scenario: Denied
+- **WHEN** the user types `!sudo rm -rf /`
+- **THEN** it is refused with a message naming the rule
+
+#### Scenario: Denied in yolo
+- **WHEN** the mode is `yolo` and the user types `!rm -rf /`
+- **THEN** it is refused with a message naming the rule

@@ -15,6 +15,8 @@ was waiting on them.
 - On timeout, refuse and stop the turn, and say so in the transcript, rather
   than reporting a decline the user never gave.
 - Let Ctrl+C refuse a pending prompt and stop the turn at once.
+- Keep the deny list and the sudo gate in `yolo`, so that mode stops prompting
+  instead of stopping refusing.
 
 ## Capabilities
 
@@ -22,9 +24,12 @@ was waiting on them.
 
 - `tui`: a confirmation shows its deadline, asks for attention, and stops the
   turn when it goes unanswered.
+- `permissions`: `yolo` no longer disables the deny list or the sudo gate.
 
 ## Impact
 
 - `src/tui.rs`: confirmation wait, prompt row, attention, Ctrl+C while pending.
-- `openspec/specs/tui/spec.md` confirmation requirement.
+- `src/perm.rs`: command classification order.
+- `openspec/specs/tui/spec.md` confirmation and typed-command requirements.
+- `openspec/specs/permissions/spec.md` deny and sudo requirements.
 - No dependency, configuration, or wire changes.

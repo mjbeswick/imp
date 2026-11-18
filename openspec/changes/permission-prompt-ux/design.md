@@ -22,9 +22,14 @@
   because the user may have answered from another window or stepped away.
 - The countdown is drawn from `pending_since`, so no timer thread is needed and
   the existing frame tick updates it.
-- The bell rides on the prompt row for the first 400 ms of the prompt. That
-  keeps it once per prompt without a separate write path, and it is testable
-  from `frame()`.
+- The bell is a flag on the app, set when a prompt opens and cleared by the
+  first frame that carries it. A plain time window would ring on two or three
+  frames at the redraw rate.
 - Ctrl+C while a prompt is open refuses the prompt and stops the turn, matching
   the streaming case where Ctrl+C cancels.
 - A refusal stays a tool result, so the model can continue with a safer plan.
+- `yolo` moves below the deny list and the sudo gate in `classify_command`. The
+  mode keeps its meaning, no prompts and no path jail, but `rm -rf /`, device
+  writes, `curl | sh`, force pushes and hard resets still stop, and `sudo` still
+  needs `allow_sudo`. Both rules are what the permissions spec already says, so
+  the code was the side that was wrong.

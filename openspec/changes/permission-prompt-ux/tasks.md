@@ -7,3 +7,4 @@
 - [x] 1.6 Clear the open prompt when a stop arrives. Verify: a stop event leaves no pending prompt and no countdown.
 - [x] 1.7 Stop the worker before it can send another request after a timeout. Verify: an end-to-end run shows the stop line, no stale prompt, and no further model output.
 - [x] 1.5 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 1.8 Keep the deny list and the sudo gate in `yolo`. Verify: tests deny every listed command in `yolo`, allow `ls` and `npm install`, and refuse `sudo` without `allow_sudo` while still asking with it.

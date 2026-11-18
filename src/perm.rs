@@ -36,10 +36,6 @@ const DENY: &[(&str, &str)] = &[
 ];
 
 pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decision {
-    if mode == Permissions::Yolo {
-        return Decision::Allow;
-    }
-
     let lower = cmd.to_ascii_lowercase();
     for (needle, why) in DENY {
         if lower.contains(needle) {
@@ -54,6 +50,10 @@ pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decis
         } else {
             Decision::Deny("refused: sudo is disabled; set allow_sudo=true".into())
         };
+    }
+
+    if mode == Permissions::Yolo {
+        return Decision::Allow;
     }
 
     if mode == Permissions::Strict {
@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn deny_beats_everything_but_yolo() {
+    fn deny_beats_yolo_too() {
         for cmd in [
             "rm -rf /",
             "sudo rm -rf /",
@@ -175,12 +175,36 @@ mod tests {
         ] {
             assert!(
                 matches!(classify_command(cmd, Permissions::Normal, true), Decision::Deny(_)),
-                "{cmd} should be denied"
+                "{cmd} should be denied in normal"
+            );
+            assert!(
+                matches!(classify_command(cmd, Permissions::Yolo, true), Decision::Deny(_)),
+                "{cmd} should be denied in yolo"
             );
         }
+    }
+
+    #[test]
+    fn yolo_still_asks_for_nothing_else() {
         assert_eq!(
-            classify_command("rm -rf /", Permissions::Yolo, false),
+            classify_command("ls -la", Permissions::Yolo, false),
             Decision::Allow
+        );
+        assert_eq!(
+            classify_command("npm install", Permissions::Yolo, false),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn yolo_does_not_grant_sudo() {
+        assert!(matches!(
+            classify_command("sudo ls", Permissions::Yolo, false),
+            Decision::Deny(_)
+        ));
+        assert_eq!(
+            classify_command("sudo ls", Permissions::Yolo, true),
+            Decision::Ask
         );
     }
 
