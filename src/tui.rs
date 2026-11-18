@@ -644,6 +644,7 @@ pub struct App {
     quit: bool,
     spinner: usize,
     tool: Option<ToolRow>,
+    cancel_requested: bool,
 }
 
 enum Pending {
@@ -719,6 +720,7 @@ impl App {
             quit: false,
             spinner: 0,
             tool: None,
+            cancel_requested: false,
         }
     }
 
@@ -828,6 +830,7 @@ impl App {
                 self.dirty = true;
             }
             Ev::Stop(reason) => {
+                self.cancel_requested = false;
                 self.pending = None;
                 self.pending_since = None;
                 self.status.streaming = false;
@@ -836,6 +839,7 @@ impl App {
                 self.dirty = true;
             }
             Ev::Done(err) => {
+                self.cancel_requested = false;
                 self.status.streaming = false;
                 if let Some(e) = err {
                     self.push(Role::Error, e);
@@ -923,8 +927,10 @@ impl App {
 
         match key {
             Key::Ctrl('c') => {
-                if self.status.streaming {
+                if self.status.streaming && !self.cancel_requested {
                     self.cancel.store(true, Ordering::Relaxed);
+                    self.cancel_requested = true;
+                    self.push(Role::Info, "cancelling · ctrl+c again to exit".to_string());
                 } else {
                     self.quit = true;
                 }
@@ -2598,6 +2604,41 @@ mod tests {
         let out = a.frame(60, 12);
         assert!(out.contains("> hello"), "{out:?}");
         assert!(out.contains("deepseek-flash"), "{out:?}");
+    }
+
+    #[test]
+    fn ctrl_c_cancels_then_exits() {
+        let mut a = app();
+        a.status.streaming = true;
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.cancel.load(Ordering::Relaxed), "the turn was not cancelled");
+        assert!(!a.quit, "one press quit mid-turn");
+        assert!(
+            a.frame(70, 12).contains("ctrlc again to exit") || a.frame(70, 12).contains("ctrl+c again"),
+            "no exit hint"
+        );
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.quit, "the second press did not quit");
+    }
+
+    #[test]
+    fn ctrl_c_exits_at_once_when_idle() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.quit, "an idle Ctrl+C did not quit");
+    }
+
+    #[test]
+    fn a_finished_turn_resets_the_cancel_latch() {
+        let mut a = app();
+        a.status.streaming = true;
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.cancel_requested);
+        a.apply(Ev::Done(None));
+        assert!(!a.cancel_requested, "the latch survived the turn");
     }
 
 }
