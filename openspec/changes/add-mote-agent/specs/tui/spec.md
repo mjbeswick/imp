@@ -154,6 +154,22 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/compa
 - **WHEN** the user runs `/help` in line mode
 - **THEN** it prints the same list as a plain block
 
+### Requirement: Help is grouped, aligned, and shared
+
+The system SHALL render `--help` with titled sections (usage, sessions, running, other, examples, environment, files), aligned columns, defaults in brackets, and descriptions wrapped to the terminal width, and SHALL render `/help` from the same command table in both front-ends.
+
+#### Scenario: Flag help
+- **WHEN** the user runs `mote --help` in an 80-column terminal
+- **THEN** no line exceeds 80 columns, every flag appears once, and defaults are shown
+
+#### Scenario: Same commands everywhere
+- **WHEN** the user runs `/help` in chat or line mode
+- **THEN** the same seven commands and the same key list appear
+
+#### Scenario: Unknown command
+- **WHEN** the user types `/compac`
+- **THEN** the reply suggests `/compact`
+
 ### Requirement: Slash commands autocomplete
 
 The system SHALL show a menu of matching commands as soon as the input begins with `/`, SHALL rank by prefix before substring, SHALL show at most eight rows with descriptions, and SHALL accept the highlighted entry with Tab or Enter.

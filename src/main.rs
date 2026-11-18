@@ -1,6 +1,7 @@
 mod agent;
 mod api;
 mod config;
+mod help;
 mod http;
 mod init;
 mod jobs;
@@ -15,29 +16,6 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "\
-mote — a small terminal agent for DeepSeek
-
-USAGE:
-    mote [OPTIONS] [PROMPT]
-    mote init
-    mote prompt
-
-OPTIONS:
-    -c, --continue          Continue the most recent session
-    -r, --resume <ID>       Resume a session by id or file path
-    -l, --list              List sessions and exit
-        --rename <ID> <T>   Rename a session
-        --delete <ID>       Delete a session (moves it to trash)
-        --agent <NAME>      Agent profile to start with
-        --skills-dir <P>    Add a skills directory
-        --model <NAME>      Model to use
-        --permissions <P>   normal | strict | yolo
-        --cli               Line mode, even in a terminal
-        --chat              Full-screen chat, even when piped
-    -h, --help              Show this help
-    -V, --version           Show the version
-";
 
 fn main() -> ExitCode {
     match run() {
@@ -53,7 +31,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        print!("{USAGE}");
+        print!("{}", help::usage(terminal_width()));
         return Ok(());
     }
     if args.iter().any(|a| a == "-V" || a == "--version") {
@@ -197,6 +175,35 @@ fn run() -> Result<(), String> {
     }
 }
 
+fn terminal_width() -> usize {
+    #[repr(C)]
+    struct Winsize {
+        rows: u16,
+        cols: u16,
+        x: u16,
+        y: u16,
+    }
+    extern "C" {
+        fn ioctl(fd: std::ffi::c_int, request: std::ffi::c_ulong, ...) -> std::ffi::c_int;
+    }
+    #[cfg(target_os = "macos")]
+    const TIOCGWINSZ: std::ffi::c_ulong = 0x4008_7468;
+    #[cfg(not(target_os = "macos"))]
+    const TIOCGWINSZ: std::ffi::c_ulong = 0x5413;
+    let mut ws = Winsize {
+        rows: 0,
+        cols: 0,
+        x: 0,
+        y: 0,
+    };
+    let ok = unsafe { ioctl(1, TIOCGWINSZ, &mut ws as *mut Winsize) } == 0;
+    if ok && ws.cols > 0 {
+        ws.cols as usize
+    } else {
+        100
+    }
+}
+
 extern "C" {
     fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int;
 }
@@ -219,7 +226,7 @@ fn repl(session: &mut Session, cli: &mut Cli) -> Result<(), String> {
         match text {
             "/quit" | "/exit" => return Ok(()),
             "/help" => {
-                println!("/help /quit  —  or just talk to it");
+                println!("{}", help::commands());
                 continue;
             }
             _ => {}

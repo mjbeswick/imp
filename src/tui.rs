@@ -344,15 +344,7 @@ struct Status {
     streaming: bool,
 }
 
-const COMMANDS: &[(&str, &str)] = &[
-    ("/help", "show keys and commands"),
-    ("/new", "start a fresh conversation"),
-    ("/sessions", "list and pick sessions"),
-    ("/agent", "switch agent profile"),
-    ("/compact", "compact the conversation now"),
-    ("/think", "toggle thinking for the next turn"),
-    ("/quit", "leave"),
-];
+const COMMANDS: &[(&str, &str)] = crate::help::COMMANDS;
 
 impl App {
     pub fn new(cfg: Config) -> Self {
@@ -693,13 +685,7 @@ impl App {
 
     fn run_command(&mut self, cmd: &str, tx: &Sender<Cmd>) {
         match cmd {
-            "help" => {
-                let mut text = String::from("keys: Enter send  Alt+Enter newline  Esc cancel  ^C quit\n");
-                for (n, d) in COMMANDS {
-                    text.push_str(&format!("  {n:<10} {d}\n"));
-                }
-                self.push(Role::Info, text);
-            }
+            "help" => self.push(Role::Info, crate::help::commands()),
             "quit" | "exit" => self.quit = true,
             "agent" => {
                 let options = self.agents.clone();
@@ -745,10 +731,7 @@ impl App {
                 self.entries.clear();
                 self.push(Role::Info, "new conversation");
             }
-            other => self.push(
-                Role::Info,
-                format!("/{other} is not wired up yet — see tasks.md"),
-            ),
+            other => self.push(Role::Info, crate::help::unknown(other)),
         }
     }
 
