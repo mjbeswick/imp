@@ -105,30 +105,56 @@ fn mode(fd: &OwnedFd) -> Termios {
     t
 }
 
-/// The terminal mode the TUI leaves behind must match the one it found.
-#[test]
-fn tui_restores_the_terminal_on_exit() {
+/// How the TUI is asked to stop.
+#[derive(Clone, Copy)]
+enum Stop {
+    Quit,
+    Panic,
+    Terminate,
+}
+
+fn probe(stop: Stop) -> (Termios, Termios, Termios) {
     let (mut master, slave) = open_pty();
     let before = mode(&slave);
 
-    let dir = std::env::temp_dir().join(format!("imp-tty-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "imp-tty-{}-{}",
+        std::process::id(),
+        match stop {
+            Stop::Quit => "quit",
+            Stop::Panic => "panic",
+            Stop::Terminate => "term",
+        }
+    ));
     std::fs::create_dir_all(&dir).expect("temp dir");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_imp"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_imp"));
+    command
         .env("DEEPSEEK_API_KEY", "test-key")
         .env("XDG_CONFIG_HOME", dir.join("config"))
         .env("XDG_STATE_HOME", dir.join("state"))
         .env_remove("IMP_FORCE_PANIC")
         .stdin(Stdio::from(slave.try_clone().expect("clone slave")))
         .stdout(Stdio::from(slave.try_clone().expect("clone slave")))
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn imp");
+        .stderr(Stdio::null());
+    if matches!(stop, Stop::Panic) {
+        command.env("IMP_FORCE_PANIC", "1");
+    }
+    let mut child = command.spawn().expect("spawn imp");
 
     let seen = read_until(&mut master, b"\x1b[?1049h", Duration::from_secs(5));
     let during = mode(&slave);
-    master.write_all(b"\x04").expect("send quit");
-    master.flush().ok();
+    match stop {
+        Stop::Quit | Stop::Panic => {
+            master.write_all(b"\x04").expect("send quit");
+            master.flush().ok();
+        }
+        Stop::Terminate => {
+            let _ = Command::new("kill")
+                .args(["-TERM", &child.id().to_string()])
+                .status();
+        }
+    }
 
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(10) {
@@ -148,10 +174,40 @@ fn tui_restores_the_terminal_on_exit() {
         "the TUI never took the screen, so it did not run: {during:?}"
     );
     assert_ne!(before, during, "the TUI did not change the terminal mode");
+    (before, during, after)
+}
+
+/// `PENDIN` is kernel bookkeeping for pending input, not a mode imp sets.
+const PENDIN: u64 = 0x2000_0000;
+
+fn stable(mut t: Termios) -> Termios {
+    t.lflag &= !PENDIN;
+    t
+}
+
+fn assert_restored(stop: Stop) {
+    let (before, _, after) = probe(stop);
     assert_eq!(
-        before, after,
+        stable(before),
+        stable(after),
         "the TUI left the terminal in a different mode"
     );
+}
+
+/// The terminal mode the TUI leaves behind must match the one it found.
+#[test]
+fn tui_restores_the_terminal_on_exit() {
+    assert_restored(Stop::Quit);
+}
+
+#[test]
+fn tui_restores_the_terminal_on_panic() {
+    assert_restored(Stop::Panic);
+}
+
+#[test]
+fn tui_restores_the_terminal_on_sigterm() {
+    assert_restored(Stop::Terminate);
 }
 
 fn read_until(master: &mut File, needle: &[u8], limit: Duration) -> bool {

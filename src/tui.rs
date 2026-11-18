@@ -47,16 +47,94 @@ fn size() -> (usize, usize) {
     }
 }
 
-static SAVED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Termios {
+    iflag: u64,
+    oflag: u64,
+    cflag: u64,
+    lflag: u64,
+    cc: [u8; NUM_CC],
+    ispeed: u64,
+    ospeed: u64,
+}
+
+#[cfg(target_os = "macos")]
+const NUM_CC: usize = 20;
+#[cfg(not(target_os = "macos"))]
+const NUM_CC: usize = 32;
+
+/// The flags `stty raw -echo` clears, by platform.
+mod flags {
+    #[cfg(target_os = "macos")]
+    pub const IFLAGS: u64 = 0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200;
+    #[cfg(not(target_os = "macos"))]
+    pub const IFLAGS: u64 = 0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80 | 0x100 | 0x400;
+
+    #[cfg(target_os = "macos")]
+    pub const LFLAGS: u64 = 0x8 | 0x10 | 0x100 | 0x80 | 0x400;
+    #[cfg(not(target_os = "macos"))]
+    pub const LFLAGS: u64 = 0x8 | 0x40 | 0x2 | 0x1 | 0x8000;
+
+    #[cfg(target_os = "macos")]
+    pub const CSIZE: u64 = 0x300;
+    #[cfg(not(target_os = "macos"))]
+    pub const CSIZE: u64 = 0x30;
+
+    #[cfg(target_os = "macos")]
+    pub const CS8: u64 = 0x300;
+    #[cfg(not(target_os = "macos"))]
+    pub const CS8: u64 = 0x30;
+
+    #[cfg(target_os = "macos")]
+    pub const PARENB: u64 = 0x1000;
+    #[cfg(not(target_os = "macos"))]
+    pub const PARENB: u64 = 0x100;
+
+    #[cfg(target_os = "macos")]
+    pub const VMIN: usize = 16;
+    #[cfg(not(target_os = "macos"))]
+    pub const VMIN: usize = 6;
+
+    #[cfg(target_os = "macos")]
+    pub const VTIME: usize = 17;
+    #[cfg(not(target_os = "macos"))]
+    pub const VTIME: usize = 5;
+}
+
+const OPOST: u64 = 0x1;
+const TCSANOW: c_int = 0;
+
+static SAVED: std::sync::Mutex<Option<Termios>> = std::sync::Mutex::new(None);
 const RESTORE: &str = "\x1b[?25h\x1b[?1049l";
 
 extern "C" {
     fn write(fd: std::ffi::c_int, buf: *const u8, len: usize) -> isize;
     fn _exit(code: std::ffi::c_int) -> !;
     fn signal(sig: std::ffi::c_int, handler: usize) -> usize;
+    fn tcgetattr(fd: c_int, termios: *mut Termios) -> c_int;
+    fn tcsetattr(fd: c_int, action: c_int, termios: *const Termios) -> c_int;
+}
+
+/// Put the terminal back the way it was found. Safe to call more than once.
+fn restore_terminal() {
+    if let Ok(mut slot) = SAVED.lock() {
+        if let Some(saved) = slot.take() {
+            unsafe {
+                tcsetattr(0, TCSANOW, &saved);
+            }
+        }
+    }
 }
 
 extern "C" fn on_signal(_: std::ffi::c_int) {
+    if let Ok(mut slot) = SAVED.try_lock() {
+        if let Some(saved) = slot.take() {
+            unsafe {
+                tcsetattr(0, TCSANOW, &saved);
+            }
+        }
+    }
     unsafe {
         write(1, RESTORE.as_ptr(), RESTORE.len());
         _exit(1);
@@ -66,13 +144,9 @@ extern "C" fn on_signal(_: std::ffi::c_int) {
 /// Restore on panic and on SIGTERM/SIGINT, not only on a clean drop.
 fn install_guards() {
     std::panic::set_hook(Box::new(|info| {
+        restore_terminal();
         unsafe {
             write(1, RESTORE.as_ptr(), RESTORE.len());
-        }
-        if let Ok(saved) = SAVED.lock() {
-            if let Some(s) = &*saved {
-                let _ = std::process::Command::new("stty").arg(s).status();
-            }
         }
         eprintln!("{info}");
     }));
@@ -82,36 +156,49 @@ fn install_guards() {
     }
 }
 
-/// Raw mode through `stty`, which is more portable than a hand-declared termios.
-struct RawMode {
-    saved: String,
+/// Raw mode through termios, so imp owns the mode it changed.
+struct RawMode;
+
+fn raw_of(saved: Termios) -> Termios {
+    let mut raw = saved;
+    raw.iflag &= !flags::IFLAGS;
+    raw.oflag &= !OPOST;
+    raw.lflag &= !flags::LFLAGS;
+    raw.cflag &= !(flags::CSIZE | flags::PARENB);
+    raw.cflag |= flags::CS8;
+    raw.cc[flags::VMIN] = 1;
+    raw.cc[flags::VTIME] = 0;
+    raw
 }
 
 impl RawMode {
     fn enter() -> Self {
-        let saved = std::process::Command::new("stty")
-            .arg("-g")
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
-        let _ = std::process::Command::new("stty")
-            .args(["raw", "-echo"])
-            .status();
-        if let Ok(mut slot) = SAVED.lock() {
-            *slot = Some(saved.clone());
+        let mut saved = Termios {
+            iflag: 0,
+            oflag: 0,
+            cflag: 0,
+            lflag: 0,
+            cc: [0; NUM_CC],
+            ispeed: 0,
+            ospeed: 0,
+        };
+        if unsafe { tcgetattr(0, &mut saved) } == 0 {
+            unsafe {
+                tcsetattr(0, TCSANOW, &raw_of(saved));
+            }
+            if let Ok(mut slot) = SAVED.lock() {
+                *slot = Some(saved);
+            }
         }
         print!("{ALT_ON}");
         std::io::stdout().flush().ok();
-        Self { saved }
+        Self
     }
 }
 
 impl Drop for RawMode {
     fn drop(&mut self) {
-        if !self.saved.is_empty() {
-            let _ = std::process::Command::new("stty").arg(&self.saved).status();
-        }
+        restore_terminal();
         print!("{ALT_OFF}");
         std::io::stdout().flush().ok();
     }
@@ -323,18 +410,21 @@ impl Hooks for WorkerHooks {
     fn run_attached(&mut self, command: &str) -> Option<i32> {
         print!("\x1b[?25h\x1b[?1049l");
         std::io::stdout().flush().ok();
-        if let Ok(saved) = SAVED.lock() {
-            if let Some(s) = &*saved {
-                let _ = std::process::Command::new("stty").arg(s).status();
+        let saved = SAVED.lock().ok().and_then(|slot| *slot);
+        if let Some(saved) = saved {
+            unsafe {
+                tcsetattr(0, TCSANOW, &saved);
             }
         }
         let status = std::process::Command::new("sh")
             .arg("-c")
             .arg(command)
             .status();
-        let _ = std::process::Command::new("stty")
-            .args(["raw", "-echo"])
-            .status();
+        if let Some(saved) = saved {
+            unsafe {
+                tcsetattr(0, TCSANOW, &raw_of(saved));
+            }
+        }
         print!("\x1b[?1049h\x1b[?25l");
         std::io::stdout().flush().ok();
         Some(status.ok().and_then(|s| s.code()).unwrap_or(-1))
