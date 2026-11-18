@@ -569,6 +569,7 @@ pub struct App {
     menu_index: usize,
     pending: Option<Pending>,
     pending_since: Option<Instant>,
+    bell_pending: bool,
     status: Status,
     agents: Vec<String>,
     sessions_dir: std::path::PathBuf,
@@ -632,6 +633,7 @@ impl App {
             menu_index: 0,
             pending: None,
             pending_since: None,
+            bell_pending: false,
             status: Status {
                 tokens: 0,
                 hit: 0,
@@ -712,6 +714,7 @@ impl App {
             Ev::Confirm { what, reply } => {
                 self.pending = Some(Pending::Confirm { what, reply });
                 self.pending_since = Some(Instant::now());
+                self.bell_pending = true;
                 self.dirty = true;
             }
             Ev::Question { q, opts, reply } => {
@@ -723,6 +726,7 @@ impl App {
                     typed: String::new(),
                 });
                 self.pending_since = Some(Instant::now());
+                self.bell_pending = true;
                 self.dirty = true;
             }
             Ev::Stop(reason) => {
@@ -1258,6 +1262,7 @@ impl App {
         let mut out = std::io::stdout();
         out.write_all(screen.as_bytes()).ok();
         out.flush().ok();
+        self.bell_pending = false;
         self.dirty = false;
         self.last_redraw = Instant::now();
     }
@@ -1360,6 +1365,11 @@ impl App {
                     }
                     text
                 }
+            };
+            let text = if self.bell_pending {
+                format!("\u{7}{text}")
+            } else {
+                text
             };
             return Some(self.palette.paint(Role::Info, &fit(&text, cols)));
         }
@@ -1874,6 +1884,25 @@ mod tests {
         assert_eq!(a.input, "aa\nbbb", "Up left the composer");
         assert_eq!(a.cursor, 2, "Up did not land on the row above");
         assert!(a.hist_pos.is_none(), "Up recalled history from the last row");
+    }
+
+    #[test]
+    fn a_new_prompt_rings_once() {
+        let mut a = app();
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm {
+            what: "run `ls`".into(),
+            reply,
+        });
+        assert!(
+            a.frame(80, 12).contains('\u{7}'),
+            "no bell on a new prompt"
+        );
+        a.bell_pending = false;
+        assert!(
+            !a.frame(80, 12).contains('\u{7}'),
+            "the same prompt rings twice"
+        );
     }
 
     #[test]
