@@ -95,6 +95,9 @@
 - [x] 9.2 8 KB cap with explicit truncation, and a startup report listing files and sizes. Verify: a 40 KB file yields an 8 KB prompt section and a reported truncation.
 - [x] 9.3 Explicit reload that reports the cache reset. Verify: editing the file mid-session has no effect until reload, and reload changes the prefix exactly once.
 
+- [x] 9.4 Compiled baseline prompt: tool semantics, caps, confinement, ask policy; agent files add role only. Verify: every tool name appears, both caps appear, and the size test passes.
+- [x] 9.5 `mote prompt` prints the baseline alone. Verify: output contains no instructions, skills, or memory text.
+
 ## 10. Sessions
 
 - [x] 10.1 JSONL writer with flush after each record, covering messages, tool calls, results, compaction, and usage. Verify: kill during a tool call leaves every prior record readable.

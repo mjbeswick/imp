@@ -34,6 +34,30 @@ The system SHALL cap loaded instructions at 8 KB total, SHALL mark truncation ex
 - **WHEN** the session starts
 - **THEN** the interface lists the instruction files it loaded and their sizes
 
+### Requirement: A compiled baseline always ships
+
+The system SHALL send a compiled baseline prompt on every request covering tool semantics, output caps, path confinement, and when to ask, SHALL allow agent files to add role without replacing it, and SHALL NOT make the baseline depend on any file existing.
+
+#### Scenario: Fresh installation
+- **WHEN** no agent file and no `AGENTS.md` exist
+- **THEN** the request still carries the baseline with every tool named and both caps stated
+
+#### Scenario: Agent switch
+- **WHEN** the agent changes mid-conversation
+- **THEN** the baseline is unchanged and only the role note is appended
+
+#### Scenario: Drift is caught
+- **WHEN** a tool is added or renamed without the baseline being updated
+- **THEN** the build fails a test that checks every tool name appears in the baseline
+
+#### Scenario: Inspectable
+- **WHEN** the user runs `mote prompt`
+- **THEN** the baseline prints, and nothing else is composed with it
+
+#### Scenario: Budget
+- **WHEN** the baseline is measured
+- **THEN** it stays under 2,400 bytes so the default request stays near 1.4k tokens
+
 ### Requirement: Instructions are part of the frozen prefix
 
 The system SHALL load instructions once at session start and SHALL NOT re-read them during the session unless the user asks to reload.

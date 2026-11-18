@@ -1,6 +1,6 @@
-/Users/michael/Projects/mote-impl/target/debug/deps/mote-fc277a85aaad8d30.d: src/main.rs src/agent.rs src/api.rs src/config.rs src/http.rs src/init.rs src/jobs.rs src/perm.rs src/store.rs src/tools.rs src/tui.rs src/../assets/skills/config/SKILL.md
+/Users/michael/Projects/mote-impl/target/debug/deps/mote-fc277a85aaad8d30.d: src/main.rs src/agent.rs src/api.rs src/config.rs src/http.rs src/init.rs src/jobs.rs src/perm.rs src/prompt.rs src/store.rs src/tools.rs src/tui.rs src/../assets/skills/config/SKILL.md
 
-/Users/michael/Projects/mote-impl/target/debug/deps/mote-fc277a85aaad8d30: src/main.rs src/agent.rs src/api.rs src/config.rs src/http.rs src/init.rs src/jobs.rs src/perm.rs src/store.rs src/tools.rs src/tui.rs src/../assets/skills/config/SKILL.md
+/Users/michael/Projects/mote-impl/target/debug/deps/mote-fc277a85aaad8d30: src/main.rs src/agent.rs src/api.rs src/config.rs src/http.rs src/init.rs src/jobs.rs src/perm.rs src/prompt.rs src/store.rs src/tools.rs src/tui.rs src/../assets/skills/config/SKILL.md
 
 src/main.rs:
 src/agent.rs:
@@ -10,6 +10,7 @@ src/http.rs:
 src/init.rs:
 src/jobs.rs:
 src/perm.rs:
+src/prompt.rs:
 src/store.rs:
 src/tools.rs:
 src/tui.rs:

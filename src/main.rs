@@ -5,6 +5,7 @@ mod http;
 mod init;
 mod jobs;
 mod perm;
+mod prompt;
 mod store;
 mod tools;
 mod tui;
@@ -20,6 +21,7 @@ mote — a small terminal agent for DeepSeek
 USAGE:
     mote [OPTIONS] [PROMPT]
     mote init
+    mote prompt
 
 OPTIONS:
     -c, --continue          Continue the most recent session
@@ -59,6 +61,10 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    if args.first().map(|a| a.as_str()) == Some("prompt") {
+        print!("{}", prompt::BASELINE);
+        return Ok(());
+    }
     if args.first().map(|a| a.as_str()) == Some("init") {
         let report = init::run()?;
         init::print(&report);
@@ -289,31 +295,7 @@ fn confirm(prompt: &str) -> bool {
 }
 
 fn system_prompt(root: &std::path::Path, cfg: &config::Config) -> String {
-    let mut prompt = String::from(
-        "You are mote, a terminal agent. You run commands and edit files on the user's machine.\n\
-         Be direct and brief. Prefer doing over explaining. Read a file before editing it.\n\
-         Tools: bash, read, edit, write, ask. Use `read` rather than cat, `edit` rather than sed,\n\
-         and `write` rather than shell redirection, so caps and checks apply.\n\
-         Use ask only when a real decision blocks you.\n",
-    );
-    let (instructions, _loaded) = store::load_instructions(root);
-    prompt.push_str(&instructions);
-    if instructions.is_empty() {
-        // load_instructions already covers AGENTS.md when present.
-    }
-
-    prompt.push_str(
-        "\nMemory: notes are plain markdown. Search with the memory tool before guessing; save only when asked.\n",
-    );
-
-    let skills = store::load_skills(cfg, root);
-    if !skills.is_empty() {
-        prompt.push_str("\nSkills (load with skill_load when relevant):\n");
-        for s in &skills {
-            prompt.push_str(&format!("- {}: {}\n", s.name, s.description));
-        }
-    }
-    prompt
+    prompt::compose(root, cfg)
 }
 
 fn next(args: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
