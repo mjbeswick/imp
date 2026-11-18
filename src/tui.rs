@@ -77,8 +77,8 @@ fn install_guards() {
         eprintln!("{info}");
     }));
     unsafe {
-        signal(15, on_signal as usize);
-        signal(2, on_signal as usize);
+        signal(15, on_signal as *const () as usize);
+        signal(2, on_signal as *const () as usize);
     }
 }
 
