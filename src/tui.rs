@@ -669,6 +669,7 @@ pub struct App {
     agents: Vec<String>,
     sessions_dir: std::path::PathBuf,
     last_redraw: Instant,
+    last_size: (usize, usize),
     dirty: bool,
     quit: bool,
     spinner: usize,
@@ -748,6 +749,7 @@ impl App {
             agents,
             sessions_dir,
             last_redraw: Instant::now() - Duration::from_secs(1),
+            last_size: (0, 0),
             dirty: true,
             quit: false,
             spinner: 0,
@@ -1431,8 +1433,24 @@ impl App {
         }
     }
 
+    /// A frame is due only when a key or event arrived or something visible
+    /// changed. Nothing redraws on a timer.
+    fn wants_render(&self, redraw: bool) -> bool {
+        redraw || self.dirty
+    }
+
+    /// The spinner advances at most ten times a second.
+    fn spinner_due(&self) -> bool {
+        self.status.streaming && self.last_redraw.elapsed() >= Duration::from_millis(100)
+    }
+
+    fn resized(&self, cols: usize, rows: usize) -> bool {
+        self.last_size != (cols, rows)
+    }
+
     pub fn render(&mut self) {
         let (cols, rows) = size();
+        self.last_size = (cols, rows);
         self.cols.store(cols as u16, Ordering::Relaxed);
         if rows < 5 || cols < 20 {
             return;
@@ -2034,7 +2052,9 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                 redraw = true;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if app.status.streaming {
+                // Ten frames a second is enough for a spinner. Repainting faster
+                // flickers under software terminal renderers.
+                if app.spinner_due() {
                     app.spinner += 1;
                     redraw = true;
                 }
@@ -2056,7 +2076,13 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
             }
         }
 
-        if redraw || app.dirty || app.last_redraw.elapsed() > Duration::from_millis(120) {
+        // A resize has to be noticed without repainting on a timer.
+        let (cols, rows) = size();
+        if app.resized(cols, rows) {
+            app.dirty = true;
+        }
+
+        if app.wants_render(redraw) {
             app.render();
         }
     }
@@ -2587,6 +2613,37 @@ mod tests {
         .unwrap();
         let line = a.status_line(120);
         assert!(line.contains(&format!("${total:.2}")), "{line}");
+    }
+
+    #[test]
+    fn an_idle_app_does_not_render() {
+        let mut a = app();
+        a.dirty = false;
+        assert!(!a.wants_render(false), "an idle screen queued a frame");
+        assert!(a.wants_render(true), "a key did not queue a frame");
+        a.dirty = true;
+        assert!(a.wants_render(false), "a dirty screen did not queue a frame");
+    }
+
+    #[test]
+    fn the_spinner_runs_at_ten_frames_a_second() {
+        let mut a = app();
+        a.status.streaming = true;
+        a.last_redraw = Instant::now();
+        assert!(!a.spinner_due(), "spinner ran faster than 100 ms");
+        a.last_redraw = Instant::now() - Duration::from_millis(101);
+        assert!(a.spinner_due(), "spinner stalled after 100 ms");
+        a.status.streaming = false;
+        assert!(!a.spinner_due(), "idle spinner still ticking");
+    }
+
+    #[test]
+    fn a_resize_is_noticed_without_a_timer() {
+        let mut a = app();
+        a.last_size = (80, 24);
+        assert!(!a.resized(80, 24));
+        assert!(a.resized(81, 24));
+        assert!(a.resized(80, 25));
     }
 
     #[test]
