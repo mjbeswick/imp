@@ -142,11 +142,10 @@ fn run() -> Result<(), String> {
     };
     match existing {
         Some(log) => {
-            let restored = log.load();
-            let count = restored.len();
-            session.resume(restored);
-            session.attach_log(log.clone());
-            eprintln!("mote: resumed {} ({} messages)", log.id, count);
+            let id = log.id.clone();
+            let count = log.load().len();
+            session.resume_id(&sessions_dir, &id)?;
+            eprintln!("mote: resumed {id} ({count} messages, agent {})", session.agent.name);
         }
         None => {
             session.attach_log(store::Log::create(&sessions_dir, &root, &session.cfg.model));
@@ -169,7 +168,7 @@ fn run() -> Result<(), String> {
                 tui::run(session, tui_cfg)
             } else {
                 let mut session = session;
-                repl(&mut session, &mut Cli)
+                repl(&mut session, &mut Cli, &sessions_dir)
             }
         }
     }
@@ -208,7 +207,7 @@ extern "C" {
     fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int;
 }
 
-fn repl(session: &mut Session, cli: &mut Cli) -> Result<(), String> {
+fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
     let tty = unsafe { isatty(0) } != 0;
@@ -231,13 +230,49 @@ fn repl(session: &mut Session, cli: &mut Cli) -> Result<(), String> {
         if text.is_empty() {
             continue;
         }
-        match text {
-            "/quit" | "/exit" => return Ok(()),
-            "/help" => {
-                println!("{}", help::commands());
-                continue;
+        if let Some(cmd) = text.strip_prefix('/') {
+            match cmd {
+                "quit" | "exit" => return Ok(()),
+                "help" => println!("{}", help::commands()),
+                "new" => {
+                    let system = session
+                        .history
+                        .iter()
+                        .find(|m| m.role == api::Role::System)
+                        .cloned();
+                    session.history.clear();
+                    if let Some(m) = system {
+                        session.history.push(m);
+                    }
+                    println!("new conversation");
+                }
+                "compact" => {
+                    if let Err(e) = session.compact(cli) {
+                        eprintln!("mote: {e}");
+                    }
+                }
+                "think" => {
+                    session.cfg.thinking = !session.cfg.thinking;
+                    println!("thinking {}", if session.cfg.thinking { "on" } else { "off" });
+                }
+                "reload" => match session.reload() {
+                    Ok(()) => println!("reloaded; prompt cache reset"),
+                    Err(e) => eprintln!("mote: {e}"),
+                },
+                "agent" => {
+                    println!("agent: {}", session.agent.name);
+                    for a in &session.roster {
+                        println!("  {:<12} {}", a.name, a.description);
+                    }
+                }
+                "sessions" => {
+                    for m in store::Log::list(&sessions_dir) {
+                        println!("{:<12} {:<40} {:>5} msgs", m.id, m.title, m.messages);
+                    }
+                }
+                other => println!("{}", help::unknown(other)),
             }
-            _ => {}
+            continue;
         }
         if let Err(e) = session.turn(text, cli) {
             eprintln!("mote: {e}");

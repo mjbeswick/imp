@@ -158,9 +158,9 @@ The system SHALL persist submitted prompts to a history file, SHALL recall them 
 - **WHEN** the same prompt is sent twice in a row
 - **THEN** it appears once in history
 
-### Requirement: Seven slash commands, no more
+### Requirement: Eight slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/compact`, `/think`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload`, `/mode`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload`, `/mode`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
@@ -173,6 +173,10 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/compa
 #### Scenario: Command effect
 - **WHEN** the user runs `/compact`
 - **THEN** compaction runs immediately and the result is reported in the transcript
+
+#### Scenario: Reload
+- **WHEN** the user runs `/reload` after editing `AGENTS.md`
+- **THEN** the next request carries the new instructions and the interface says the cache was reset
 
 #### Scenario: Duplicate affordance is absent
 - **WHEN** the user types `/clear`

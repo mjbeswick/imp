@@ -126,12 +126,12 @@
 
 ## 12. Close the spec gaps
 
-- [ ] 12.1 `yolo` disables the path jail; other modes keep it. Verify: a write outside the directory succeeds in `yolo` and is refused in `normal`.
-- [ ] 12.2 Terminal restored on panic and on SIGTERM, not only on a normal exit. Verify: a forced panic and a SIGTERM both leave the terminal usable.
-- [ ] 12.3 `bash` cannot rewrite the main config either: the command text is checked for the config path. Verify: `echo x > ~/.config/mote/config` is refused in `normal` and prompts in `yolo`.
+- [x] 12.1 `yolo` disables the path jail; other modes keep it. Verify: a write outside the directory succeeds in `yolo` and is refused in `normal`.
+- [x] 12.2 Terminal restored on panic and on SIGTERM, not only on a normal exit. Verify: a forced panic and a SIGTERM both leave the terminal usable.
+- [x] 12.3 `bash` cannot rewrite the main config either: the command text is checked for the config path. Verify: `echo x > ~/.config/mote/config` is refused in `normal` and prompts in `yolo`.
 - [ ] 12.4 Mid-loop `context_length_exceeded`: truncate old tool results, retry once, then fail cleanly. Verify: a forced 400 with that body produces one retry and a second failure ends the turn.
 - [ ] 12.5 Agent switches are logged and restored on resume. Verify: switch, resume, and the same agent is active.
 - [ ] 12.6 Compaction proposes up to three memory saves and writes only what is approved. Verify: a fixture summary with `MEMORY:` lines produces proposals.
 - [ ] 12.7 `/sessions` loads the chosen session in place. Verify: choosing an entry replaces the transcript and continues that session.
 - [ ] 12.8 `memory` and `skill_load` appear only when configured. Verify: with no memory directory and only built-in skills, the schema has neither.
-- [ ] 12.9 `/reload` re-reads instructions and skills, rebuilds the prefix, and reports the cache reset. Verify: editing `AGENTS.md` changes the next request only after reload.
+- [x] 12.9 `/reload` re-reads instructions and skills, rebuilds the prefix, and reports the cache reset. Verify: editing `AGENTS.md` changes the next request only after reload.

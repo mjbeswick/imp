@@ -47,6 +47,41 @@ fn size() -> (usize, usize) {
     }
 }
 
+static SAVED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+const RESTORE: &str = "\x1b[?25h\x1b[?1049l";
+
+extern "C" {
+    fn write(fd: std::ffi::c_int, buf: *const u8, len: usize) -> isize;
+    fn _exit(code: std::ffi::c_int) -> !;
+    fn signal(sig: std::ffi::c_int, handler: usize) -> usize;
+}
+
+extern "C" fn on_signal(_: std::ffi::c_int) {
+    unsafe {
+        write(1, RESTORE.as_ptr(), RESTORE.len());
+        _exit(1);
+    }
+}
+
+/// Restore on panic and on SIGTERM/SIGINT, not only on a clean drop.
+fn install_guards() {
+    std::panic::set_hook(Box::new(|info| {
+        unsafe {
+            write(1, RESTORE.as_ptr(), RESTORE.len());
+        }
+        if let Ok(saved) = SAVED.lock() {
+            if let Some(s) = &*saved {
+                let _ = std::process::Command::new("stty").arg(s).status();
+            }
+        }
+        eprintln!("{info}");
+    }));
+    unsafe {
+        signal(15, on_signal as usize);
+        signal(2, on_signal as usize);
+    }
+}
+
 /// Raw mode through `stty`, which is more portable than a hand-declared termios.
 struct RawMode {
     saved: String,
@@ -63,6 +98,9 @@ impl RawMode {
         let _ = std::process::Command::new("stty")
             .args(["raw", "-echo"])
             .status();
+        if let Ok(mut slot) = SAVED.lock() {
+            *slot = Some(saved.clone());
+        }
         print!("{ALT_ON}");
         std::io::stdout().flush().ok();
         Self { saved }
@@ -223,6 +261,8 @@ pub enum Cmd {
     SetThinking(bool),
     SetAgent(String),
     Compact,
+    Resume(String),
+    Reload,
     Reset,
     Quit,
 }
@@ -687,6 +727,10 @@ impl App {
                 });
                 self.dirty = true;
             }
+            "reload" => {
+                let _ = tx.send(Cmd::Reload);
+                self.push(Role::Info, "reloading instructions and skills…");
+            }
             "sessions" => {
                 let mut options: Vec<String> = crate::store::Log::list(&self.sessions_dir)
                     .into_iter()
@@ -749,10 +793,16 @@ impl App {
                                     let _ = tx.send(Cmd::SetAgent(name.clone()));
                                     self.push(Role::Info, format!("agent: {name}"));
                                 }
-                                ChooseKind::Session => self.push(
-                                    Role::Info,
-                                    format!("resume with: mote -r {}", choice.split_whitespace().next().unwrap_or("")),
-                                ),
+                                ChooseKind::Session => {
+                                    let id = choice
+                                        .split_whitespace()
+                                        .next()
+                                        .unwrap_or("")
+                                        .to_string();
+                                    self.entries.clear();
+                                    self.push(Role::Info, format!("resuming {id}"));
+                                    let _ = tx.send(Cmd::Resume(id));
+                                }
                             }
                         }
                         self.dirty = true;
@@ -1090,13 +1140,18 @@ fn save_history(history: &[String]) {
 
 /// Run the interface until the user quits.
 pub fn run(session: Session, cfg: Config) -> Result<(), String> {
+    install_guards();
     let _raw = RawMode::enter();
+    if std::env::var_os("MOTE_FORCE_PANIC").is_some() {
+        panic!("forced panic for the terminal-guard test");
+    }
     let mut app = App::new(cfg);
 
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel::<Ev>();
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    let sessions_dir = crate::config::dirs_state().join("mote").join("sessions");
     let mut worker_session = session;
     std::thread::spawn({
         let ev_tx = ev_tx.clone();
@@ -1132,6 +1187,30 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     } else {
                         let _ = ev_tx.send(Ev::Error(format!("no agent {name}")));
                     }
+                }
+                Ok(Cmd::Resume(id)) => {
+                    match worker_session.resume_id(&sessions_dir, &id) {
+                        Ok(()) => {
+                            let _ = ev_tx.send(Ev::Info(format!("resumed {id}")));
+                        }
+                        Err(e) => {
+                            let _ = ev_tx.send(Ev::Error(e));
+                        }
+                    }
+                    let _ = ev_tx.send(Ev::Done(None));
+                }
+                Ok(Cmd::Reload) => {
+                    match worker_session.reload() {
+                        Ok(()) => {
+                            let _ = ev_tx.send(Ev::Info(
+                                "reloaded instructions and skills; prompt cache reset".to_string(),
+                            ));
+                        }
+                        Err(e) => {
+                            let _ = ev_tx.send(Ev::Error(e));
+                        }
+                    }
+                    let _ = ev_tx.send(Ev::Done(None));
                 }
                 Ok(Cmd::Compact) => {
                     let mut hooks = WorkerHooks {

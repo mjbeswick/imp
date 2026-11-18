@@ -6,6 +6,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
     ("/new", "start a fresh conversation"),
     ("/sessions", "list and pick sessions"),
+    ("/reload", "re-read instructions and skills"),
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
     ("/think", "toggle thinking for the next turn"),

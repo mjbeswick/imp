@@ -462,6 +462,14 @@ mod tests {
     }
 
     #[test]
+    fn jail_can_be_turned_off() {
+        let (mut t, _d) = tools();
+        assert!(t.resolve("/tmp/mote-outside").is_err());
+        t.jail = false;
+        assert!(t.resolve("/tmp/mote-outside").is_ok());
+    }
+
+    #[test]
     fn write_requires_a_prior_read() {
         let (mut t, d) = tools();
         std::fs::write(d.join("f.txt"), "old").unwrap();
