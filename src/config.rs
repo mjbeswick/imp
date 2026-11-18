@@ -83,7 +83,7 @@ impl Default for Config {
 
 impl Config {
     pub fn config_path() -> PathBuf {
-        dirs_config().join("mote").join("config")
+        dirs_config().join("imp").join("config")
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -240,6 +240,11 @@ mod tests {
     #[test]
     fn missing_equals_is_an_error() {
         assert!(Config::from_str("model").is_err());
+    }
+
+    #[test]
+    fn config_path_is_under_imp() {
+        assert!(Config::config_path().ends_with("imp/config"));
     }
 
     #[test]

@@ -107,7 +107,7 @@ pub fn builtin_skills() -> Vec<(String, String, String)> {
     [
         (
             "config",
-            "Change mote's own configuration, skills, agents, or memory. Use when asked to add a skill, create an agent, remember a preference, or explain where config lives. Cannot edit the main config file.",
+            "Change imp's own configuration, skills, agents, or memory. Use when asked to add a skill, create an agent, remember a preference, or explain where config lives. Cannot edit the main config file.",
             include_str!("../assets/skills/config/SKILL.md"),
         ),
         (
@@ -147,7 +147,7 @@ pub fn agent_dirs(cfg: &Config, root: &Path) -> Vec<PathBuf> {
     if let Some(extra) = &cfg.skills_dir {
         dirs.push(extra.with_file_name("agents"));
     }
-    dirs.push(dirs_config().join("mote").join("agents"));
+    dirs.push(dirs_config().join("imp").join("agents"));
     dirs
 }
 
@@ -481,7 +481,7 @@ impl Memory {
         if is_project(root) {
             dirs.push(root.join(".mote").join("memory"));
         }
-        dirs.push(crate::config::dirs_state().join("mote").join("memory"));
+        dirs.push(crate::config::dirs_state().join("imp").join("memory"));
         let _ = cfg;
         Self { dirs }
     }
@@ -609,7 +609,7 @@ pub fn load_skills(cfg: &Config, root: &Path) -> Vec<Skill> {
     if let Some(extra) = &cfg.skills_dir {
         dirs.push(extra.clone());
     }
-    dirs.push(crate::config::dirs_config().join("mote").join("skills"));
+    dirs.push(crate::config::dirs_config().join("imp").join("skills"));
 
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -701,7 +701,7 @@ fn strip_frontmatter(text: &str) -> String {
 /// Global, repository, then session directory. `CLAUDE.md` only as a fallback.
 pub fn load_instructions(root: &Path) -> (String, Vec<(PathBuf, usize)>) {
     let mut files: Vec<PathBuf> = Vec::new();
-    let global = crate::config::dirs_config().join("mote").join("AGENTS.md");
+    let global = crate::config::dirs_config().join("imp").join("AGENTS.md");
     if global.is_file() {
         files.push(global);
     }

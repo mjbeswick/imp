@@ -90,7 +90,7 @@ fn run() -> Result<(), String> {
         i += 1;
     }
 
-    let sessions_dir = config::dirs_state().join("mote").join("sessions");
+    let sessions_dir = config::dirs_state().join("imp").join("sessions");
 
     if list {
         let now = std::time::SystemTime::now()
@@ -118,7 +118,7 @@ fn run() -> Result<(), String> {
     }
 
     let root = std::env::current_dir().map_err(|e| e.to_string())?;
-    let out_dir = config::dirs_state().join("mote").join("out");
+    let out_dir = config::dirs_state().join("imp").join("out");
     let system = system_prompt(&root, &cfg);
     let tui_cfg = cfg.clone();
     let roster = store::load_agents(&cfg, &root);

@@ -51,8 +51,8 @@ pub struct Report {
 
 pub fn run() -> Result<Report, String> {
     run_at(
-        &crate::config::dirs_config().join("mote"),
-        &crate::config::dirs_state().join("mote"),
+        &crate::config::dirs_config().join("imp"),
+        &crate::config::dirs_state().join("imp"),
     )
 }
 

@@ -422,7 +422,7 @@ impl App {
             .into_iter()
             .map(|a| a.name)
             .collect();
-        let sessions_dir = crate::config::dirs_state().join("mote").join("sessions");
+        let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
         Self {
             cfg,
             palette,
@@ -754,7 +754,7 @@ impl App {
         // Same runner as the bash tool, one implementation of the limits.
         let mut tools = crate::tools::Tools::new(
             std::env::current_dir().unwrap_or_default(),
-            crate::config::dirs_state().join("mote").join("out"),
+            crate::config::dirs_state().join("imp").join("out"),
         );
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let out = tools.bash(command, &cancel);
@@ -1248,7 +1248,7 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
 }
 
 fn history_path() -> std::path::PathBuf {
-    crate::config::dirs_state().join("mote").join("history")
+    crate::config::dirs_state().join("imp").join("history")
 }
 
 fn load_history() -> Vec<String> {
@@ -1285,7 +1285,7 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
     let (ev_tx, ev_rx) = channel::<Ev>();
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let sessions_dir = crate::config::dirs_state().join("mote").join("sessions");
+    let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
     let mut worker_session = session;
     std::thread::spawn({
         let ev_tx = ev_tx.clone();

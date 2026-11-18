@@ -90,7 +90,7 @@ pub fn self_config(path: &std::path::Path, mode: Permissions) -> Option<Decision
     Some(match mode {
         Permissions::Yolo => Decision::Ask,
         _ => Decision::Deny(
-            "refused: mote's own config is edited by the user, not by the agent".into(),
+            "refused: imp's own config is edited by the user, not by the agent".into(),
         ),
     })
 }
@@ -100,19 +100,19 @@ pub fn jail_enabled(mode: Permissions) -> bool {
     mode != Permissions::Yolo
 }
 
-/// A shell command that names mote's own config gets the same treatment as a
+/// A shell command that names imp's own config gets the same treatment as a
 /// direct write to it.
 pub fn shell_touches_self_config(command: &str, mode: Permissions) -> Option<Decision> {
     let lower = command.to_ascii_lowercase();
-    let mentions = lower.contains("mote/config")
-        || lower.contains(".config/mote/config");
+    let mentions = lower.contains("imp/config")
+        || lower.contains(".config/imp/config");
     if !mentions {
         return None;
     }
     Some(match mode {
         Permissions::Yolo => Decision::Ask,
         _ => Decision::Deny(
-            "refused: mote's own config is edited by the user, not by the agent".into(),
+            "refused: imp's own config is edited by the user, not by the agent".into(),
         ),
     })
 }
@@ -207,11 +207,11 @@ mod tests {
     #[test]
     fn shell_mentioning_the_config_is_refused() {
         assert!(matches!(
-            shell_touches_self_config("echo x > ~/.config/mote/config", Permissions::Normal),
+            shell_touches_self_config("echo x > ~/.config/imp/config", Permissions::Normal),
             Some(Decision::Deny(_))
         ));
         assert!(matches!(
-            shell_touches_self_config("echo x > ~/.config/mote/config", Permissions::Yolo),
+            shell_touches_self_config("echo x > ~/.config/imp/config", Permissions::Yolo),
             Some(Decision::Ask)
         ));
         assert!(shell_touches_self_config("ls -la", Permissions::Normal).is_none());
