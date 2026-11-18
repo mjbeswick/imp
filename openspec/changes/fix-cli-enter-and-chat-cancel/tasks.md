@@ -1,7 +1,7 @@
 # Tasks
 
-- [ ] 1.1 Add a test for the line-entry reader: `hello\r`, `a\r\nb\n`, and empty input. Verify: the test fails, no such reader exists.
-- [ ] 1.2 Read line-mode entries until carriage return or line feed. Verify: the reader test passes and `cargo test` passes.
+- [x] 1.1 Add a test for the line-entry reader: `hello\r`, `a\r\nb\n`, and empty input. Verify: the test fails, no such reader exists.
+- [x] 1.2 Read line-mode entries until carriage return or line feed. Verify: the reader test passes and `cargo test` passes.
 - [ ] 1.3 Add a pty test that runs the TUI, sends Ctrl+D, and asserts the terminal mode is unchanged. Verify: it fails against the current build.
 - [ ] 1.4 Set and restore raw mode with termios on normal exit, panic, SIGINT, and SIGTERM. Verify: the pty test passes and `cargo test` passes.
 - [ ] 1.5 Add a test that Esc asks a running turn to stop. Verify: the test fails, Esc only queues a command.

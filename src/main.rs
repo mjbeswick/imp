@@ -204,6 +204,40 @@ extern "C" {
     fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int;
 }
 
+/// Read one entry, accepting either Enter encoding.
+///
+/// `read_line` waits for a line feed, but a terminal with its CR-to-NL
+/// mapping off sends a bare carriage return. Stop at either, treat CRLF as
+/// one ending, and return `None` only when input ends before anything arrives.
+fn read_entry<R: BufRead>(r: &mut R) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    let mut saw_input = false;
+    let mut byte = [0u8; 1];
+    loop {
+        match r.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => saw_input = true,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+        match byte[0] {
+            b'\n' => break,
+            b'\r' => {
+                let followed_by_lf = matches!(r.fill_buf(), Ok(b) if b.starts_with(b"\n"));
+                if followed_by_lf {
+                    let _ = r.read(&mut byte);
+                }
+                break;
+            }
+            b => line.push(b),
+        }
+    }
+    if !saw_input {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&line).into_owned()))
+}
+
 fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
@@ -213,13 +247,15 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
             print!("> ");
             out.flush().ok();
         }
-        let mut line = String::new();
-        if stdin.lock().read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-            if tty {
-                println!();
+        let line = match read_entry(&mut stdin.lock()).map_err(|e| e.to_string())? {
+            Some(line) => line,
+            None => {
+                if tty {
+                    println!();
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
+        };
         if tty {
             println!();
         }
@@ -305,8 +341,7 @@ impl Hooks for Cli {
         }
         print!("answer{}: ", if options.is_empty() { "" } else { " (number or text)" });
         std::io::stdout().flush().ok();
-        let mut line = String::new();
-        std::io::stdin().lock().read_line(&mut line).ok()?;
+        let line = read_entry(&mut std::io::stdin().lock()).ok()??;
         let line = line.trim().to_string();
         if let Ok(n) = line.parse::<usize>() {
             if n >= 1 && n <= options.len() {
@@ -343,10 +378,10 @@ fn print_ui(event: Ui) {
 fn confirm(prompt: &str) -> bool {
     print!("{prompt}? [y/N] ");
     std::io::stdout().flush().ok();
-    let mut line = String::new();
-    if std::io::stdin().lock().read_line(&mut line).is_err() {
-        return false;
-    }
+    let line = match read_entry(&mut std::io::stdin().lock()) {
+        Ok(Some(line)) => line,
+        _ => return false,
+    };
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
@@ -381,5 +416,21 @@ mod tests {
         assert!(!wants_chat("auto", false));
         assert!(wants_chat("chat", false));
         assert!(!wants_chat("cli", true));
+    }
+
+    #[test]
+    fn entry_ends_on_carriage_return_or_line_feed() {
+        use std::io::Cursor;
+
+        let mut cr = Cursor::new(b"hello\r".to_vec());
+        assert_eq!(read_entry(&mut cr).unwrap().as_deref(), Some("hello"));
+
+        let mut mixed = Cursor::new(b"a\r\nb\n".to_vec());
+        assert_eq!(read_entry(&mut mixed).unwrap().as_deref(), Some("a"));
+        assert_eq!(read_entry(&mut mixed).unwrap().as_deref(), Some("b"));
+        assert_eq!(read_entry(&mut mixed).unwrap(), None);
+
+        let mut empty = Cursor::new(Vec::new());
+        assert_eq!(read_entry(&mut empty).unwrap(), None);
     }
 }
