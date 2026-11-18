@@ -1553,14 +1553,30 @@ impl App {
             return vec![row];
         }
         let budget = (space / 2).clamp(1, 8);
-        let (caret_row, caret_col) = self.caret_position();
+        // A shell draft hides the `!` behind the prompt glyph.
+        let shell = self.input.starts_with('!');
+        let (text, cursor) = if shell {
+            (&self.input[1..], self.cursor.saturating_sub(1))
+        } else {
+            (&self.input[..], self.cursor)
+        };
+        let cursor = cursor.min(text.len());
+        let upto = &text[..cursor];
+        let caret_row = upto.matches('\n').count();
+        let caret_col = cursor - upto.rfind('\n').map(|i| i + 1).unwrap_or(0);
         let mut plain = Vec::new();
-        for (i, text) in self.input.split('\n').enumerate() {
-            let mut body = text.to_string();
+        for (i, line) in text.split('\n').enumerate() {
+            let mut body = line.to_string();
             if i == caret_row {
                 body.insert(caret_col.min(body.len()), CARET);
             }
-            let prefix = if i == 0 { "> " } else { "  " };
+            let prefix = if i != 0 {
+                "  "
+            } else if shell {
+                "$ "
+            } else {
+                "> "
+            };
             plain.push(format!("{prefix}{body}"));
         }
         let mut start = plain.len().saturating_sub(budget);
@@ -1614,6 +1630,9 @@ impl App {
     }
 
     fn status_line(&self, cols: usize) -> String {
+        if self.input.starts_with('!') && !self.status.streaming {
+            return fit(" shell · local · not sent to the model", cols);
+        }
         let hit_rate = if self.status.hit + self.status.miss > 0 {
             format!(
                 "{}%",
@@ -2561,4 +2580,24 @@ mod tests {
     fn wrap_keeps_blank_lines() {
         assert_eq!(wrap("a\n\nb", 20).len(), 3);
     }
+    #[test]
+    fn a_shell_draft_shows_a_dollar_prompt() {
+        let mut a = app();
+        a.input = "!ls".into();
+        a.cursor = 3;
+        let out = a.frame(60, 12);
+        assert!(out.contains("$ ls"), "no shell prompt: {out:?}");
+        assert!(out.contains("shell · local"), "no shell status: {out:?}");
+    }
+
+    #[test]
+    fn a_normal_draft_keeps_the_arrow() {
+        let mut a = app();
+        a.input = "hello".into();
+        a.cursor = 5;
+        let out = a.frame(60, 12);
+        assert!(out.contains("> hello"), "{out:?}");
+        assert!(out.contains("deepseek-flash"), "{out:?}");
+    }
+
 }

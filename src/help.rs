@@ -1,6 +1,6 @@
 //! Help text. One renderer, used by `--help`, `/help`, and line mode.
 
-pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear · Up/Down history · Tab complete";
+pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear · Up/Down history · Tab complete · !cmd shell";
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
