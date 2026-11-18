@@ -450,7 +450,11 @@ pub enum Ev {
         summary: String,
         args: String,
     },
-    ToolEnd { ok: bool, preview: String },
+    ToolEnd {
+        ok: bool,
+        preview: String,
+        ms: u128,
+    },
     Info(String),
     Error(String),
     Usage {
@@ -471,6 +475,7 @@ const CONFIRM_WAIT: Duration = Duration::from_secs(60);
 struct WorkerHooks {
     tx: Sender<Ev>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    waited: Duration,
 }
 
 impl Hooks for WorkerHooks {
@@ -483,14 +488,20 @@ impl Hooks for WorkerHooks {
                 summary,
                 args,
             },
-            Ui::ToolEnd { ok, preview } => Ev::ToolEnd { ok, preview },
+            Ui::ToolEnd { ok, preview, ms } => Ev::ToolEnd { ok, preview, ms },
             Ui::Info(t) => Ev::Info(t),
             Ui::Error(t) => Ev::Error(t),
         };
         let _ = self.tx.send(ev);
     }
 
+    fn last_wait(&self) -> Duration {
+        self.waited
+    }
+
     fn confirm(&mut self, what: &str) -> bool {
+        self.waited = Duration::ZERO;
+        let opened = Instant::now();
         let (tx, rx) = channel();
         if self
             .tx
@@ -502,7 +513,9 @@ impl Hooks for WorkerHooks {
         {
             return false;
         }
-        match wait_for_answer(&rx, CONFIRM_WAIT) {
+        let answered = wait_for_answer(&rx, CONFIRM_WAIT);
+        self.waited = opened.elapsed();
+        match answered {
             Some(answer) => answer,
             None => {
                 self.cancel.store(true, Ordering::Relaxed);
@@ -603,7 +616,6 @@ pub struct App {
     dirty: bool,
     quit: bool,
     spinner: usize,
-    tool_started: Option<Instant>,
     tool: Option<ToolRow>,
 }
 
@@ -674,7 +686,6 @@ impl App {
             dirty: true,
             quit: false,
             spinner: 0,
-            tool_started: None,
             tool: None,
         }
     }
@@ -714,7 +725,6 @@ impl App {
             }
             Ev::ToolStart { name, summary, args } => {
                 let _ = name;
-                self.tool_started = Some(Instant::now());
                 self.tool = Some(ToolRow {
                     index: self.entries.len(),
                     summary: summary.clone(),
@@ -726,12 +736,7 @@ impl App {
                 });
                 self.push(Role::Tool, format!("⠹ {summary}"))
             }
-            Ev::ToolEnd { ok, preview } => {
-                let ms = self
-                    .tool_started
-                    .take()
-                    .map(|t| t.elapsed().as_millis())
-                    .unwrap_or(0);
+            Ev::ToolEnd { ok, preview, ms } => {
                 let role = if ok { Role::Tool } else { Role::Error };
                 match self.tool.take() {
                     Some(mut row) => {
@@ -1688,6 +1693,7 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
                         cancel: worker_session.cancel.clone(),
+                        waited: Duration::ZERO,
                     };
                     let result = worker_session.turn(&text, &mut hooks);
                     let _ = ev_tx.send(Ev::Usage {
@@ -1709,6 +1715,7 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                         let mut hooks = WorkerHooks {
                             tx: ev_tx.clone(),
                             cancel: worker_session.cancel.clone(),
+                            waited: Duration::ZERO,
                         };
                         let applied = worker_session.switch_agent(agent);
                         let _ = ev_tx.send(Ev::Info(format!("agent: {applied}")));
@@ -1778,6 +1785,7 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
                         cancel: worker_session.cancel.clone(),
+                    waited: Duration::ZERO,
                     };
                     if let Err(e) = worker_session.compact(&mut hooks) {
                         let _ = ev_tx.send(Ev::Error(e));
@@ -2262,6 +2270,7 @@ mod tests {
         a.apply(Ev::ToolEnd {
             ok: false,
             preview: "exit 1".into(),
+            ms: 7,
         });
         assert_eq!(a.entries.len(), 1, "the finish added a second row");
         assert_eq!(a.entries[0].role, Role::Error);

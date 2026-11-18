@@ -15,6 +15,11 @@ pub trait Hooks {
     fn confirm(&mut self, what: &str) -> bool;
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String>;
 
+    /// Time the last confirmation kept the user, which is not the tool's cost.
+    fn last_wait(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+
     /// Run a command attached to the terminal, for prompts that need a tty.
     /// `None` means the front-end cannot hand the terminal over.
     fn run_attached(&mut self, _command: &str) -> Option<i32> {
@@ -26,7 +31,11 @@ pub enum Ui {
     Content(String),
     Reasoning(String),
     ToolStart { name: String, summary: String, args: String },
-    ToolEnd { ok: bool, preview: String },
+    ToolEnd {
+        ok: bool,
+        preview: String,
+        ms: u128,
+    },
     Info(String),
     Error(String),
 }
@@ -510,12 +519,15 @@ impl Session {
             args: call.arguments.clone(),
         });
 
+        let start = std::time::Instant::now();
         let out = self.run_tool(&call.name, &args, hooks);
+        let spent = start.elapsed().saturating_sub(hooks.last_wait());
         hooks.ui(Ui::ToolEnd {
             ok: !out.starts_with("refused")
                 && !out.starts_with("cancelled")
                 && !out.starts_with("bad arguments"),
             preview: summarise(&out),
+            ms: spent.as_millis(),
         });
         out
     }
@@ -1033,6 +1045,47 @@ mod tests {
         for (name, args, want) in cases {
             assert_eq!(describe(name, &args), want);
         }
+    }
+
+    #[test]
+    fn the_confirmation_wait_is_not_charged_to_the_tool() {
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(tool_reply("c1", "bash", "{\"command\":\"true\"}")),
+            Script::Ok(text_reply("done")),
+        ]);
+        s.cfg.permissions = crate::config::Permissions::Strict;
+
+        struct Slow {
+            waited: std::time::Duration,
+            ms: Option<u128>,
+        }
+        impl Hooks for Slow {
+            fn ui(&mut self, event: Ui) {
+                if let Ui::ToolEnd { ms, .. } = event {
+                    self.ms = Some(ms);
+                }
+            }
+            fn confirm(&mut self, _: &str) -> bool {
+                let opened = std::time::Instant::now();
+                std::thread::sleep(std::time::Duration::from_millis(80));
+                self.waited = opened.elapsed();
+                true
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+            fn last_wait(&self) -> std::time::Duration {
+                self.waited
+            }
+        }
+
+        let mut hooks = Slow {
+            waited: std::time::Duration::ZERO,
+            ms: None,
+        };
+        s.turn("run true", &mut hooks).unwrap();
+        let ms = hooks.ms.expect("a tool end");
+        assert!(ms < 50, "the wait was charged to the tool: {ms} ms");
     }
 
     #[test]
