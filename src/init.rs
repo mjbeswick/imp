@@ -1,9 +1,9 @@
-//! `mote init`: create the layout, write two examples, overwrite nothing.
+//! `imp init`: create the layout, write two examples, overwrite nothing.
 
 use std::path::Path;
 
 const CONFIG_TEMPLATE: &str = "\
-# mote configuration. Environment variables override every key.
+# imp configuration. Environment variables override every key.
 # DEEPSEEK_API_KEY holds the key; do not put it here.
 
 # model=deepseek-flash
@@ -15,7 +15,7 @@ const CONFIG_TEMPLATE: &str = "\
 # compact_at=60000
 # max_tokens=8192
 # color=auto                  # auto | always | never
-# skills_dir=~/.config/mote/skills
+# skills_dir=~/.config/imp/skills
 ";
 
 const AGENT_EXAMPLE: &str = "\
@@ -124,7 +124,7 @@ pub fn print(report: &Report) {
         println!("  kept     {p}");
     }
     println!();
-    println!("  next: set DEEPSEEK_API_KEY, then run mote");
+    println!("  next: set DEEPSEEK_API_KEY, then run imp");
 }
 
 #[cfg(test)]
@@ -136,7 +136,7 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let d = std::env::temp_dir().join(format!(
-            "mote-init-{}-{}",
+            "imp-init-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));

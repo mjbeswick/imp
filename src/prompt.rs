@@ -2,7 +2,7 @@
 //! model cannot infer from tool schemas.
 
 pub const BASELINE: &str = "\
-You are mote, a terminal agent running on the user's machine. You act; you do not narrate. Keep replies short and concrete.
+You are imp, a terminal agent running on the user's machine. You act; you do not narrate. Keep replies short and concrete.
 
 Tools
 - bash: run a command with sh -c. 30 seconds at most; longer work goes in the background and is collected with job.
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn skill_index_is_one_line_each() {
-        let d = std::env::temp_dir().join(format!("mote-skills-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("imp-skills-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         for i in 0..45 {
             let dir = d.join(format!("s{i}"));

@@ -71,7 +71,7 @@ where
         }
 
         let url_c = CString::new(url).map_err(|_| "url contains a nul byte")?;
-        let agent = CString::new("mote/0.1").unwrap();
+        let agent = CString::new("imp/0.1").unwrap();
         let mut errbuf = [0 as c_char; 256];
         let mut slist: *mut CurlSlist = std::ptr::null_mut();
 

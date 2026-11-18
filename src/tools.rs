@@ -388,7 +388,7 @@ mod tests {
         use std::sync::atomic::AtomicU64;
         static N: AtomicU64 = AtomicU64::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("mote-test-{}-{n}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("imp-test-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut t = Tools::new(dir.clone(), dir.join(".out"));
@@ -464,9 +464,9 @@ mod tests {
     #[test]
     fn jail_can_be_turned_off() {
         let (mut t, _d) = tools();
-        assert!(t.resolve("/tmp/mote-outside").is_err());
+        assert!(t.resolve("/tmp/imp-outside").is_err());
         t.jail = false;
-        assert!(t.resolve("/tmp/mote-outside").is_ok());
+        assert!(t.resolve("/tmp/imp-outside").is_ok());
     }
 
     #[test]

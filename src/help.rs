@@ -57,10 +57,10 @@ fn section(out: &mut String, title: &str, rows: &[(&str, &str)], width: usize) {
 /// `--help`. Width comes from the terminal so long descriptions wrap.
 pub fn usage(width: usize) -> String {
     let width = width.clamp(60, 110);
-    let mut out = String::from("mote — a small terminal agent for DeepSeek\n");
+    let mut out = String::from("imp — a small terminal agent for DeepSeek\n");
 
     out.push_str("\nUSAGE\n");
-    out.push_str("  mote [OPTIONS] [PROMPT]\n  mote init\n  mote prompt\n");
+    out.push_str("  imp [OPTIONS] [PROMPT]\n  imp init\n  imp prompt\n");
 
     section(
         &mut out,
@@ -101,11 +101,11 @@ pub fn usage(width: usize) -> String {
 
     out.push_str("\nEXAMPLES\n");
     for (cmd, what) in [
-        ("mote", "open the chat"),
-        ("mote \"why is the build failing?\"", "one request, then exit"),
-        ("mote -c", "continue where you left off"),
-        ("mote -r 512705c23", "resume a specific session"),
-        ("printf 'ls\\n/quit\\n' | mote", "scripted line mode"),
+        ("imp", "open the chat"),
+        ("imp \"why is the build failing?\"", "one request, then exit"),
+        ("imp -c", "continue where you left off"),
+        ("imp -r 512705c23", "resume a specific session"),
+        ("printf 'ls\\n/quit\\n' | imp", "scripted line mode"),
         ("!git status", "run a shell command from the prompt"),
     ] {
         out.push_str(&format!("  {cmd:<36} {what}\n"));
@@ -125,9 +125,9 @@ pub fn usage(width: usize) -> String {
     );
 
     out.push_str("\nFILES\n");
-    out.push_str("  ~/.config/mote/          config, agents, skills\n");
-    out.push_str("  ~/.local/state/mote/     sessions, memory, spilled output\n");
-    out.push_str("\nRun `mote prompt` to see the system prompt.\n");
+    out.push_str("  ~/.config/imp/          config, agents, skills\n");
+    out.push_str("  ~/.local/state/imp/     sessions, memory, spilled output\n");
+    out.push_str("\nRun `imp prompt` to see the system prompt.\n");
     out
 }
 
@@ -200,7 +200,8 @@ mod tests {
         assert!(text.contains("[normal]"));
         assert!(text.contains("[deepseek-flash]"));
         assert!(text.contains("EXAMPLES"));
-        assert!(text.contains("mote -c"));
+        assert!(text.contains("imp -c"));
+        assert!(!text.contains("mote"));
     }
 
     #[test]

@@ -184,7 +184,7 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let d = std::env::temp_dir().join(format!(
-            "mote-agent-{}-{}",
+            "imp-agent-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
@@ -786,7 +786,7 @@ mod session_tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let d = std::env::temp_dir().join(format!(
-            "mote-store-{}-{}",
+            "imp-store-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
