@@ -7,7 +7,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard only
 
-The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a newline, Esc to cancel, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C to exit when idle, to exit from an open prompt other than a command confirmation, or to cancel a running turn and then exit on the next press.
+The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a newline, Esc to cancel a running turn, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C to exit from any state.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -18,8 +18,8 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a
 - **THEN** the app exits on that press
 
 #### Scenario: Cancel then exit
-- **WHEN** a turn is running and the user presses Ctrl+C
-- **THEN** the turn is cancelled, the status row offers a second press to exit, and pressing Ctrl+C again exits even if the turn has not finished unwinding
+- **WHEN** a turn is streaming and the user presses Ctrl+C
+- **THEN** the app exits on that press and the turn ends with it
 
 #### Scenario: Picker open
 - **WHEN** the session picker, agent picker, or an `ask` question is open and the user presses Ctrl+C
@@ -27,7 +27,7 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a
 
 #### Scenario: Confirmation open
 - **WHEN** a command confirmation is open and the user presses Ctrl+C
-- **THEN** the command is refused and the turn stops, and the app keeps running
+- **THEN** the app exits on that press
 
 #### Scenario: Start a second line
 - **WHEN** the user types a line and presses Shift+Enter
