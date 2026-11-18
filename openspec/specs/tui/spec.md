@@ -7,7 +7,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard only
 
-The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a newline, Esc to cancel a running turn, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C to exit from any state.
+The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a newline, Esc to cancel a running turn, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C to exit from any state, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -40,6 +40,10 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a
 #### Scenario: Cancel a running turn
 - **WHEN** the user presses Esc while a turn is streaming or running a tool
 - **THEN** the turn stops at its next check, the partial answer stays on screen, and the input line accepts text again
+
+#### Scenario: Disambiguated control keys
+- **WHEN** the terminal reports Ctrl+C as `CSI 99;5u`
+- **THEN** the app exits, exactly as it does for a raw 0x03
 
 ### Requirement: Every rendered line fits the terminal
 
