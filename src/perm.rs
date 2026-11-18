@@ -12,7 +12,8 @@ pub enum Decision {
 /// Commands that run without a prompt in `normal` mode.
 const SAFE: &[&str] = &[
     "ls", "cat", "head", "tail", "wc", "rg", "fd", "file", "pwd", "echo", "date", "du", "df",
-    "jq", "which", "whoami", "uname", "stat", "tree", "grep", "find",
+    "jq", "which", "whoami", "uname", "stat", "tree", "grep", "find", "printf", "awk",
+    "sort", "uniq", "cut", "tr", "diff", "basename", "dirname", "realpath", "seq", "true",
 ];
 
 /// Fragments that are refused in every mode except `yolo`.
@@ -73,6 +74,25 @@ pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decis
     } else {
         Decision::Ask
     }
+}
+
+/// The agent may not rewrite its own settings; self-escalation is a hard stop.
+pub fn self_config(path: &std::path::Path, mode: Permissions) -> Option<Decision> {
+    let target = crate::config::Config::config_path();
+    let same = path == target
+        || path
+            .canonicalize()
+            .map(|p| p == target.canonicalize().unwrap_or_else(|_| target.clone()))
+            .unwrap_or(false);
+    if !same {
+        return None;
+    }
+    Some(match mode {
+        Permissions::Yolo => Decision::Ask,
+        _ => Decision::Deny(
+            "refused: mote's own config is edited by the user, not by the agent".into(),
+        ),
+    })
 }
 
 pub fn classify_write(inside_jail: bool, mode: Permissions) -> Decision {
@@ -160,6 +180,20 @@ mod tests {
             classify_command("ls", Permissions::Strict, false),
             Decision::Ask
         );
+    }
+
+    #[test]
+    fn own_config_is_never_agent_writable() {
+        let p = crate::config::Config::config_path();
+        assert!(matches!(
+            self_config(&p, Permissions::Normal),
+            Some(Decision::Deny(_))
+        ));
+        assert!(matches!(
+            self_config(&p, Permissions::Yolo),
+            Some(Decision::Ask)
+        ));
+        assert!(self_config(std::path::Path::new("/tmp/other"), Permissions::Normal).is_none());
     }
 
     #[test]

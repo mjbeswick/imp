@@ -34,7 +34,8 @@
 - [ ] 4.8 `search` and `fetch` tool wiring: five summaries, no page bodies, `fetch` capped and spilled, errors carrying the API reason. Verify: fixture tests for both operations.
 - [ ] 4.9 `ask` tool: question plus optional choices, blocking on the answer channel, choice and free-text results, dismissal result, more than six choices rejected. Verify: tests for each result shape and for the option cap.
 - [ ] 4.10 Jail behaviour per mode and the `yolo` startup warning. Verify: writes outside the directory prompt in `normal`, are refused after a no, and never prompt in `yolo`.
-- [ ] 4.11 Sudo gating: refused unless `allow_sudo=true`, always prompts when enabled, deny list applies with or without the prefix. Verify: default refusal names the setting; an approved sudo command runs; `sudo rm -rf /` is refused.
+- [x] 4.10a Background jobs: `background` on bash, `job list/wait/kill`, output file per job, process groups, 55 s wait cap, completion system note, and no jobs after restart. Verify: a 3-second job is waited on and its output returned; a long job reports still-running; kill stops the group.
+- [ ] 4.11 Privilege gating: refused unless `allow_sudo=true`, always prompts when enabled, deny list applies with or without the prefix. Verify: default refusal names the setting; an approved sudo command runs; `sudo rm -rf /` is refused.
 - [ ] 4.12 Sudo terminal handoff: leave the alternate screen and raw mode, run attached to the tty, restore and redraw after. Verify: cached credentials skip the handoff; a password prompt works against a scratch sudoers rule; Ctrl+C at the prompt cancels cleanly and the screen is redrawn.
 
 ## 5. TUI
@@ -47,9 +48,9 @@
 - [ ] 5.5 Tool lines: name, truncated arguments, duration, error colour, expand-last-output inline. Verify: snapshots for success and non-zero exit.
 - [ ] 5.6 Status line: model, context estimate, cache hit share, cost, unknown-model fallback, one dim row only. Verify: unit tests over usage structs including a zero-hit response.
 - [ ] 5.7 Key parsing from raw bytes: the full key set, including the double Ctrl+C guard. Verify: input-event tests per key.
-- [ ] 5.8 Question picker: numbered choices, custom-answer row, typed answer echo, dismissal. Verify: snapshot and key-handling tests for pick, type, and dismiss.
+- [ ] 5.8 Question picker: numbered choices, custom-answer row, typed answer echo, dismissal, and `y`/`n` shortcuts for a two-option yes/no question. Verify: snapshot and key-handling tests for pick, type, dismiss, and both y/n answers.
 - [ ] 5.9 Input history: append to the history file, Up/Down recall, consecutive de-duplication, 1,000-entry cap, survives restart. Verify: a scripted session sends three prompts, restarts, and recalls them.
-- [ ] 5.10 Slash commands: the nine commands, dispatch without a model request, unknown-command suggestion, `/help` listing. Verify: each command runs and unknown input sends nothing.
+- [ ] 5.10 Slash commands: exactly six (`/help` `/new` `/sessions` `/compact` `/think` `/quit`), dispatch without a model request, unknown-command suggestion, and `/clear` correctly rejected. Verify: each command runs, `/clear` does nothing, and unknown input sends nothing.
 - [ ] 5.11 Slash autocomplete: menu above the input from the first `/`, prefix rank before substring, eight rows max with descriptions, Tab completes, Enter runs, Esc dismisses. Verify: key-event tests for `/co` narrowing, Tab, Enter, and Esc.
 - [ ] 5.12 `!` shell prefix: run through the same runner as the `bash` tool, output capped and spilled, exit code shown, no model request, denial still enforced, and a tail `system` record that leaves the prefix byte-identical. Verify: `!git status`, a non-zero command, a 1 MB output, `!sudo`, and a prefix-hash comparison before and after.
 
@@ -76,9 +77,17 @@
 - [ ] 8.1 Skill discovery from global, `.mote/`, and extra roots, project shadowing, malformed file skipped once with a report. Verify: tests for a duplicate name and bad frontmatter.
 - [ ] 8.2 Skill index in the prompt, one line each, capped at 40. Verify: twenty skills add twenty short lines.
 - [ ] 8.3 `skill_load` with a 4 KB cap. Verify: oversized body truncated with a marker.
-- [ ] 8.4 Agent definitions from the same roots with `name`, `description`, `tools`, `model`, `thinking`; built-ins `general` and `explore`. Verify: `explore` has no write or edit tool.
-- [ ] 8.5 `task` tool: fresh history, parent jail, text-only 4 KB result, agent listing when unnamed, depth limit 1. Verify: fixture child performs tool calls and returns text; a child requesting `task` fails.
-- [ ] 8.6 Proxy child confirmations to the root UI and propagate cancellation. Verify: cancel stops the child before its next tool call.
+- [ ] 8.4 Agent loading: `agents/<name>.md`, body as instructions, `tools`/`model`/`thinking` frontmatter, built-in `default`, three roots with project shadowing. Verify: a restricted agent has no write tool, and `permissions:` in an agent file is ignored.
+- [ ] 8.5 `--agent` at launch and `/agent` picker mid-conversation, keeping the transcript. Verify: switching changes the tool list and instructions, and switching back restores both.
+- [ ] 8.6 Switch delivery as a tail `system` note that supersedes prior instructions, with no prefix rewrite and a reported no-reset. Verify: prefix hash identical either side of a switch.
+- [ ] 8.7 Record the switch in the session log and restore the active agent on resume. Verify: round-trip a session with one switch.
+
+## 8b. Setup
+
+- [x] 8b.1 `mote init`: create config and state directories, print `created`/`kept` per path, overwrite nothing. Verify: two consecutive runs create then keep, asserted in a temp HOME.
+- [x] 8b.2 Two examples only: `agents/example.md` that loads as a valid restricted agent and `skills/git/SKILL.md` with a routing description; commented config template with no key. Verify: both parse, template has no `api_key`, and a test asserts the file count.
+- [x] 8b.3 Refuse agent writes to the main config file in `normal` and `strict`, prompt in `yolo`, and record the refusal. Verify: `write` on the config path is refused with a message naming the user, and a skill write still succeeds.
+- [x] 8b.4 Built-in `config` skill compiled into the binary, describing the layout, formats, and the no-self-edit rule. Verify: it appears in the skill index without any file on disk, and its body loads.
 
 ## 9. Instructions
 
@@ -103,7 +112,9 @@
 - [ ] 11.1 Recorded-fixture replay harness so the whole loop runs offline. Verify: `cargo test` passes with networking disabled.
 - [ ] 11.2 Scripted tmux run: three prompts, assert a tool line and a final answer. Verify: script exits zero on a live key and prints the captured screen on failure.
 - [ ] 11.3 Measure and record: binary size, RSS, cold start, cache hit share over ten turns. Verify: numbers in `README.md` compared with the budget.
-- [ ] 11.4 `README.md`: install, key, keys, config, memory, skills, agents, instructions, sessions. Verify: a fresh clone reaches a first answer following only the README.
+- [ ] 11.4 Mode selection: `--cli`, `--chat`, and the tty-based default, with the line mode emitting no escape sequences. Verify: a scripted run with stdout piped contains zero ESC bytes, and `--chat` in a terminal opens the alternate screen.
+- [ ] 11.5 Ship a starter skill set for common CLIs (git, rg, jq, gh, docker, macOS) with routing descriptions, reusing the existing llm-functions skill files where they fit. Verify: each skill loads, and a request naming the tool routes to it.
+- [ ] 11.6 `README.md`: install, key, keys, config, memory, skills, agents, instructions, sessions. Verify: a fresh clone reaches a first answer following only the README.
 
 ## Workflow follow-up
 

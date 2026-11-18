@@ -77,7 +77,7 @@ to keep in sync with a simple layout); rustls for TLS (~1.5 MB, no system
 dependency); a `curl` subprocess (smaller still, but a process per request and
 no streaming handle).
 
-### One binary, seven modules, one event loop
+### One binary, eight modules, one event loop
 
 ```
 main.rs   argv, config, terminal guard, raw key parsing
@@ -87,6 +87,7 @@ http.rs   libcurl FFI: POST, streaming write callback, headers, timeouts
 api.rs    request build, SSE parse, delta assembly, error mapping
 agent.rs  turn loop, tool dispatch, compaction, subagents
 store.rs  sessions, memory, skills, agents, instructions, jail
+init.rs   the `init` layout, templates, and examples
 tools.rs  bash, read, edit, write, search, ask
 ```
 
@@ -107,6 +108,35 @@ Two palettes, dark and light, each with a truecolor and a 256-colour table.
 Roles rather than raw codes because a palette can be tested and a no-colour
 mode can be proven honest. Every role also carries a non-colour marker, so
 nothing depends on colour alone.
+
+### Skills are the extension point for command-line tools
+
+The system SHALL treat skills as the only way to add knowledge about a specific
+command-line tool, and SHALL ship no per-CLI tools. A skill for `gh`, `jq`,
+`rg`, `docker`, or `git` is a `SKILL.md` that names the command, the flags worth
+using, the failure modes, and when to reach for it — the model then runs it
+through `bash`.
+
+This is the whole bet on smallness: a tool costs schema tokens on every request
+and cannot be uninstalled at runtime; a skill costs one line until it is
+loaded, and adding one is a file copy. Six tools cover the primitives — run,
+read, edit, write, search, ask — and everything else is knowledge.
+
+### Six slash commands, with a rule
+
+A command must do something the model should not decide, or something a
+sentence cannot express reliably. That keeps `/help`, `/new`, `/sessions`,
+`/compact`, `/think`, `/quit` and rejects `/clear` (Ctrl+L), `/model` (flag and
+status line), `/reload` (startup), `/mode` and `/cost` — the last two for a
+specific reason: a one-keystroke permission change or cost query invites
+flipping guardrails mid-session, which is the wrong moment for convenience.
+
+### Two front-ends, one loop
+
+Line mode and full-screen chat share the same session, tools, and history; they
+differ only in input and rendering. Full-screen is chosen when both ends are
+terminals, line mode otherwise, and `--cli` / `--chat` force either. Scripted
+use, pipes, and CI never get escape sequences unless asked.
 
 ### A frozen prefix
 
@@ -146,6 +176,22 @@ blocked.
 Alternatives: five tools without `ask` (cheaper, but the agent guesses);
 seven with glob/grep (123 more tokens, no new capability); bash-only (worst
 edit reliability).
+
+### Background jobs behind one extra tool
+
+A 30-second foreground timeout is right for commands and wrong for builds. Rather
+than raise it, `bash` takes `background` and a `job` tool lists, waits, and
+kills. Jobs are process-group leaders writing to a spill file, so cancel and
+kill reuse the same signal path as foreground commands, and a finished job
+arrives as a tail `system` note instead of a prefix rewrite.
+
+`wait` is capped at 55 seconds so it never turns into a silent hang; the model
+polls again if the job is still going. Jobs do not survive a restart, and the
+interface says so rather than pretending.
+
+Alternatives: raise the timeout (freezes the chat, still finite); `nohup` in a
+shell (no id, no output, no completion signal); a jobs pane only (the model
+cannot start one).
 
 ### Tool output spills to disk
 
@@ -202,18 +248,32 @@ is in the prompt; `skill_load` returns the body.
 Frontmatter matches the existing `llm-functions` skills, so that collection is
 reusable unchanged.
 
-### Subagents as threads
+### Init writes two files and never overwrites
 
-`task(agent, prompt)` on a thread with fresh history and the agent's tool
-subset, returning final text only, depth limit 1. Threads avoid re-exec, share
-TLS setup, and make cancellation a flag.
+`mote init` creates directories because the layout is the interface, and writes
+exactly two examples because formats are learned from examples, not docs. It
+never overwrites, needs no key, makes no request, and finishes in milliseconds.
+The alternative — auto-creating on first run — hides the layout and teaches
+nothing.
 
-Because the API cannot accept tool calls mid-conversation, a child transcript
-can never be spliced into the parent. Text-only is not a simplification; it is
-the only option.
+The config template deliberately omits `api_key`: a key file is a key that gets
+copied, and the environment already works.
 
-Agent definitions live in `agents/<name>.md` under the same three roots, with
-`general` and `explore` built in.
+### Agents are profiles, not delegates
+
+`agents/<name>.md` holds instructions in the body and `tools`, `model`,
+`thinking` in frontmatter. `--agent` picks one at launch; `/agent` switches
+during a conversation, keeping the transcript.
+
+No delegation, no threads, no `task` tool. A delegated child costs an extra
+inference, can only return text because the API forbids splicing tool calls
+into history, and needs confirm proxying, cancellation propagation, depth
+limits and nested logging. For a shell agent on a 1M-context model with
+spill-to-disk, that machinery buys less than it costs.
+
+Switching appends a `system` note that supersedes the previous role rather than
+rewriting the system message. Rewriting would be cleaner prose and would throw
+away the cached prefix; that trade is wrong for a switch you might make twice.
 
 ### Sessions are a file plus a sidecar
 

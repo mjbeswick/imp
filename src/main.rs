@@ -2,10 +2,14 @@ mod agent;
 mod api;
 mod config;
 mod http;
+mod init;
+mod jobs;
 mod perm;
+mod store;
 mod tools;
+mod tui;
 
-use agent::{Session, Ui};
+use agent::{Hooks, Session, Ui};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -15,6 +19,7 @@ mote — a small terminal agent for DeepSeek
 
 USAGE:
     mote [OPTIONS] [PROMPT]
+    mote init
 
 OPTIONS:
     -c, --continue          Continue the most recent session
@@ -22,9 +27,12 @@ OPTIONS:
     -l, --list              List sessions and exit
         --rename <ID> <T>   Rename a session
         --delete <ID>       Delete a session (moves it to trash)
+        --agent <NAME>      Agent profile to start with
         --skills-dir <P>    Add a skills directory
         --model <NAME>      Model to use
         --permissions <P>   normal | strict | yolo
+        --cli               Line mode, even in a terminal
+        --chat              Full-screen chat, even when piped
     -h, --help              Show this help
     -V, --version           Show the version
 ";
@@ -51,8 +59,16 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    if args.first().map(|a| a.as_str()) == Some("init") {
+        let report = init::run()?;
+        init::print(&report);
+        return Ok(());
+    }
+
     let mut cfg = config::Config::load(&config::Config::config_path())?;
     let mut prompt: Option<String> = None;
+    let mut mode = "auto";
+    let mut agent_name: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -60,6 +76,9 @@ fn run() -> Result<(), String> {
             "--permissions" => {
                 cfg.permissions = config::Permissions::parse(&next(&args, &mut i, "--permissions")?)?
             }
+            "--agent" => agent_name = Some(next(&args, &mut i, "--agent")?),
+            "--cli" => mode = "cli",
+            "--chat" => mode = "chat",
             "--skills-dir" => {
                 cfg.skills_dir = Some(PathBuf::from(next(&args, &mut i, "--skills-dir")?))
             }
@@ -78,15 +97,49 @@ fn run() -> Result<(), String> {
     let root = std::env::current_dir().map_err(|e| e.to_string())?;
     let out_dir = config::dirs_state().join("mote").join("out");
     let system = system_prompt(&root);
-    let mut session = Session::new(cfg, root, out_dir, system);
+    let tui_cfg = cfg.clone();
+    let roster = store::load_agents(&cfg, &root);
+    let agent = match &agent_name {
+        Some(name) => roster
+            .iter()
+            .find(|a| &a.name == name)
+            .cloned()
+            .ok_or_else(|| format!("unknown agent {name}"))?,
+        None => roster
+            .iter()
+            .find(|a| a.name == "default")
+            .cloned()
+            .unwrap_or_else(store::Agent::builtin),
+    };
+    let session = Session::new(cfg, root, out_dir, system, agent, roster);
 
     match prompt {
-        Some(text) => session.turn(&text, &mut print_ui, &mut confirm),
-        None => repl(&mut session),
+        Some(text) => {
+            let mut session = session;
+            session.turn(&text, &mut Cli)
+        }
+        None => {
+            let interactive = unsafe { isatty(0) } != 0 && unsafe { isatty(1) } != 0;
+            let chat = match mode {
+                "chat" => true,
+                "cli" => false,
+                _ => interactive,
+            };
+            if chat {
+                tui::run(session, tui_cfg)
+            } else {
+                let mut session = session;
+                repl(&mut session, &mut Cli)
+            }
+        }
     }
 }
 
-fn repl(session: &mut Session) -> Result<(), String> {
+extern "C" {
+    fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int;
+}
+
+fn repl(session: &mut Session, cli: &mut Cli) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
     loop {
@@ -109,10 +162,40 @@ fn repl(session: &mut Session) -> Result<(), String> {
             }
             _ => {}
         }
-        if let Err(e) = session.turn(text, &mut print_ui, &mut confirm) {
+        if let Err(e) = session.turn(text, cli) {
             eprintln!("mote: {e}");
         }
         println!();
+    }
+}
+
+struct Cli;
+
+impl Hooks for Cli {
+    fn ui(&mut self, event: Ui) {
+        print_ui(event)
+    }
+
+    fn confirm(&mut self, what: &str) -> bool {
+        confirm(what)
+    }
+
+    fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
+        println!("\n{question}");
+        for (i, o) in options.iter().enumerate() {
+            println!("  {}. {o}", i + 1);
+        }
+        print!("answer{}: ", if options.is_empty() { "" } else { " (number or text)" });
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line).ok()?;
+        let line = line.trim().to_string();
+        if let Ok(n) = line.parse::<usize>() {
+            if n >= 1 && n <= options.len() {
+                return Some(options[n - 1].clone());
+            }
+        }
+        Some(line)
     }
 }
 
@@ -153,7 +236,9 @@ fn system_prompt(root: &std::path::Path) -> String {
     let mut prompt = String::from(
         "You are mote, a terminal agent. You run commands and edit files on the user's machine.\n\
          Be direct and brief. Prefer doing over explaining. Read a file before editing it.\n\
-         Tools: bash, read, edit, write, ask. Use ask only when a real decision blocks you.\n",
+         Tools: bash, read, edit, write, ask. Use `read` rather than cat, `edit` rather than sed,\n\
+         and `write` rather than shell redirection, so caps and checks apply.\n\
+         Use ask only when a real decision blocks you.\n",
     );
     for name in ["AGENTS.md", "CLAUDE.md"] {
         let path = root.join(name);

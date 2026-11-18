@@ -46,6 +46,26 @@ The system SHALL render every tool call as a single dim line containing the tool
 - **WHEN** a tool returns a non-zero exit code
 - **THEN** its line is shown in the error color and still carries the duration
 
+### Requirement: Two front-ends share one loop
+
+The system SHALL offer a line mode and a full-screen chat mode, SHALL pick the full-screen mode when both stdin and stdout are terminals, SHALL pick the line mode otherwise, and SHALL allow either to be forced with `--cli` or `--chat`.
+
+#### Scenario: Interactive launch
+- **WHEN** the user runs `mote` in a terminal
+- **THEN** the full-screen chat opens
+
+#### Scenario: Scripted launch
+- **WHEN** stdout is a pipe
+- **THEN** the line mode runs, printing plain text with no escape sequences
+
+#### Scenario: Forced
+- **WHEN** the user passes `--cli` in a terminal
+- **THEN** the line mode runs without taking over the screen
+
+#### Scenario: Same behaviour
+- **WHEN** the same prompt is sent in either mode
+- **THEN** the same tools run and the same history is recorded
+
 ### Requirement: The interface is one chat column
 
 The system SHALL render a scrolling transcript, one input line, and one dim status line at the bottom, and SHALL NOT use panes, borders, tabs, or widgets.
@@ -110,13 +130,13 @@ The system SHALL persist submitted prompts to a history file, SHALL recall them 
 - **WHEN** the same prompt is sent twice in a row
 - **THEN** it appears once in history
 
-### Requirement: Slash commands are listed and run
+### Requirement: Seven slash commands, no more
 
-The system SHALL provide `/help`, `/new`, `/sessions`, `/compact`, `/think`, `/clear`, `/reload`, `/model`, and `/quit`, SHALL run them without sending a request to the model, and SHALL show their effect in the transcript.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/compact`, `/think`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload`, `/mode`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** every command appears with a one-line description
+- **THEN** all six commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -125,6 +145,14 @@ The system SHALL provide `/help`, `/new`, `/sessions`, `/compact`, `/think`, `/c
 #### Scenario: Command effect
 - **WHEN** the user runs `/compact`
 - **THEN** compaction runs immediately and the result is reported in the transcript
+
+#### Scenario: Duplicate affordance is absent
+- **WHEN** the user types `/clear`
+- **THEN** it is not a command; Ctrl+L clears the view
+
+#### Scenario: Line mode
+- **WHEN** the user runs `/help` in line mode
+- **THEN** it prints the same list as a plain block
 
 ### Requirement: Slash commands autocomplete
 

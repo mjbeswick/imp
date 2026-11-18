@@ -14,6 +14,8 @@ enough to read end to end, fast enough to open like a shell.
 
 ## What Changes
 
+- `mote init` creates the config and state layout with one real agent and one
+  real skill as examples, overwriting nothing.
 - New Rust binary `mote`, about 1 MB, no runtime, one crate dependency
   (`serde_json`), TLS and HTTP from the system libcurl.
 - DeepSeek Chat Completions over HTTPS with streaming, thinking mode, and
@@ -27,8 +29,8 @@ enough to read end to end, fast enough to open like a shell.
 - File-backed memory with global and project scope; titles only in the prompt.
 - Skills as `SKILL.md` directories; description-only index, body loaded on
   demand. Reads the existing `llm-functions` skill files unchanged.
-- Subagents via a `task` tool: fresh history, restricted tools, depth limit 1,
-  text-only result.
+- Agents as markdown profiles, selectable at launch and switchable mid-conversation
+  without losing the transcript.
 - JSONL session log with wire-fidelity `--resume`.
 
 **BREAKING**: replaces the `aichat`-based `shell-agent` workflow. `aichat` and
@@ -50,9 +52,10 @@ its agent config are removed from the machine; `~/Projects/shell-agent` and
 - `memory`: persistent notes as files, global and project scope, index and
   search behavior.
 - `skills`: discovery, index, on-demand loading, precedence.
-- `subagents`: agent definitions and the `task` tool.
+- `agents`: named profiles for instructions, tools, and model, switchable mid-conversation.
 - `session`: JSONL log, resume, titles, picker, delete.
 - `instructions`: `AGENTS.md` discovery, bounds, frozen prefix, shared skill and agent roots.
+- `setup`: `init` layout creation, examples, no overwrite, and the ban on agent writes to its own config.
 - `permissions`: one setting, three modes, safe list, deny list, jail, approval flow.
 
 ### Modified Capabilities

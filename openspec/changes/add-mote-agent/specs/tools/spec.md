@@ -6,17 +6,33 @@ Defines the five built-in tools — shell, read, edit, write, search — their b
 
 ## ADDED Requirements
 
-### Requirement: The tool set is six functions
+### Requirement: The tool set is small and shell-first
 
-The system SHALL expose exactly `bash`, `read`, `edit`, `write`, `search`, and `ask` as the core tool set, SHALL NOT expose glob, grep, list, patch, or todo tools, and SHALL include optional feature tools only when their feature is configured.
+The system SHALL expose exactly `bash`, `read`, `edit`, `write`, `search`, `job`, and `ask` as its tool set, SHALL NOT expose per-CLI tools such as `gh`, `docker`, `kubectl`, `git`, glob, grep, list, patch, or todo, and SHALL teach specific command-line tools through skills instead.
 
 #### Scenario: Default prompt
 - **WHEN** a session starts with memory and skills configured
-- **THEN** the request carries the six core tools plus `memory` and `skill_load`, and no other tool
+- **THEN** the request carries the seven tools plus `memory` and `skill_load`, and no per-CLI tool
+
+#### Scenario: A CLI is not installed as a tool
+- **WHEN** the model needs `gh`
+- **THEN** it loads the `gh` skill if one is installed and runs `gh` through `bash`, rather than calling a `gh` tool
 
 #### Scenario: File discovery without a glob tool
 - **WHEN** the model needs to find files by pattern
 - **THEN** it uses `bash` and the task completes without a dedicated tool
+
+### Requirement: Asking a yes/no question is one keystroke
+
+The system SHALL render a question whose only choices are yes and no as a `y`/`n` prompt, and SHALL return the chosen word.
+
+#### Scenario: Confirmation-style question
+- **WHEN** the model asks a question with options `["Yes", "No"]`
+- **THEN** pressing `y` answers Yes and pressing `n` answers No
+
+#### Scenario: Escape
+- **WHEN** the user presses Esc on any question
+- **THEN** the result says the question was not answered
 
 ### Requirement: The agent can ask the user a question
 
@@ -57,6 +73,30 @@ The system SHALL run `bash` commands through `sh -c` with stdin on the null devi
 #### Scenario: Cancel
 - **WHEN** the user cancels while a command runs
 - **THEN** the process group gets SIGTERM, then SIGKILL after two seconds, and the result reads cancelled
+
+### Requirement: Long commands run as background jobs
+
+The system SHALL start a `bash` command as a job when `background` is set, SHALL return a job id and its output path immediately, SHALL cap `job wait` at 55 seconds and return partial output, and SHALL report a finished job to the model as a `system` note at the tail.
+
+#### Scenario: Start and continue
+- **WHEN** the model starts `make` in the background
+- **THEN** it gets a job id at once and the turn can continue
+
+#### Scenario: Wait with a budget
+- **WHEN** the model waits on a running job
+- **THEN** it receives output produced so far and either an exit code or "still running"
+
+#### Scenario: Completion note
+- **WHEN** a background job exits between turns
+- **THEN** a system note records the job id, exit code, and output path
+
+#### Scenario: Kill
+- **WHEN** the model kills a job
+- **THEN** its process group receives SIGTERM then SIGKILL
+
+#### Scenario: Jobs do not survive a restart
+- **WHEN** the process exits with a job running
+- **THEN** no record of that job exists in the next session
 
 ### Requirement: Large results spill to disk
 
