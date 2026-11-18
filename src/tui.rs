@@ -47,49 +47,69 @@ fn size() -> (usize, usize) {
     }
 }
 
+/// The platform's `struct termios`, field for field.
+///
+/// glibc uses 32-bit flags, a `c_line` byte, and 32 control bytes; Darwin uses
+/// 64-bit flags and 20 control bytes with no `c_line`. Getting this wrong makes
+/// `tcsetattr` apply garbage, which is why raw mode silently failed on Linux.
+#[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct Termios {
+pub struct Termios {
     iflag: u64,
     oflag: u64,
     cflag: u64,
     lflag: u64,
-    cc: [u8; NUM_CC],
+    cc: [u8; 20],
     ispeed: u64,
     ospeed: u64,
 }
 
-#[cfg(target_os = "macos")]
-const NUM_CC: usize = 20;
 #[cfg(not(target_os = "macos"))]
-const NUM_CC: usize = 32;
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Termios {
+    iflag: u32,
+    oflag: u32,
+    cflag: u32,
+    lflag: u32,
+    line: u8,
+    cc: [u8; 32],
+    ispeed: u32,
+    ospeed: u32,
+}
+
+#[cfg(target_os = "macos")]
+type Flag = u64;
+#[cfg(not(target_os = "macos"))]
+type Flag = u32;
 
 /// The flags `stty raw -echo` clears, by platform.
 mod flags {
     #[cfg(target_os = "macos")]
-    pub const IFLAGS: u64 = 0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200;
+    pub const IFLAGS: super::Flag = 0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200;
     #[cfg(not(target_os = "macos"))]
-    pub const IFLAGS: u64 = 0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80 | 0x100 | 0x400;
+    pub const IFLAGS: super::Flag = 0x1 | 0x2 | 0x8 | 0x20 | 0x40 | 0x80 | 0x100 | 0x400;
 
     #[cfg(target_os = "macos")]
-    pub const LFLAGS: u64 = 0x8 | 0x10 | 0x100 | 0x80 | 0x400;
+    pub const LFLAGS: super::Flag = 0x8 | 0x10 | 0x100 | 0x80 | 0x400;
     #[cfg(not(target_os = "macos"))]
-    pub const LFLAGS: u64 = 0x8 | 0x40 | 0x2 | 0x1 | 0x8000;
+    pub const LFLAGS: super::Flag = 0x8 | 0x40 | 0x2 | 0x1 | 0x8000;
 
     #[cfg(target_os = "macos")]
-    pub const CSIZE: u64 = 0x300;
+    pub const CSIZE: super::Flag = 0x300;
     #[cfg(not(target_os = "macos"))]
-    pub const CSIZE: u64 = 0x30;
+    pub const CSIZE: super::Flag = 0x30;
 
     #[cfg(target_os = "macos")]
-    pub const CS8: u64 = 0x300;
+    pub const CS8: super::Flag = 0x300;
     #[cfg(not(target_os = "macos"))]
-    pub const CS8: u64 = 0x30;
+    pub const CS8: super::Flag = 0x30;
 
     #[cfg(target_os = "macos")]
-    pub const PARENB: u64 = 0x1000;
+    pub const PARENB: super::Flag = 0x1000;
     #[cfg(not(target_os = "macos"))]
-    pub const PARENB: u64 = 0x100;
+    pub const PARENB: super::Flag = 0x100;
 
     #[cfg(target_os = "macos")]
     pub const VMIN: usize = 16;
@@ -102,7 +122,7 @@ mod flags {
     pub const VTIME: usize = 5;
 }
 
-const OPOST: u64 = 0x1;
+const OPOST: Flag = 0x1;
 const TCSANOW: c_int = 0;
 
 static SAVED: std::sync::Mutex<Option<Termios>> = std::sync::Mutex::new(None);
@@ -173,15 +193,8 @@ fn raw_of(saved: Termios) -> Termios {
 
 impl RawMode {
     fn enter() -> Self {
-        let mut saved = Termios {
-            iflag: 0,
-            oflag: 0,
-            cflag: 0,
-            lflag: 0,
-            cc: [0; NUM_CC],
-            ispeed: 0,
-            ospeed: 0,
-        };
+        // Plain old data, so zeroing is a valid starting point for tcgetattr.
+        let mut saved: Termios = unsafe { std::mem::zeroed() };
         if unsafe { tcgetattr(0, &mut saved) } == 0 {
             unsafe {
                 tcsetattr(0, TCSANOW, &raw_of(saved));
@@ -213,20 +226,13 @@ pub struct LineMode {
     saved: Option<Termios>,
 }
 
-const ICRNL: u64 = 0x100;
-const IGNCR: u64 = 0x80;
+const ICRNL: Flag = 0x100;
+const IGNCR: Flag = 0x80;
 
 impl LineMode {
     pub fn enter() -> Self {
-        let mut saved = Termios {
-            iflag: 0,
-            oflag: 0,
-            cflag: 0,
-            lflag: 0,
-            cc: [0; NUM_CC],
-            ispeed: 0,
-            ospeed: 0,
-        };
+        // Plain old data, so zeroing is a valid starting point for tcgetattr.
+        let mut saved: Termios = unsafe { std::mem::zeroed() };
         if unsafe { tcgetattr(0, &mut saved) } != 0 {
             return Self { saved: None };
         }
@@ -2710,6 +2716,13 @@ mod tests {
         let mut buf = b"\x1b[67;6u".to_vec();
         let keys = decode(&mut buf);
         assert!(matches!(keys[0], Key::Ctrl('c')), "{:?}", keys[0]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn termios_matches_the_glibc_layout() {
+        assert_eq!(std::mem::size_of::<Termios>(), 60);
+        assert_eq!(std::mem::align_of::<Termios>(), 4);
     }
 
 }

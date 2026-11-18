@@ -9,6 +9,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Termios {
@@ -19,6 +20,20 @@ struct Termios {
     cc: [u8; 20],
     ispeed: u64,
     ospeed: u64,
+}
+
+#[cfg(not(target_os = "macos"))]
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Termios {
+    iflag: u32,
+    oflag: u32,
+    cflag: u32,
+    lflag: u32,
+    line: u8,
+    cc: [u8; 32],
+    ispeed: u32,
+    ospeed: u32,
 }
 
 impl std::fmt::Debug for Termios {
