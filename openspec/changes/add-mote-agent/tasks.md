@@ -135,3 +135,7 @@
 - [ ] 12.7 `/sessions` loads the chosen session in place. Verify: choosing an entry replaces the transcript and continues that session.
 - [x] 12.8 `memory` and `skill_load` appear only when configured. Verify: with no memory directory and only built-in skills, the schema has neither.
 - [x] 12.9 `/reload` re-reads instructions and skills, rebuilds the prefix, and reports the cache reset. Verify: editing `AGENTS.md` changes the next request only after reload.
+
+## 13. Process
+
+- [x] 13.1 Delete `scripts/check.sh`; document the three commands it wrapped in `AGENTS.md` and `README.md`. Verify: `cargo test`, `openspec validate --all --strict`, and `scripts/size.sh` run standalone.

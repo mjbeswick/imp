@@ -21,8 +21,13 @@ Do not change source, config, or assets outside an OpenSpec change.
    one — `openspec new change <name>`, then proposal, specs, design, tasks.
 2. While working: tick the task in `openspec/changes/<change>/tasks.md` as you
    finish it. If the work reveals new scope, update the artifacts before the code.
-3. Before committing: `scripts/check.sh`. It fails on drift, invalid specs,
-   failing tests, or a binary over budget.
+3. Before committing, run the three checks by hand:
+
+   ```sh
+   cargo test
+   openspec validate --all --strict
+   ./scripts/size.sh      # binary under 1.5 MB
+   ```
 4. Commit per logical batch, with `jj commit`.
 
 ## No exceptions

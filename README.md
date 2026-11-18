@@ -117,8 +117,9 @@ results and the compaction summary, so the model continues with real context.
 ## Development
 
 ```sh
-./scripts/check.sh   # drift, specs, tests, size
 cargo test
+openspec validate --all --strict
+./scripts/size.sh
 ```
 
 This repository uses OpenSpec: source changes need an active change. See
