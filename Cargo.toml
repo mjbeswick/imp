@@ -1,5 +1,5 @@
 [package]
-name = "mote"
+name = "imp"
 version = "0.1.0"
 edition = "2021"
 description = "A small terminal agent for DeepSeek"
@@ -16,5 +16,5 @@ panic = "abort"
 opt-level = "z"
 
 [[bin]]
-name = "mote"
+name = "imp"
 path = "src/main.rs"

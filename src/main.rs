@@ -23,7 +23,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(msg) => {
-            eprintln!("mote: {msg}");
+            eprintln!("imp: {msg}");
             ExitCode::FAILURE
         }
     }
@@ -37,7 +37,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if args.iter().any(|a| a == "-V" || a == "--version") {
-        println!("mote {}", env!("CARGO_PKG_VERSION"));
+        println!("imp {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
@@ -146,7 +146,7 @@ fn run() -> Result<(), String> {
             let id = log.id.clone();
             let count = log.load().len();
             session.resume_id(&sessions_dir, &id)?;
-            eprintln!("mote: resumed {id} ({count} messages, agent {})", session.agent.name);
+            eprintln!("imp: resumed {id} ({count} messages, agent {})", session.agent.name);
         }
         None => {
             session.attach_log(store::Log::create(&sessions_dir, &root, &session.cfg.model));
@@ -245,7 +245,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 }
                 "compact" => {
                     if let Err(e) = session.compact(cli) {
-                        eprintln!("mote: {e}");
+                        eprintln!("imp: {e}");
                     }
                 }
                 "think" => {
@@ -254,7 +254,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 }
                 "reload" => match session.reload() {
                     Ok(()) => println!("reloaded; prompt cache reset"),
-                    Err(e) => eprintln!("mote: {e}"),
+                    Err(e) => eprintln!("imp: {e}"),
                 },
                 "agent" => {
                     println!("agent: {}", session.agent.name);
@@ -272,7 +272,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
             continue;
         }
         if let Err(e) = session.turn(text, cli) {
-            eprintln!("mote: {e}");
+            eprintln!("imp: {e}");
         }
         println!();
     }

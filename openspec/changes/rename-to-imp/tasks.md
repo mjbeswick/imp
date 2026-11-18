@@ -2,7 +2,7 @@
 
 ## 1. Name
 
-- [ ] 1.1 Rename the package and binary in `Cargo.toml` from `mote` to `imp`. Verify: `cargo build --release` succeeds and `target/release/imp --version` prints `imp 0.1.0`.
+- [x] 1.1 Rename the package and binary in `Cargo.toml` from `mote` to `imp`. Verify: `cargo build --release` succeeds and `target/release/imp --version` prints `imp 0.1.0`.
 - [ ] 1.2 Rename the environment variables from `MOTE_*` to `IMP_*` in `src/config.rs` and the help environment list. Verify: a unit test proves `IMP_MODEL` overrides the config file, and `grep -r MOTE_ src` finds nothing.
 - [ ] 1.3 Rename the config and state directory components from `mote` to `imp` in `src/config.rs`, `src/store.rs`, `src/main.rs`, `src/tui.rs`, `src/init.rs`, and `src/perm.rs`. Verify: tests assert `~/.config/imp/config` and `~/.local/state/imp/sessions`, and the self-config guard test names `~/.config/imp/config`.
 - [ ] 1.4 Rename the project-local directory from `.mote/` to `.imp/` in the instructions, agents, skills, and memory loaders. Verify: tests for `.imp/agents/reviewer.md`, `.imp/skills/`, and `.imp/memory/` pass, and the repository-marker check accepts `.imp`.
