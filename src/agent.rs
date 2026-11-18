@@ -50,6 +50,7 @@ pub struct Session {
     pub jobs: Jobs,
     pub job_dir: std::path::PathBuf,
     pub log: Option<Log>,
+    pub last_usage: (u64, u64, u64),
     pub memory: Memory,
     pub skills: Vec<Skill>,
 }
@@ -88,6 +89,7 @@ impl Session {
             jobs: Jobs::default(),
             job_dir,
             log: None,
+            last_usage: (0, 0, 0),
             memory,
             skills,
         }
@@ -275,6 +277,7 @@ impl Session {
                 continue;
             }
 
+            self.last_usage = (acc.cache_hit, acc.cache_miss, acc.completion_tokens);
             match api::classify(status, acc.finish.as_deref(), &raw_error) {
                 Ok(()) if status == 200 => return Ok(acc),
                 Ok(()) => {}
@@ -342,17 +345,9 @@ impl Session {
     /// Summarise everything except the last four exchanges.
     pub fn compact(&mut self, hooks: &mut dyn Hooks) -> Result<(), String> {
         let before = crate::api::estimate_tokens(&self.history);
-        let user_positions: Vec<usize> = self
-            .history
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.role == crate::api::Role::User)
-            .map(|(i, _)| i)
-            .collect();
-        if user_positions.len() < 5 {
+        let Some(keep_from) = keep_index(&self.history) else {
             return Ok(());
-        }
-        let keep_from = user_positions[user_positions.len() - 4];
+        };
         let system_prefix: Vec<Message> = self
             .history
             .iter()
@@ -797,6 +792,20 @@ impl Session {
 
 }
 
+/// Index to keep from: the fourth-newest user message. `None` if too short.
+pub fn keep_index(history: &[Message]) -> Option<usize> {
+    let users: Vec<usize> = history
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == crate::api::Role::User)
+        .map(|(i, _)| i)
+        .collect();
+    if users.len() < 5 {
+        return None;
+    }
+    Some(users[users.len() - 4])
+}
+
 /// A 400 that means the request was too long, not that it was malformed.
 pub fn is_context_overflow(status: u16, body: &str) -> bool {
     if status != 400 {
@@ -872,6 +881,79 @@ mod tests {
         reviewer.name = "reviewer".into();
         reviewer.description = "reviews".into();
         vec![Agent::builtin(), reviewer]
+    }
+
+    struct Null;
+    impl Hooks for Null {
+        fn ui(&mut self, _: Ui) {}
+        fn confirm(&mut self, _: &str) -> bool {
+            false
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    fn session(cfg: crate::config::Config) -> Session {
+        let d = tmp();
+        Session::new(cfg, d.clone(), d.join("out"), String::new(), Agent::builtin(), roster())
+    }
+
+    #[test]
+    fn estimator_crosses_the_thresholds() {
+        let small = vec![Message::user("hi")];
+        assert!(crate::api::estimate_tokens(&small) < 45_000);
+        let big = vec![Message::user("x".repeat(300_000))];
+        assert!(crate::api::estimate_tokens(&big) > 45_000);
+        assert!(crate::api::estimate_tokens(&big) > 60_000);
+    }
+
+    #[test]
+    fn prune_stubs_old_tool_results() {
+        let mut cfg = crate::config::Config::default();
+        cfg.prune_at = 45_000;
+        let mut s = session(cfg);
+        for _ in 0..30 {
+            s.history.push(Message::tool("c", "y".repeat(8000)));
+        }
+        s.history.push(Message::user("now"));
+        let before = crate::api::estimate_tokens(&s.history);
+        let pruned = s.prune(&mut Null);
+        assert!(pruned > 0);
+        assert!(crate::api::estimate_tokens(&s.history) < before / 2);
+        assert!(s.history.iter().any(|m| m.content.contains("[pruned")));
+    }
+
+    #[test]
+    fn compaction_keeps_the_last_four_exchanges() {
+        let mut history = vec![Message::system("base")];
+        for i in 0..6 {
+            history.push(Message::user(format!("q{i}")));
+            history.push(Message::assistant(format!("a{i}")));
+        }
+        let keep = keep_index(&history).unwrap();
+        assert_eq!(history[keep].content, "q2");
+        let kept_users = history[keep..]
+            .iter()
+            .filter(|m| m.role == crate::api::Role::User)
+            .count();
+        assert_eq!(kept_users, 4);
+        assert!(keep_index(&history[..5]).is_none());
+    }
+
+    #[test]
+    fn switching_agents_appends_without_rewriting_the_prefix() {
+        let mut s = session(crate::config::Config::default());
+        s.history.push(Message::system("base"));
+        let prefix = s.history[0].to_json().to_string();
+        let mut reviewer = Agent::builtin();
+        reviewer.name = "reviewer".into();
+        reviewer.instructions = "review things".into();
+        s.switch_agent(reviewer);
+        assert_eq!(s.history[0].to_json().to_string(), prefix);
+        let last = s.history.last().unwrap();
+        assert_eq!(last.role, crate::api::Role::System);
+        assert!(last.content.contains("supersede"));
     }
 
     #[test]

@@ -117,7 +117,7 @@ impl Drop for RawMode {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     User,
     Assistant,
@@ -274,7 +274,12 @@ pub enum Ev {
     ToolEnd { ok: bool, preview: String },
     Info(String),
     Error(String),
-    Usage { tokens: u64, hit: u64, miss: u64 },
+    Usage {
+        tokens: u64,
+        hit: u64,
+        miss: u64,
+        output: u64,
+    },
     Confirm { what: String, reply: Sender<bool> },
     Question { q: String, opts: Vec<String>, reply: Sender<Option<String>> },
     Done(Option<String>),
@@ -353,6 +358,7 @@ pub struct App {
     dirty: bool,
     quit: bool,
     spinner: usize,
+    tool_started: Option<Instant>,
 }
 
 enum Pending {
@@ -376,6 +382,7 @@ struct Status {
     tokens: u64,
     hit: u64,
     miss: u64,
+    output: u64,
     streaming: bool,
 }
 
@@ -407,6 +414,7 @@ impl App {
                 tokens: 0,
                 hit: 0,
                 miss: 0,
+                output: 0,
                 streaming: false,
             },
             agents,
@@ -415,6 +423,7 @@ impl App {
             dirty: true,
             quit: false,
             spinner: 0,
+            tool_started: None,
         }
     }
 
@@ -451,16 +460,31 @@ impl App {
                 }
                 self.push(Role::Thinking, t);
             }
-            Ev::ToolStart { name, args } => self.push(Role::Tool, format!("{name}  {args}")),
+            Ev::ToolStart { name, args } => {
+                self.tool_started = Some(Instant::now());
+                self.push(Role::Tool, format!("{name}  {args}"))
+            }
             Ev::ToolEnd { ok, preview } => {
-                self.push(Role::Tool, format!("  {} {preview}", if ok { "✓" } else { "✗" }))
+                let ms = self
+                    .tool_started
+                    .take()
+                    .map(|t| t.elapsed().as_millis())
+                    .unwrap_or(0);
+                let role = if ok { Role::Tool } else { Role::Error };
+                self.push(role, format!("  {} {preview}  · {ms} ms", if ok { "✓" } else { "✗" }))
             }
             Ev::Info(t) => self.push(Role::Info, t),
             Ev::Error(t) => self.push(Role::Error, t),
-            Ev::Usage { tokens, hit, miss } => {
+            Ev::Usage {
+                tokens,
+                hit,
+                miss,
+                output,
+            } => {
                 self.status.tokens = tokens;
                 self.status.hit = hit;
                 self.status.miss = miss;
+                self.status.output = output;
                 self.dirty = true;
             }
             Ev::Confirm { what, reply } => {
@@ -923,7 +947,16 @@ impl App {
         if rows < 5 || cols < 20 {
             return;
         }
+        let screen = self.frame(cols, rows);
+        let mut out = std::io::stdout();
+        out.write_all(screen.as_bytes()).ok();
+        out.flush().ok();
+        self.dirty = false;
+        self.last_redraw = Instant::now();
+    }
 
+    /// One frame as bytes. No terminal access, so it can be tested.
+    pub fn frame(&self, cols: usize, rows: usize) -> String {
         let menu = if self.menu_open { self.menu_matches() } else { Vec::new() };
         let menu_rows = menu.len().min(6);
         let body_rows = rows.saturating_sub(2 + menu_rows).max(1);
@@ -981,11 +1014,7 @@ impl App {
         screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
         screen.push_str("\x1b[J\x1b[?7h");
 
-        let mut out = std::io::stdout();
-        out.write_all(screen.as_bytes()).ok();
-        out.flush().ok();
-        self.dirty = false;
-        self.last_redraw = Instant::now();
+        screen
     }
 
     fn input_line(&self, cols: usize) -> String {
@@ -1046,9 +1075,18 @@ impl App {
             "·".into()
         };
         let thinking = if self.cfg.thinking { " · think" } else { "" };
+        let money = crate::pricing::cost(
+            &self.cfg.model,
+            crate::pricing::now(),
+            self.status.hit,
+            self.status.miss,
+            self.status.output,
+        )
+        .map(|c| format!(" · ${c:.4}"))
+        .unwrap_or_default();
         fit(
             &format!(
-                " {spin} {} · {} tok · cache {hit_rate} · {}{thinking}",
+                " {spin} {} · {} tok · cache {hit_rate}{money} · {}{thinking}",
                 self.cfg.model,
                 self.status.tokens,
                 self.cfg.permissions.as_str()
@@ -1164,8 +1202,9 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     let result = worker_session.turn(&text, &mut hooks);
                     let _ = ev_tx.send(Ev::Usage {
                         tokens: crate::api::estimate_tokens(&worker_session.history),
-                        hit: 0,
-                        miss: 0,
+                        hit: worker_session.last_usage.0,
+                        miss: worker_session.last_usage.1,
+                        output: worker_session.last_usage.2,
                     });
                     let _ = ev_tx.send(Ev::Done(result.err()));
                 }
@@ -1332,6 +1371,161 @@ mod tests {
         let lines = wrap("alpha beta gamma delta", 10);
         assert!(lines.iter().all(|l| l.chars().count() <= 10), "{lines:?}");
         assert!(lines.len() > 1);
+    }
+
+    fn strip(s: &str) -> String {
+        let mut out = String::new();
+        let mut it = s.chars().peekable();
+        while let Some(c) = it.next() {
+            if c == '\x1b' {
+                while let Some(n) = it.next() {
+                    if n.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn app() -> App {
+        let mut cfg = Config::default();
+        cfg.color = ColorMode::Never;
+        App::new(cfg)
+    }
+
+    #[test]
+    fn frame_fits_the_terminal() {
+        let mut a = app();
+        a.push(Role::User, "a".repeat(200));
+        a.push(Role::Assistant, "word ".repeat(100));
+        let out = a.frame(40, 12);
+        for line in out.lines() {
+            let visible = strip(line);
+            assert!(visible.chars().count() <= 40, "{visible:?}");
+        }
+    }
+
+    #[test]
+    fn frame_shows_status_and_prompt() {
+        let a = app();
+        let out = a.frame(100, 20);
+        assert!(out.contains("deepseek-flash"));
+        assert!(out.contains("> "));
+    }
+
+    #[test]
+    fn no_colour_emits_no_colour_escapes() {
+        let mut a = app();
+        a.push(Role::User, "hello");
+        a.push(Role::Assistant, "hi");
+        let out = a.frame(80, 10);
+        assert!(!out.contains("38;"), "colour escaped in no-colour mode");
+    }
+
+    #[test]
+    fn colour_roles_use_256_and_truecolor() {
+        let plain = Palette { on: true, truecolor: false };
+        assert!(plain.paint(Role::Error, "x").contains("38;5;"));
+        let rgb = Palette { on: true, truecolor: true };
+        assert!(rgb.paint(Role::Error, "x").contains("38;2;"));
+        let off = Palette { on: false, truecolor: true };
+        assert_eq!(off.paint(Role::Error, "x"), "x");
+    }
+
+    #[test]
+    fn thinking_and_tool_lines_render() {
+        let mut a = app();
+        a.push(Role::Thinking, "considering options");
+        a.push(Role::Tool, "bash  ls -la");
+        let out = a.frame(80, 12);
+        assert!(out.contains("~ considering"), "{out}");
+        assert!(out.contains("bash  ls -la"), "{out}");
+    }
+
+    #[test]
+    fn question_picker_renders_choices() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.pending = Some(Pending::Question {
+            q: "which database?".into(),
+            opts: vec!["sqlite".into(), "postgres".into()],
+            reply: tx,
+            mode: AskMode::Choose,
+            typed: String::new(),
+        });
+        let out = a.frame(100, 12);
+        assert!(out.contains("which database?"), "{out}");
+        assert!(out.contains("[1] sqlite"), "{out}");
+        assert!(out.contains("[e]"), "{out}");
+    }
+
+    #[test]
+    fn yes_no_shortcuts_answer() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.pending = Some(Pending::Question {
+            q: "delete?".into(),
+            opts: vec!["Yes".into(), "No".into()],
+            reply: tx,
+            mode: AskMode::Choose,
+            typed: String::new(),
+        });
+        let (cmd_tx, _cmd_rx) = channel();
+        a.handle_key(Key::Char('y'), &cmd_tx);
+        assert_eq!(rx.recv().unwrap().as_deref(), Some("Yes"));
+    }
+
+    #[test]
+    fn status_reports_tokens_cache_and_cost() {
+        let mut a = app();
+        a.status.tokens = 1234;
+        a.status.hit = 900;
+        a.status.miss = 100;
+        let line = a.status_line(120);
+        assert!(line.contains("1234 tok"), "{line}");
+        assert!(line.contains("cache 90%"), "{line}");
+        assert!(line.contains('$'), "{line}");
+    }
+
+    #[test]
+    fn failed_tools_render_in_the_error_role() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            args: "false".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: false,
+            preview: "exit 1".into(),
+        });
+        assert_eq!(a.entries.last().unwrap().role, Role::Error);
+        assert!(a.entries.last().unwrap().text.contains("ms"));
+    }
+
+    #[test]
+    fn scroll_detaches_from_the_tail() {
+        let mut a = app();
+        for i in 0..40 {
+            a.push(Role::User, format!("line {i}"));
+        }
+        let tail = a.frame(60, 8);
+        a.scroll = 10;
+        let earlier = a.frame(60, 8);
+        assert_ne!(tail, earlier);
+    }
+
+    #[test]
+    fn decodes_control_keys() {
+        let mut buf = vec![0x03, 0x0c, b'\t', 0x1b, b'[', b'H', 0x1b, b'[', b'F'];
+        let keys = decode(&mut buf);
+        assert!(matches!(keys[0], Key::Ctrl('c')));
+        assert!(matches!(keys[1], Key::Ctrl('l')));
+        assert!(matches!(keys[2], Key::Tab));
+        assert!(matches!(keys[3], Key::Home));
+        assert!(matches!(keys[4], Key::End));
     }
 
     #[test]

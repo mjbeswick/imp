@@ -6,6 +6,7 @@ mod http;
 mod init;
 mod jobs;
 mod perm;
+mod pricing;
 mod prompt;
 mod store;
 mod tools;
