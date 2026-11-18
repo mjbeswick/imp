@@ -25,8 +25,8 @@
 - Streaming: entries render on every frame, but a paragraph whose line is still
   growing is parsed as plain text until the newline arrives, which keeps a
   half-typed `[a](ht` from being treated as a link.
-- Links are stripped from the composer and from tool rows: only assistant text
-  and tool *output* render as markdown.
+- Markdown applies to assistant text only. The composer, tool rows, and tool
+  output stay literal, because a tool result is evidence rather than prose.
 - Out of scope: tables, images, nested lists, syntax highlighting.
 
 ## Open points

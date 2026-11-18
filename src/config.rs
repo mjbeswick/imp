@@ -31,6 +31,44 @@ impl Permissions {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum Links {
+     Auto,
+     Always,
+     Never,
+ }
+ 
+ impl Links {
+     pub fn parse(s: &str) -> Result<Self, String> {
+         match s.trim().to_ascii_lowercase().as_str() {
+             "auto" => Ok(Self::Auto),
+             "always" => Ok(Self::Always),
+             "never" => Ok(Self::Never),
+             _ => Err(format!("links must be auto, always, or never (got {s:?})")),
+         }
+     }
+ 
+     /// Whether this terminal can open an OSC 8 hyperlink.
+     pub fn supported(self) -> bool {
+         match self {
+             Self::Always => true,
+             Self::Never => false,
+             Self::Auto => {
+                 if std::env::var_os("KITTY_WINDOW_ID").is_some()
+                     || std::env::var_os("WEZTERM_EXECUTABLE").is_some()
+                     || std::env::var_os("VTE_VERSION").is_some()
+                 {
+                     return true;
+                 }
+                 matches!(
+                     std::env::var("TERM_PROGRAM").as_deref(),
+                     Ok("iTerm.app") | Ok("ghostty") | Ok("WezTerm")
+                 )
+             }
+         }
+     }
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorMode {
     Auto,
     Always,
