@@ -8,7 +8,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard only
 
-The system SHALL provide Enter to send, Alt+Enter for a newline, Esc to cancel, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C twice to quit.
+The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a newline, Esc to cancel, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T to expand thinking, Ctrl+H to hide thinking, Ctrl+L to clear the view, and Ctrl+C twice to quit.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -17,6 +17,14 @@ The system SHALL provide Enter to send, Alt+Enter for a newline, Esc to cancel, 
 #### Scenario: Quit guard
 - **WHEN** the user presses Ctrl+C once
 - **THEN** the status line asks for a second press, and no second press within two seconds returns to normal
+
+#### Scenario: Start a second line
+- **WHEN** the user types a line and presses Shift+Enter
+- **THEN** the caret moves to a new row, nothing is sent, and the first line stays in the composer
+
+#### Scenario: Terminals without modifier reporting
+- **WHEN** the terminal never reports Shift+Enter separately
+- **THEN** Alt+Enter and Ctrl+J still start a new line
 
 #### Scenario: Cancel a running turn
 - **WHEN** the user presses Esc while a turn is streaming or running a tool

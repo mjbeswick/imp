@@ -22,6 +22,10 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, and Ctrl+J for a
 - **WHEN** the user presses Ctrl+C once
 - **THEN** the status line asks for a second press, and no second press within two seconds returns to normal
 
+#### Scenario: Cancel a running turn
+- **WHEN** the user presses Esc while a turn is streaming or running a tool
+- **THEN** the turn stops at its next check, the partial answer stays on screen, and the input line accepts text again
+
 ### Requirement: The interface is one chat column
 
 The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, and SHALL NOT use panes, borders, tabs, or widgets.
