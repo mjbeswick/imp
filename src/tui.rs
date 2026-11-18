@@ -9,7 +9,7 @@ use crate::config::{ColorMode, Config};
 use std::ffi::{c_int, c_ulong};
 use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{channel, Sender, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 const ALT_ON: &str = "\x1b[?1049h\x1b[?25l\x1b[>1u";
@@ -457,8 +457,12 @@ pub enum Ev {
     },
     Confirm { what: String, reply: Sender<bool> },
     Question { q: String, opts: Vec<String>, reply: Sender<Option<String>> },
+    Stop(String),
     Done(Option<String>),
 }
+
+/// How long a confirmation waits before it gives up and stops the turn.
+const CONFIRM_WAIT: Duration = Duration::from_secs(60);
 
 struct WorkerHooks {
     tx: Sender<Ev>,
@@ -489,7 +493,16 @@ impl Hooks for WorkerHooks {
         {
             return false;
         }
-        rx.recv_timeout(Duration::from_secs(300)).unwrap_or(false)
+        match wait_for_answer(&rx, CONFIRM_WAIT) {
+            Some(answer) => answer,
+            None => {
+                let _ = self.tx.send(Ev::Stop(format!(
+                    "no answer within {}s; nothing ran and the turn stopped",
+                    CONFIRM_WAIT.as_secs()
+                )));
+                false
+            }
+        }
     }
 
     fn run_attached(&mut self, command: &str) -> Option<i32> {
@@ -530,6 +543,11 @@ impl Hooks for WorkerHooks {
         }
         rx.recv_timeout(Duration::from_secs(600)).ok().flatten()
     }
+}
+
+/// Wait for an answer. `None` means none arrived in time.
+fn wait_for_answer(rx: &Receiver<bool>, wait: Duration) -> Option<bool> {
+    rx.recv_timeout(wait).ok()
 }
 
 struct Entry {
@@ -701,6 +719,12 @@ impl App {
                     mode: AskMode::Choose,
                     typed: String::new(),
                 });
+                self.dirty = true;
+            }
+            Ev::Stop(reason) => {
+                self.status.streaming = false;
+                self.cancel.store(true, Ordering::Relaxed);
+                self.push(Role::Error, reason);
                 self.dirty = true;
             }
             Ev::Done(err) => {
@@ -1835,6 +1859,33 @@ mod tests {
         assert_eq!(a.input, "aa\nbbb", "Up left the composer");
         assert_eq!(a.cursor, 2, "Up did not land on the row above");
         assert!(a.hist_pos.is_none(), "Up recalled history from the last row");
+    }
+
+    #[test]
+    fn an_unanswered_prompt_times_out() {
+        let (_tx, rx) = channel::<bool>();
+        assert_eq!(
+            wait_for_answer(&rx, Duration::from_millis(50)),
+            None,
+            "a silent prompt did not time out"
+        );
+    }
+
+    #[test]
+    fn an_answered_prompt_returns_at_once() {
+        let (tx, rx) = channel::<bool>();
+        tx.send(true).expect("send answer");
+        assert_eq!(wait_for_answer(&rx, Duration::from_secs(5)), Some(true));
+    }
+
+    #[test]
+    fn a_stop_event_ends_the_turn() {
+        let mut a = app();
+        a.status.streaming = true;
+        a.apply(Ev::Stop("no answer within 60s".into()));
+        assert!(a.cancel.load(Ordering::Relaxed), "the turn kept running");
+        assert!(!a.status.streaming);
+        assert!(a.entries.last().expect("entry").text.contains("no answer"));
     }
 
     #[test]
