@@ -1546,6 +1546,15 @@ mod tests {
     }
 
     #[test]
+    fn frame_uses_crlf_for_every_row_boundary() {
+        let mut a = app();
+        a.push(Role::User, "hello");
+        a.push(Role::Assistant, "hi");
+        let out = a.frame(80, 10);
+        assert!(!out.replace("\r\n", "").contains('\n'), "bare line feed in frame");
+    }
+
+    #[test]
     fn no_colour_emits_no_colour_escapes() {
         let mut a = app();
         a.push(Role::User, "hello");
