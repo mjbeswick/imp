@@ -20,4 +20,4 @@
 
 ## 4. Finish
 
-- [ ] 4.1 Archive the change, then rename `~/Projects/mote` to `~/Projects/imp`. Verify: `jj log` works in `~/Projects/imp`, the bookmark still points at the archive commit, and `imp` runs from the new path. Run after the workspace is gone, because workspace git pointers are relative to the repo directory.
+- [x] 4.1 Archive the change, then rename `~/Projects/mote` to `~/Projects/imp`. Verify: `jj log` works in `~/Projects/imp`, the bookmark still points at the archive commit, and `imp` runs from the new path. Run after the workspace is gone, because workspace git pointers are relative to the repo directory.
