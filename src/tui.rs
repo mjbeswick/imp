@@ -835,7 +835,11 @@ impl App {
                 self.dirty = true;
             }
             Key::Up => {
-                if !self.history.is_empty() {
+                let (row, col) = self.caret_position();
+                if row > 0 {
+                    self.cursor = self.cursor_at(row - 1, col);
+                    self.dirty = true;
+                } else if !self.history.is_empty() {
                     let pos = match self.hist_pos {
                         None => self.history.len() - 1,
                         Some(0) => 0,
@@ -848,7 +852,11 @@ impl App {
                 }
             }
             Key::Down => {
-                if let Some(p) = self.hist_pos {
+                let (row, col) = self.caret_position();
+                if row + 1 < self.input.matches('\n').count() + 1 {
+                    self.cursor = self.cursor_at(row + 1, col);
+                    self.dirty = true;
+                } else if let Some(p) = self.hist_pos {
                     if p + 1 < self.history.len() {
                         self.hist_pos = Some(p + 1);
                         self.input = self.history[p + 1].clone();
@@ -1372,6 +1380,22 @@ impl App {
         (row, cursor - col)
     }
 
+    /// Byte offset of a row and column, clamped to what the row holds.
+    fn cursor_at(&self, row: usize, col: usize) -> usize {
+        let mut offset = 0;
+        for (i, line) in self.input.split('\n').enumerate() {
+            if i == row {
+                let mut at = col.min(line.len());
+                while at > 0 && !line.is_char_boundary(at) {
+                    at -= 1;
+                }
+                return offset + at;
+            }
+            offset += line.len() + 1;
+        }
+        self.input.len()
+    }
+
     fn status_line(&self, cols: usize) -> String {
         let hit_rate = if self.status.hit + self.status.miss > 0 {
             format!(
@@ -1797,6 +1821,41 @@ mod tests {
             flag.load(Ordering::Relaxed),
             "Esc did not ask the running turn to stop"
         );
+    }
+
+    #[test]
+    fn up_moves_between_rows_before_history() {
+        let mut a = app();
+        a.history = vec!["old".to_string()];
+        a.input = "aa\nbbb".into();
+        a.cursor = a.input.len();
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Up, &tx);
+        assert_eq!(a.input, "aa\nbbb", "Up left the composer");
+        assert_eq!(a.cursor, 2, "Up did not land on the row above");
+        assert!(a.hist_pos.is_none(), "Up recalled history from the last row");
+    }
+
+    #[test]
+    fn up_recalls_history_from_the_first_row() {
+        let mut a = app();
+        a.history = vec!["old".to_string()];
+        a.input = "aa".into();
+        a.cursor = 2;
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Up, &tx);
+        assert_eq!(a.input, "old");
+    }
+
+    #[test]
+    fn down_moves_between_rows() {
+        let mut a = app();
+        a.input = "aa\nbbb".into();
+        a.cursor = 0;
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Down, &tx);
+        assert_eq!(a.cursor, 3, "Down did not land on the row below");
+        assert_eq!(a.input, "aa\nbbb");
     }
 
     #[test]
