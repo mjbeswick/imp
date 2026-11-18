@@ -1475,14 +1475,16 @@ impl App {
     fn paint_spans(&self, role: Role, spans: &[crate::render::Span]) -> String {
         let mut out = String::new();
         for span in spans {
-            let colour = if span.style.code || span.style.dim {
+            let colour = if span.style.code {
+                Role::Tool
+            } else if span.style.dim {
                 Role::Thinking
             } else {
                 role
             };
             let mut text = self.palette.paint(colour, &span.text);
             if self.palette.on {
-                if span.style.bold {
+                if span.style.bold || span.style.code {
                     text = format!("\x1b[1m{text}");
                 }
                 if span.style.italic {
@@ -2052,6 +2054,16 @@ mod tests {
         )
     }
 
+    fn colour_app() -> App {
+        let mut cfg = Config::default();
+        cfg.color = ColorMode::Always;
+        App::new(
+            cfg,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+        )
+    }
+
     #[test]
     fn esc_stops_a_running_turn() {
         let mut a = app();
@@ -2267,6 +2279,30 @@ mod tests {
         assert!(text.contains("total 8"), "{text}");
         a.handle_key(Key::Ctrl('o'), &tx);
         assert!(!a.entries[0].text.contains("args:"), "it did not collapse");
+    }
+
+    #[test]
+    fn inline_code_is_bold_in_the_tool_colour() {
+        let mut a = colour_app();
+        a.push(Role::Assistant, "could not `bash` it");
+        let out = a.frame(60, 12);
+        assert!(out.contains("\x1b[1m"), "not bold: {out:?}");
+        assert!(
+            out.contains("38;5;108") || out.contains("38;2;127;200;160"),
+            "not the tool colour: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_fenced_block_stays_dim() {
+        let mut a = colour_app();
+        a.push(Role::Assistant, "```\nfn x() {}\n```");
+        let out = a.frame(60, 12);
+        assert!(
+            out.contains("38;5;244") || out.contains("38;2;128;128;128"),
+            "fence not dim: {out:?}"
+        );
+        assert!(!out.contains("\x1b[1mfn"), "fence got bold: {out:?}");
     }
 
     #[test]

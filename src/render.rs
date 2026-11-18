@@ -55,7 +55,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
             if is_fence(line, marker) {
                 for body in std::mem::take(&mut fence_body) {
                     rows.extend(hard_wrap(
-                        &[Span::styled(body, Style { code: true, dim: true, ..Style::default() })],
+                        &[Span::styled(body, Style { dim: true, ..Style::default() })],
                         width,
                     ));
                 }
@@ -98,7 +98,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
     // An unterminated fence is still shown as code, which is what the model meant.
     for body in fence_body {
         rows.extend(hard_wrap(
-            &[Span::styled(body, Style { code: true, dim: true, ..Style::default() })],
+            &[Span::styled(body, Style { dim: true, ..Style::default() })],
             width,
         ));
     }
@@ -439,7 +439,8 @@ mod tests {
         let rows = lines(text, 80, false);
         let joined = plain(&rows);
         assert!(joined.iter().any(|r| r == "**not bold**"));
-        assert!(rows[1][0].style.code, "the fence body should be code");
+        assert!(rows[1][0].style.dim, "the fence body should be dim");
+        assert!(!rows[1][0].style.code, "a fence body is not inline code");
     }
 
     #[test]
