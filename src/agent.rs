@@ -520,32 +520,31 @@ impl Session {
         });
 
         let start = std::time::Instant::now();
-        let out = self.run_tool(&call.name, &args, hooks);
+        let (ok, out) = self.run_tool(&call.name, &args, hooks);
         let spent = start.elapsed().saturating_sub(hooks.last_wait());
         hooks.ui(Ui::ToolEnd {
-            ok: !out.starts_with("refused")
-                && !out.starts_with("cancelled")
-                && !out.starts_with("bad arguments"),
+            ok,
             preview: summarise(&out),
             ms: spent.as_millis(),
         });
         out
     }
 
-    fn run_tool(&mut self, name: &str, args: &Value, hooks: &mut dyn Hooks) -> String {
+    /// Run one tool call. The flag says whether the call did what it set out to do.
+    fn run_tool(&mut self, name: &str, args: &Value, hooks: &mut dyn Hooks) -> (bool, String) {
         match name {
             "bash" => {
                 let Some(cmd) = args.get("command").and_then(Value::as_str) else {
-                    return "bash needs a command".into();
+                    return (false, "refused: bash needs a command".into());
                 };
                 if let Some(rule) =
                     perm::shell_touches_self_config(cmd, self.cfg.permissions)
                 {
                     match rule {
-                        Decision::Deny(why) => return why,
+                        Decision::Deny(why) => return (false, why),
                         Decision::Ask => {
                             if !hooks.confirm(&format!("run `{cmd}`")) {
-                                return "the user declined to run this command".into();
+                                return (false, "refused: the user declined to run this command".into());
                             }
                         }
                         Decision::Allow => {}
@@ -553,14 +552,14 @@ impl Session {
                 }
                 if cmd.split_whitespace().next() == Some("sudo") {
                     if let Some(code) = hooks.run_attached(cmd) {
-                        return format!("exit {code}\n(ran attached to the terminal)");
+                        return (code == 0, format!("exit {code}\n(ran attached to the terminal)"));
                     }
                 }
                 match perm::classify_command(cmd, self.cfg.permissions, self.cfg.allow_sudo) {
-                    Decision::Deny(why) => return why,
+                    Decision::Deny(why) => return (false, why),
                     Decision::Ask => {
                         if !hooks.confirm(&format!("run `{cmd}`")) {
-                            return "the user declined to run this command".into();
+                            return (false, "refused: the user declined to run this command".into());
                         }
                     }
                     Decision::Allow => {}
@@ -569,16 +568,19 @@ impl Session {
                     return match self.jobs.start(cmd, &self.job_dir) {
                         Ok(id) => {
                             let _ = self.jobs.poll();
-                            format!(
-                                "job {id} started in the background; output: {}",
-                                self.job_dir.join(format!("job-{id}.log")).display()
+                            (
+                                true,
+                                format!(
+                                    "job {id} started in the background; output: {}",
+                                    self.job_dir.join(format!("job-{id}.log")).display()
+                                ),
                             )
                         }
-                        Err(e) => format!("could not start job: {e}"),
+                        Err(e) => (false, format!("refused: could not start job: {e}")),
                     };
                 }
                 let o = self.tools.bash(cmd, &self.cancel);
-                format!("{}exit {}\n{}", if o.ok { "" } else { "" }, o.code.unwrap_or(-1), o.text)
+                (o.ok, format!("exit {}\n{}", o.code.unwrap_or(-1), o.text))
             }
             "read" => {
                 let paths: Vec<String> = args
@@ -587,19 +589,21 @@ impl Session {
                     .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
                     .unwrap_or_default();
                 if paths.is_empty() {
-                    return "read needs at least one path".into();
+                    return (false, "refused: read needs at least one path".into());
                 }
                 let offset = args.get("offset").and_then(Value::as_u64).map(|n| n as usize);
                 let limit = args.get("limit").and_then(Value::as_u64).map(|n| n as usize);
-                self.tools.read(&paths, offset, limit).text
+                let o = self.tools.read(&paths, offset, limit);
+                (o.ok, o.text)
             }
             "write" => {
                 let path = args.get("path").and_then(Value::as_str).unwrap_or("");
                 let content = args.get("content").and_then(Value::as_str).unwrap_or("");
                 if !self.allowed_write(path, hooks) {
-                    return "the user declined this write".into();
+                    return (false, "refused: the user declined this write".into());
                 }
-                self.tools.write(path, content).text
+                let o = self.tools.write(path, content);
+                (o.ok, o.text)
             }
             "edit" => {
                 let path = args.get("path").and_then(Value::as_str).unwrap_or("");
@@ -612,12 +616,13 @@ impl Session {
                     }
                 }
                 if pairs.is_empty() {
-                    return "edit needs at least one old/new pair".into();
+                    return (false, "refused: edit needs at least one old/new pair".into());
                 }
                 if !self.allowed_write(path, hooks) {
-                    return "the user declined this edit".into();
+                    return (false, "refused: the user declined this edit".into());
                 }
-                self.tools.edit(path, &pairs).text
+                let o = self.tools.edit(path, &pairs);
+                (o.ok, o.text)
             }
             "job" => {
                 let op = args.get("op").and_then(Value::as_str).unwrap_or("list");
@@ -627,11 +632,11 @@ impl Session {
                         for (id, code, _) in done {
                             hooks.ui(Ui::Info(format!("job {id} finished, exit {code}")));
                         }
-                        self.jobs.list()
+                        (true, self.jobs.list())
                     }
                     "kill" => match args.get("id").and_then(Value::as_u64) {
-                        Some(id) => self.jobs.kill(id).unwrap_or_else(|e| e),
-                        None => "job kill needs an id".into(),
+                        Some(id) => (true, self.jobs.kill(id).unwrap_or_else(|e| e)),
+                        None => (false, "refused: job kill needs an id".into()),
                     },
                     "wait" => match args.get("id").and_then(Value::as_u64) {
                         Some(id) => {
@@ -640,16 +645,19 @@ impl Session {
                                 .and_then(Value::as_u64)
                                 .unwrap_or(55)
                                 .min(55);
-                            self.jobs
-                                .wait(id, std::time::Duration::from_secs(secs))
-                                .unwrap_or_else(|e| e)
+                            (
+                                true,
+                                self.jobs
+                                    .wait(id, std::time::Duration::from_secs(secs))
+                                    .unwrap_or_else(|e| e),
+                            )
                         }
-                        None => "job wait needs an id".into(),
+                        None => (false, "refused: job wait needs an id".into()),
                     },
-                    other => format!("unknown job op {other}"),
+                    other => (false, format!("refused: unknown job op {other}")),
                 }
             }
-            "search" => self.search_tool(args),
+            "search" => (true, self.search_tool(args)),
             "memory" => {
                 let op = args.get("op").and_then(Value::as_str).unwrap_or("search");
                 match op {
@@ -657,19 +665,22 @@ impl Session {
                         let q = args.get("query").and_then(Value::as_str).unwrap_or("");
                         let hits = self.memory.search(q, 5);
                         if hits.is_empty() {
-                            format!("no notes match {q:?}")
+                            (true, format!("no notes match {q:?}"))
                         } else {
-                            hits.iter()
-                                .map(|(p, x)| format!("{}: {x}", p.display()))
-                                .collect::<Vec<_>>()
-                                .join("\n")
+                            (
+                                true,
+                                hits.iter()
+                                    .map(|(p, x)| format!("{}: {x}", p.display()))
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                            )
                         }
                     }
                     "save" => {
                         let title = args.get("title").and_then(Value::as_str).unwrap_or("");
                         let body = args.get("body").and_then(Value::as_str).unwrap_or("");
                         if title.is_empty() || body.is_empty() {
-                            return "memory save needs a title and a body".into();
+                            return (false, "refused: memory save needs a title and a body".into());
                         }
                         let target = self
                             .memory
@@ -679,14 +690,14 @@ impl Session {
                             .map(|p| p.display().to_string())
                             .unwrap_or_default();
                         if !hooks.confirm(&format!("save note {target}")) {
-                            return "the user declined to save this note".into();
+                            return (false, "refused: the user declined to save this note".into());
                         }
                         match self.memory.save(title, body) {
-                            Ok(p) => format!("saved {}", p.display()),
-                            Err(e) => e,
+                            Ok(p) => (true, format!("saved {}", p.display())),
+                            Err(e) => (false, format!("refused: {e}")),
                         }
                     }
-                    other => format!("unknown memory op {other}"),
+                    other => (false, format!("refused: unknown memory op {other}")),
                 }
             }
             "skill_load" => {
@@ -695,14 +706,17 @@ impl Session {
                     Some(s) => {
                         let body: String = s.body.chars().take(4096).collect();
                         if s.body.chars().count() > 4096 {
-                            format!("{body}\n[truncated at 4 KB]")
+                            (true, format!("{body}\n[truncated at 4 KB]"))
                         } else {
-                            body
+                            (true, body)
                         }
                     }
-                    None => format!(
-                        "no skill {name:?}; available: {}",
-                        self.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
+                    None => (
+                        false,
+                        format!(
+                            "refused: no skill {name:?}; available: {}",
+                            self.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
+                        ),
                     ),
                 }
             }
@@ -714,14 +728,14 @@ impl Session {
                     .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
                     .unwrap_or_default();
                 if opts.len() > 6 {
-                    return "ask accepts at most six options".into();
+                    return (false, "refused: ask accepts at most six options".into());
                 }
                 match hooks.ask(q, &opts) {
-                    Some(answer) if !answer.is_empty() => answer,
-                    _ => "the user did not answer".into(),
+                    Some(answer) if !answer.is_empty() => (true, answer),
+                    _ => (false, "refused: the user did not answer".into()),
                 }
             }
-            other => format!("unknown tool {other}"),
+            other => (false, format!("refused: unknown tool {other}")),
         }
     }
 
@@ -1045,6 +1059,32 @@ mod tests {
         for (name, args, want) in cases {
             assert_eq!(describe(name, &args), want);
         }
+    }
+
+    #[test]
+    fn a_refused_write_is_a_failure_with_a_reason() {
+        let (mut s, _fake) = scripted(vec![]);
+        struct Yes;
+        impl Hooks for Yes {
+            fn ui(&mut self, _: Ui) {}
+            fn confirm(&mut self, _: &str) -> bool {
+                true
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+        }
+        let mut hooks = Yes;
+        let (ok, out) = s.run_tool(
+            "write",
+            &serde_json::json!({"path": "/tmp/imp-outside.txt", "content": "x"}),
+            &mut hooks,
+        );
+        assert!(!ok, "a refused write reported success: {out}");
+        assert!(
+            out.contains("outside the session directory"),
+            "no reason given: {out}"
+        );
     }
 
     #[test]
