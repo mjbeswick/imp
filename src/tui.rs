@@ -1077,17 +1077,17 @@ impl App {
 
         let mut screen = String::from("\x1b[?7l\x1b[H");
         for _ in 0..body_rows.saturating_sub(visible.len()) {
-            screen.push_str("\x1b[2K\n");
+            screen.push_str("\x1b[2K\r\n");
         }
         for (role, text) in visible.iter().take(body_rows) {
             screen.push_str("\x1b[2K");
             screen.push_str(&self.palette.paint(*role, &fit(text, cols)));
-            screen.push('\n');
+            screen.push_str("\r\n");
         }
 
         screen.push_str("\x1b[2K");
         screen.push_str(&self.input_line(cols));
-        screen.push('\n');
+        screen.push_str("\r\n");
 
         for (i, (name, desc)) in menu.iter().take(6).enumerate() {
             let line = fit(&format!(" {name:<10} {desc}"), cols);
@@ -1098,7 +1098,7 @@ impl App {
             };
             screen.push_str("\x1b[2K");
             screen.push_str(&painted);
-            screen.push('\n');
+            screen.push_str("\r\n");
         }
 
         screen.push_str("\x1b[2K");
