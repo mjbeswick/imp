@@ -645,7 +645,6 @@ pub struct App {
     quit: bool,
     spinner: usize,
     tool: Option<ToolRow>,
-    cancel_requested: bool,
 }
 
 enum Pending {
@@ -721,7 +720,6 @@ impl App {
             quit: false,
             spinner: 0,
             tool: None,
-            cancel_requested: false,
         }
     }
 
@@ -831,7 +829,6 @@ impl App {
                 self.dirty = true;
             }
             Ev::Stop(reason) => {
-                self.cancel_requested = false;
                 self.pending = None;
                 self.pending_since = None;
                 self.status.streaming = false;
@@ -840,7 +837,6 @@ impl App {
                 self.dirty = true;
             }
             Ev::Done(err) => {
-                self.cancel_requested = false;
                 self.status.streaming = false;
                 if let Some(e) = err {
                     self.push(Role::Error, e);
@@ -876,19 +872,9 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
-        // Ctrl+C leaves the session from any prompt except a command confirmation,
-        // which keeps refusing and stopping the turn.
-        if matches!(key, Key::Ctrl('c'))
-            && matches!(
-                self.pending,
-                Some(
-                    Pending::Choose { .. }
-                        | Pending::Question { .. }
-                        | Pending::Prompt { .. }
-                        | Pending::ConfirmDelete { .. }
-                )
-            )
-        {
+        // Ctrl+C means exit, whatever is on screen. Esc cancels a turn and n or
+        // Esc refuses a prompt, so nothing else needs this key.
+        if matches!(key, Key::Ctrl('c')) {
             self.quit = true;
             return;
         }
@@ -943,15 +929,7 @@ impl App {
         }
 
         match key {
-            Key::Ctrl('c') => {
-                if self.status.streaming && !self.cancel_requested {
-                    self.cancel.store(true, Ordering::Relaxed);
-                    self.cancel_requested = true;
-                    self.push(Role::Info, "cancelling · ctrl+c again to exit".to_string());
-                } else {
-                    self.quit = true;
-                }
-            }
+            Key::Ctrl('c') => self.quit = true,
             Key::Ctrl('d') => self.quit = true,
             Key::Ctrl('o') => {
                 self.toggle_tool();
@@ -1296,14 +1274,6 @@ impl App {
                 self.dirty = true;
             }
             Pending::Confirm { what, reply } => {
-                if matches!(key, Key::Ctrl('c')) {
-                    let _ = reply.send(false);
-                    self.cancel.store(true, Ordering::Relaxed);
-                    self.status.streaming = false;
-                    self.push(Role::Info, format!("interrupted: {what}"));
-                    self.dirty = true;
-                    return;
-                }
                 let yes = matches!(key, Key::Char('y') | Key::Char('Y') | Key::Enter);
                 if matches!(key, Key::Esc) || matches!(key, Key::Char('n') | Key::Char('N')) {
                     self.push(Role::Info, format!("declined: {what}"));
@@ -2151,7 +2121,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_on_a_prompt_stops_the_turn() {
+    fn esc_refuses_a_prompt_without_quitting() {
         let mut a = app();
         let (reply, rx) = channel();
         a.apply(Ev::Confirm {
@@ -2160,12 +2130,10 @@ mod tests {
         });
         a.status.streaming = true;
         let (tx, _cmds) = channel();
-        a.handle_key(Key::Ctrl('c'), &tx);
+        a.handle_key(Key::Esc, &tx);
         assert!(a.pending.is_none(), "the prompt stayed open");
         assert_eq!(rx.try_recv().ok(), Some(false), "the prompt was not refused");
-        assert!(a.cancel.load(Ordering::Relaxed), "the turn kept running");
-        assert!(!a.quit, "Ctrl+C quit the whole interface");
-        assert!(!a.status.streaming);
+        assert!(!a.quit, "Esc quit the whole interface");
     }
 
     #[test]
@@ -2624,38 +2592,19 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_cancels_then_exits() {
+    fn ctrl_c_exits_while_streaming() {
         let mut a = app();
         a.status.streaming = true;
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.cancel.load(Ordering::Relaxed), "the turn was not cancelled");
-        assert!(!a.quit, "one press quit mid-turn");
-        assert!(
-            a.frame(70, 12).contains("ctrlc again to exit") || a.frame(70, 12).contains("ctrl+c again"),
-            "no exit hint"
-        );
-        a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.quit, "the second press did not quit");
+        assert!(a.quit, "Ctrl+C did not exit mid-turn");
     }
 
-    #[test]
     fn ctrl_c_exits_at_once_when_idle() {
         let mut a = app();
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
         assert!(a.quit, "an idle Ctrl+C did not quit");
-    }
-
-    #[test]
-    fn a_finished_turn_resets_the_cancel_latch() {
-        let mut a = app();
-        a.status.streaming = true;
-        let (tx, _cmds) = channel();
-        a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.cancel_requested);
-        a.apply(Ev::Done(None));
-        assert!(!a.cancel_requested, "the latch survived the turn");
     }
 
     #[test]
@@ -2722,19 +2671,16 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_still_refuses_a_confirmation() {
+    fn ctrl_c_exits_on_a_confirmation() {
         let mut a = app();
-        let (reply, rx) = channel();
+        let (reply, _rx) = channel();
         a.apply(Ev::Confirm {
             what: "run `ls`".into(),
             reply,
         });
-        a.status.streaming = true;
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(!a.quit, "Ctrl+C quit instead of refusing the command");
-        assert_eq!(rx.try_recv().ok(), Some(false));
-        assert!(a.pending.is_none());
+        assert!(a.quit, "Ctrl+C did not exit on a confirmation");
     }
 
 }
