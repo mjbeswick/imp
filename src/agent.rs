@@ -506,7 +506,7 @@ impl Session {
         };
         hooks.ui(Ui::ToolStart {
             name: call.name.clone(),
-            args: summarise(&call.arguments),
+            args: describe(&call.name, &args),
         });
 
         let out = self.run_tool(&call.name, &args, hooks);
@@ -887,6 +887,58 @@ pub fn summarise(text: &str) -> String {
     s
 }
 
+/// One short line for a tool call, in place of its JSON arguments.
+pub fn describe(name: &str, args: &Value) -> String {
+    let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
+    let lines = |key: &str| text(key).lines().count();
+    match name {
+        "bash" => format!("run `{}`", summarise(text("command"))),
+        "job" => match args.get("id").and_then(Value::as_u64) {
+            Some(id) => format!("job {} {id}", text("op")),
+            None => format!("job {}", text("op")),
+        },
+        "read" => {
+            let paths: Vec<&str> = args
+                .get("paths")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            format!("read {}", summarise(&paths.join(", ")))
+        }
+        "edit" => {
+            let edits = args
+                .get("edits")
+                .and_then(Value::as_array)
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("edit {} ({edits} changes)", summarise(text("path")))
+        }
+        "write" => format!(
+            "write {} ({} lines)",
+            summarise(text("path")),
+            lines("content")
+        ),
+        "search" => {
+            if text("op") == "fetch" {
+                format!("fetch {}", summarise(text("url")))
+            } else {
+                format!("search {:?}", summarise(text("query")))
+            }
+        }
+        "memory" => {
+            let what = if text("title").is_empty() {
+                text("query")
+            } else {
+                text("title")
+            };
+            format!("memory {} {:?}", text("op"), summarise(what))
+        }
+        "skill_load" => format!("load skill {}", summarise(text("name"))),
+        "ask" => format!("ask {:?}", summarise(text("question"))),
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -950,6 +1002,35 @@ mod tests {
         }
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
+        }
+    }
+
+    #[test]
+    fn tool_summaries_name_the_work() {
+        let cases = [
+            ("bash", json!({"command": "ls -la"}), "run `ls -la`"),
+            ("read", json!({"paths": ["a.rs", "b.rs"]}), "read a.rs, b.rs"),
+            (
+                "write",
+                json!({"path": "x/s.md", "content": "a\nb\nc"}),
+                "write x/s.md (3 lines)",
+            ),
+            (
+                "edit",
+                json!({"path": "a.rs", "edits": [{"old": "a", "new": "b"}]}),
+                "edit a.rs (1 changes)",
+            ),
+            (
+                "search",
+                json!({"op": "fetch", "url": "https://x/y.md"}),
+                "fetch https://x/y.md",
+            ),
+            ("search", json!({"op": "search", "query": "woking"}), "search \"woking\""),
+            ("skill_load", json!({"name": "config"}), "load skill config"),
+            ("ask", json!({"question": "where?"}), "ask \"where?\""),
+        ];
+        for (name, args, want) in cases {
+            assert_eq!(describe(name, &args), want);
         }
     }
 
