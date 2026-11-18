@@ -11,7 +11,7 @@
 
 - [x] 2.1 Update help examples, the environment section, the files section, and the `prompt` hint in `src/help.rs`. Verify: a snapshot test contains `imp` and no `mote`.
 - [x] 2.2 Update `README.md`, `assets/skills/config/SKILL.md`, and `scripts/size.sh` to the new name. Verify: `grep -rn mote README.md assets scripts` finds nothing outside `target/`.
-- [ ] 2.3 Run the three checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` all pass.
+- [x] 2.3 Run the three checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` all pass.
 
 ## 3. Local
 
