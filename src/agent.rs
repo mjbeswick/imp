@@ -467,6 +467,7 @@ impl Session {
     /// One user turn: stream, run tools, repeat until the model answers.
     pub fn turn(&mut self, user: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
         self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.note_width();
         self.say(Message::user(user));
 
         for step in 0..MAX_STEPS {
@@ -512,6 +513,18 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Tell the model how wide the screen is, once per change.
+    fn note_width(&mut self) {
+        let width = self.cols.load(std::sync::atomic::Ordering::Relaxed);
+        if width < 20 || self.last_cols == Some(width) {
+            return;
+        }
+        self.last_cols = Some(width);
+        self.say(Message::system(format!(
+            "Environment: the terminal is {width} columns wide. Keep code, tables, and rules inside it."
+        )));
     }
 
     fn dispatch(&mut self, call: &ToolCall, hooks: &mut dyn Hooks) -> String {
@@ -1100,6 +1113,29 @@ mod tests {
             out.contains("outside the session directory"),
             "no reason given: {out}"
         );
+    }
+
+    #[test]
+    fn the_width_is_sent_once_per_change() {
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(text_reply("one")),
+            Script::Ok(text_reply("two")),
+            Script::Ok(text_reply("three")),
+        ]);
+        s.cols.store(60, std::sync::atomic::Ordering::Relaxed);
+        s.turn("a", &mut Null).unwrap();
+        s.turn("b", &mut Null).unwrap();
+        s.cols.store(100, std::sync::atomic::Ordering::Relaxed);
+        s.turn("c", &mut Null).unwrap();
+        let notes: Vec<&str> = s
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::System && m.content.contains("columns wide"))
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(notes.len(), 2, "notes: {notes:?}");
+        assert!(notes[0].contains("60"), "first: {}", notes[0]);
+        assert!(notes[1].contains("100"), "second: {}", notes[1]);
     }
 
     #[test]
