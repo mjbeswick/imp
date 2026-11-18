@@ -105,14 +105,29 @@ impl Tools {
             full.push(part);
         }
 
+        if !self.confined(&full) {
+            return Err(format!("{raw}: outside the session directory"));
+        }
+        Ok(full)
+    }
+
+    /// The jail allows the session directory and imp's own configuration
+    /// directory, where skills and agents live. The config file itself is
+    /// still guarded by the self-config rule.
+    fn confined(&self, full: &std::path::Path) -> bool {
+        if !self.jail {
+            return true;
+        }
         let root = self
             .root
             .canonicalize()
             .unwrap_or_else(|_| self.root.clone());
-        if self.jail && !full.starts_with(&root) {
-            return Err(format!("{raw}: outside the session directory"));
+        if full.starts_with(&root) {
+            return true;
         }
-        Ok(full)
+        let config = crate::config::dirs_config().join("imp");
+        let config = config.canonicalize().unwrap_or(config);
+        full.starts_with(&config)
     }
 
     fn spill(&mut self, full: &str) -> Option<PathBuf> {
@@ -383,6 +398,21 @@ impl Tools {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_jail_allows_the_config_directory() {
+        let (t, dir) = tools();
+        let real = dir.canonicalize().expect("canonical session dir");
+        assert!(t.confined(&real.join("inside.txt")), "the session directory");
+        let skill = crate::config::dirs_config()
+            .join("imp")
+            .join("skills/x/SKILL.md");
+        assert!(t.confined(&skill), "a skill file should pass the jail");
+        assert!(
+            !t.confined(std::path::Path::new("/tmp/imp-not-here.txt")),
+            "the rest of the disk stays closed"
+        );
+    }
 
     fn tools() -> (Tools, PathBuf) {
         use std::sync::atomic::AtomicU64;
