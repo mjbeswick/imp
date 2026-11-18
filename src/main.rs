@@ -134,7 +134,13 @@ fn run() -> Result<(), String> {
             .cloned()
             .unwrap_or_else(store::Agent::builtin),
     };
-    let mut session = Session::new(cfg, root.clone(), out_dir, system, agent, roster);
+    let cols = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(
+        std::env::var("COLUMNS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0),
+    ));
+    let mut session = Session::new(cfg, root.clone(), out_dir, system, agent, roster, cols);
 
     let existing = match &resume {
         Some(id) => store::Log::open(&sessions_dir, id),

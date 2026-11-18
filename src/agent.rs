@@ -62,6 +62,8 @@ pub struct Session {
     pub tools: Tools,
     pub history: Vec<Message>,
     pub cancel: std::sync::Arc<AtomicBool>,
+    pub cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
+    last_cols: Option<u16>,
     pub agent: Agent,
     pub roster: Vec<Agent>,
     pub jobs: Jobs,
@@ -81,6 +83,7 @@ impl Session {
         system: String,
         agent: Agent,
         roster: Vec<Agent>,
+        cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
     ) -> Self {
         let mut history = Vec::new();
         if !system.is_empty() {
@@ -102,6 +105,8 @@ impl Session {
             },
             history,
             cancel: std::sync::Arc::new(AtomicBool::new(false)),
+            cols,
+            last_cols: None,
             agent,
             roster,
             jobs: Jobs::default(),
@@ -1006,7 +1011,15 @@ mod tests {
 
     fn session(cfg: crate::config::Config) -> Session {
         let d = tmp();
-        Session::new(cfg, d.clone(), d.join("out"), String::new(), Agent::builtin(), roster())
+        Session::new(
+            cfg,
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        )
     }
 
     use crate::transport::{text_reply, tool_reply, Fake, Script};
@@ -1087,6 +1100,28 @@ mod tests {
             out.contains("outside the session directory"),
             "no reason given: {out}"
         );
+    }
+
+    #[test]
+    fn the_width_travels_with_the_session() {
+        let d = tmp();
+        let cols = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(60));
+        let s = Session::new(
+            crate::config::Config::default(),
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+            cols.clone(),
+        );
+        assert_eq!(
+            s.cols.load(std::sync::atomic::Ordering::Relaxed),
+            60,
+            "the session did not see the width"
+        );
+        cols.store(0, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(s.cols.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -1292,6 +1327,7 @@ mod tests {
             String::new(),
             Agent::builtin(),
             roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         );
         s.transport = Box::new(fake);
         if confirm {
@@ -1338,6 +1374,7 @@ mod tests {
             String::new(),
             Agent::builtin(),
             roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         );
         s.transport = Box::new(fake);
         let mut hooks = Attach(false);
@@ -1555,6 +1592,7 @@ mod tests {
             String::new(),
             Agent::builtin(),
             roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         );
         session.resume_id(&sessions, &log.id).unwrap();
         assert_eq!(session.agent.name, "reviewer");
@@ -1574,6 +1612,7 @@ mod tests {
             String::new(),
             Agent::builtin(),
             roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         );
         session.resume_id(&sessions, &log.id).unwrap();
         assert!(session.history.iter().all(|m| m.tool_call_id.is_none()));

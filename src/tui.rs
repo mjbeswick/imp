@@ -616,6 +616,7 @@ fn tool_row_text(row: &ToolRow) -> String {
 pub struct App {
     cfg: Config,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
     palette: Palette,
     entries: Vec<Entry>,
     input: String,
@@ -668,7 +669,11 @@ struct Status {
 const COMMANDS: &[(&str, &str)] = crate::help::COMMANDS;
 
 impl App {
-    pub fn new(cfg: Config, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(
+        cfg: Config,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
+    ) -> Self {
         let palette = Palette::detect(&cfg);
         let history = load_history();
         let root = std::env::current_dir().unwrap_or_default();
@@ -680,6 +685,7 @@ impl App {
         Self {
             cfg,
             cancel,
+            cols,
             palette,
             entries: Vec::new(),
             input: String::new(),
@@ -1367,6 +1373,7 @@ impl App {
 
     pub fn render(&mut self) {
         let (cols, rows) = size();
+        self.cols.store(cols as u16, Ordering::Relaxed);
         if rows < 5 || cols < 20 {
             return;
         }
@@ -1721,7 +1728,7 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
     if std::env::var_os("IMP_FORCE_PANIC").is_some() {
         panic!("forced panic for the terminal-guard test");
     }
-    let mut app = App::new(cfg, session.cancel.clone());
+    let mut app = App::new(cfg, session.cancel.clone(), session.cols.clone());
 
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel::<Ev>();
@@ -1994,7 +2001,11 @@ mod tests {
     fn app() -> App {
         let mut cfg = Config::default();
         cfg.color = ColorMode::Never;
-        App::new(cfg, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+        App::new(
+            cfg,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+        )
     }
 
     #[test]
