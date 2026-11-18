@@ -344,7 +344,6 @@ fn utf8_len(b: u8) -> usize {
 
 pub enum Cmd {
     Prompt(String),
-    Cancel,
     SetThinking(bool),
     SetAgent(String),
     Compact,
@@ -454,6 +453,7 @@ struct Entry {
 
 pub struct App {
     cfg: Config,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     palette: Palette,
     entries: Vec<Entry>,
     input: String,
@@ -504,7 +504,7 @@ struct Status {
 const COMMANDS: &[(&str, &str)] = crate::help::COMMANDS;
 
 impl App {
-    pub fn new(cfg: Config) -> Self {
+    pub fn new(cfg: Config, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         let palette = Palette::detect(&cfg);
         let history = load_history();
         let root = std::env::current_dir().unwrap_or_default();
@@ -515,6 +515,7 @@ impl App {
         let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
         Self {
             cfg,
+            cancel,
             palette,
             entries: Vec::new(),
             input: String::new(),
@@ -702,7 +703,7 @@ impl App {
         match key {
             Key::Ctrl('c') => {
                 if self.status.streaming {
-                    let _ = tx.send(Cmd::Cancel);
+                    self.cancel.store(true, Ordering::Relaxed);
                 } else {
                     self.quit = true;
                 }
@@ -786,7 +787,7 @@ impl App {
             }
             Key::Esc => {
                 if self.status.streaming {
-                    let _ = tx.send(Cmd::Cancel);
+                    self.cancel.store(true, Ordering::Relaxed);
                 }
                 self.dirty = true;
             }
@@ -1369,11 +1370,10 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
     if std::env::var_os("IMP_FORCE_PANIC").is_some() {
         panic!("forced panic for the terminal-guard test");
     }
-    let mut app = App::new(cfg);
+    let mut app = App::new(cfg, session.cancel.clone());
 
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel::<Ev>();
-    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
     let mut worker_session = session;
@@ -1394,7 +1394,6 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     });
                     let _ = ev_tx.send(Ev::Done(result.err()));
                 }
-                Ok(Cmd::Cancel) => cancel.store(true, Ordering::Relaxed),
                 Ok(Cmd::SetThinking(on)) => worker_session.cfg.thinking = on,
                 Ok(Cmd::SetAgent(name)) => {
                     let found = worker_session
@@ -1612,7 +1611,20 @@ mod tests {
     fn app() -> App {
         let mut cfg = Config::default();
         cfg.color = ColorMode::Never;
-        App::new(cfg)
+        App::new(cfg, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+    }
+
+    #[test]
+    fn esc_stops_a_running_turn() {
+        let mut a = app();
+        let flag = a.cancel.clone();
+        let (tx, _rx) = channel();
+        a.status.streaming = true;
+        a.handle_key(Key::Esc, &tx);
+        assert!(
+            flag.load(Ordering::Relaxed),
+            "Esc did not ask the running turn to stop"
+        );
     }
 
     #[test]

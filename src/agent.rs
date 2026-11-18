@@ -973,6 +973,38 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_turn_stops_before_the_next_request() {
+        let (mut s, fake) = scripted(vec![
+            Script::Ok(tool_reply("c1", "bash", "{\"command\":\"true\"}")),
+            Script::Ok(text_reply("never reached")),
+        ]);
+        struct CancelAfterFirstStep(std::sync::Arc<AtomicBool>, usize);
+        impl Hooks for CancelAfterFirstStep {
+            fn ui(&mut self, event: Ui) {
+                if matches!(event, Ui::ToolEnd { .. }) {
+                    self.1 += 1;
+                    if self.1 == 1 {
+                        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+            fn confirm(&mut self, _: &str) -> bool {
+                true
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+        }
+        let mut hooks = CancelAfterFirstStep(s.cancel.clone(), 0);
+        s.turn("run it", &mut hooks).unwrap();
+        assert_eq!(fake.attempts(), 1, "the cancelled turn sent another request");
+        assert!(
+            !s.history.iter().any(|m| m.content.contains("never reached")),
+            "the cancelled turn kept the second answer"
+        );
+    }
+
+    #[test]
     fn prior_reasoning_is_sent_back() {
         let mut history = vec![Message::user("hi")];
         let mut assistant = Message::assistant("hello");
