@@ -69,6 +69,11 @@ fn run() -> Result<(), String> {
     let mut prompt: Option<String> = None;
     let mut mode = "auto";
     let mut agent_name: Option<String> = None;
+    let mut resume: Option<String> = None;
+    let mut continue_last = false;
+    let mut list = false;
+    let mut rename: Option<(String, String)> = None;
+    let mut delete: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -77,6 +82,15 @@ fn run() -> Result<(), String> {
                 cfg.permissions = config::Permissions::parse(&next(&args, &mut i, "--permissions")?)?
             }
             "--agent" => agent_name = Some(next(&args, &mut i, "--agent")?),
+            "-c" | "--continue" => continue_last = true,
+            "-r" | "--resume" => resume = Some(next(&args, &mut i, "--resume")?),
+            "-l" | "--list" => list = true,
+            "--rename" => {
+                let id = next(&args, &mut i, "--rename")?;
+                let title = next(&args, &mut i, "--rename")?;
+                rename = Some((id, title));
+            }
+            "--delete" => delete = Some(next(&args, &mut i, "--delete")?),
             "--cli" => mode = "cli",
             "--chat" => mode = "chat",
             "--skills-dir" => {
@@ -90,13 +104,37 @@ fn run() -> Result<(), String> {
         i += 1;
     }
 
+    let sessions_dir = config::dirs_state().join("mote").join("sessions");
+
+    if list {
+        for m in store::Log::list(&sessions_dir) {
+            println!(
+                "{:<12} {:<40} {:>5} msgs",
+                m.id,
+                if m.title.is_empty() { "(untitled)" } else { &m.title },
+                m.messages
+            );
+        }
+        return Ok(());
+    }
+    if let Some((id, title)) = rename {
+        store::Log::rename(&sessions_dir, &id, &title)?;
+        println!("renamed {id}");
+        return Ok(());
+    }
+    if let Some(id) = delete {
+        store::Log::delete(&sessions_dir, &id)?;
+        println!("deleted {id} (moved to trash)");
+        return Ok(());
+    }
+
     if cfg.api_key.is_empty() {
         return Err("DEEPSEEK_API_KEY is not set".into());
     }
 
     let root = std::env::current_dir().map_err(|e| e.to_string())?;
     let out_dir = config::dirs_state().join("mote").join("out");
-    let system = system_prompt(&root);
+    let system = system_prompt(&root, &cfg);
     let tui_cfg = cfg.clone();
     let roster = store::load_agents(&cfg, &root);
     let agent = match &agent_name {
@@ -111,7 +149,25 @@ fn run() -> Result<(), String> {
             .cloned()
             .unwrap_or_else(store::Agent::builtin),
     };
-    let session = Session::new(cfg, root, out_dir, system, agent, roster);
+    let mut session = Session::new(cfg, root.clone(), out_dir, system, agent, roster);
+
+    let existing = match &resume {
+        Some(id) => store::Log::open(&sessions_dir, id),
+        None if continue_last => store::Log::latest(&sessions_dir),
+        None => None,
+    };
+    match existing {
+        Some(log) => {
+            let restored = log.load();
+            let count = restored.len();
+            session.resume(restored);
+            session.attach_log(log.clone());
+            eprintln!("mote: resumed {} ({} messages)", log.id, count);
+        }
+        None => {
+            session.attach_log(store::Log::create(&sessions_dir, &root, &session.cfg.model));
+        }
+    }
 
     match prompt {
         Some(text) => {
@@ -223,7 +279,7 @@ fn print_ui(event: Ui) {
 }
 
 fn confirm(prompt: &str) -> bool {
-    print!("allow {prompt}? [y/N] ");
+    print!("{prompt}? [y/N] ");
     std::io::stdout().flush().ok();
     let mut line = String::new();
     if std::io::stdin().lock().read_line(&mut line).is_err() {
@@ -232,7 +288,7 @@ fn confirm(prompt: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
-fn system_prompt(root: &std::path::Path) -> String {
+fn system_prompt(root: &std::path::Path, cfg: &config::Config) -> String {
     let mut prompt = String::from(
         "You are mote, a terminal agent. You run commands and edit files on the user's machine.\n\
          Be direct and brief. Prefer doing over explaining. Read a file before editing it.\n\
@@ -240,13 +296,21 @@ fn system_prompt(root: &std::path::Path) -> String {
          and `write` rather than shell redirection, so caps and checks apply.\n\
          Use ask only when a real decision blocks you.\n",
     );
-    for name in ["AGENTS.md", "CLAUDE.md"] {
-        let path = root.join(name);
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            let text: String = text.chars().take(8192).collect();
-            prompt.push_str("\n# Project instructions\n");
-            prompt.push_str(&text);
-            break;
+    let (instructions, _loaded) = store::load_instructions(root);
+    prompt.push_str(&instructions);
+    if instructions.is_empty() {
+        // load_instructions already covers AGENTS.md when present.
+    }
+
+    prompt.push_str(
+        "\nMemory: notes are plain markdown. Search with the memory tool before guessing; save only when asked.\n",
+    );
+
+    let skills = store::load_skills(cfg, root);
+    if !skills.is_empty() {
+        prompt.push_str("\nSkills (load with skill_load when relevant):\n");
+        for s in &skills {
+            prompt.push_str(&format!("- {}: {}\n", s.name, s.description));
         }
     }
     prompt

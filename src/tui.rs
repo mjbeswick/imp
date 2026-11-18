@@ -224,6 +224,8 @@ pub enum Cmd {
     Prompt(String),
     Cancel,
     SetThinking(bool),
+    SetAgent(String),
+    Compact,
     Reset,
     Quit,
 }
@@ -309,6 +311,8 @@ pub struct App {
     menu_index: usize,
     pending: Option<Pending>,
     status: Status,
+    agents: Vec<String>,
+    sessions_dir: std::path::PathBuf,
     last_redraw: Instant,
     dirty: bool,
     quit: bool,
@@ -316,6 +320,7 @@ pub struct App {
 }
 
 enum Pending {
+    Choose { title: String, options: Vec<String>, index: usize, action: ChooseKind },
     Confirm { what: String, reply: Sender<bool>, typed: String },
     Question { q: String, opts: Vec<String>, reply: Sender<Option<String>>, mode: AskMode, typed: String },
 }
@@ -323,6 +328,12 @@ enum Pending {
 enum AskMode {
     Choose,
     Custom,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ChooseKind {
+    Agent,
+    Session,
 }
 
 struct Status {
@@ -337,6 +348,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
     ("/new", "start a fresh conversation"),
     ("/sessions", "list and pick sessions"),
+    ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
     ("/think", "toggle thinking for the next turn"),
     ("/quit", "leave"),
@@ -346,6 +358,12 @@ impl App {
     pub fn new(cfg: Config) -> Self {
         let palette = Palette::detect(&cfg);
         let history = load_history();
+        let root = std::env::current_dir().unwrap_or_default();
+        let agents = crate::store::load_agents(&cfg, &root)
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        let sessions_dir = crate::config::dirs_state().join("mote").join("sessions");
         Self {
             cfg,
             palette,
@@ -365,6 +383,8 @@ impl App {
                 note: String::new(),
                 streaming: false,
             },
+            agents,
+            sessions_dir,
             last_redraw: Instant::now() - Duration::from_secs(1),
             dirty: true,
             quit: false,
@@ -472,7 +492,7 @@ impl App {
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
         if let Some(pending) = self.pending.take() {
-            self.answer(pending, key);
+            self.answer(pending, key, tx);
             return;
         }
 
@@ -681,6 +701,37 @@ impl App {
                 self.push(Role::Info, text);
             }
             "quit" | "exit" => self.quit = true,
+            "agent" => {
+                let options = self.agents.clone();
+                self.pending = Some(Pending::Choose {
+                    title: "agent".into(),
+                    options,
+                    index: 0,
+                    action: ChooseKind::Agent,
+                });
+                self.dirty = true;
+            }
+            "sessions" => {
+                let mut options: Vec<String> = crate::store::Log::list(&self.sessions_dir)
+                    .into_iter()
+                    .map(|m| {
+                        let title = if m.title.is_empty() { "(untitled)" } else { &m.title };
+                        format!("{}  {title}  {} msgs", m.id, m.messages)
+                    })
+                    .collect();
+                options.truncate(20);
+                self.pending = Some(Pending::Choose {
+                    title: "session (Enter resumes after restart)".into(),
+                    options,
+                    index: 0,
+                    action: ChooseKind::Session,
+                });
+                self.dirty = true;
+            }
+            "compact" => {
+                let _ = tx.send(Cmd::Compact);
+                self.push(Role::Info, "compacting…");
+            }
             "think" => {
                 self.cfg.thinking = !self.cfg.thinking;
                 let _ = tx.send(Cmd::SetThinking(self.cfg.thinking));
@@ -701,8 +752,48 @@ impl App {
         }
     }
 
-    fn answer(&mut self, pending: Pending, key: Key) {
+    fn answer(&mut self, pending: Pending, key: Key, tx: &Sender<Cmd>) {
         match pending {
+            Pending::Choose { title, options, mut index, action } => {
+                match key {
+                    Key::Up => index = index.saturating_sub(1),
+                    Key::Down => {
+                        if index + 1 < options.len() {
+                            index += 1
+                        }
+                    }
+                    Key::Char(c) if c.is_ascii_digit() => {
+                        let n = c.to_digit(10).unwrap_or(0) as usize;
+                        if n >= 1 && n <= options.len().min(9) {
+                            index = n - 1;
+                        }
+                    }
+                    Key::Enter => {
+                        if let Some(choice) = options.get(index) {
+                            match action {
+                                ChooseKind::Agent => {
+                                    let name = choice.clone();
+                                    let _ = tx.send(Cmd::SetAgent(name.clone()));
+                                    self.push(Role::Info, format!("agent: {name}"));
+                                }
+                                ChooseKind::Session => self.push(
+                                    Role::Info,
+                                    format!("resume with: mote -r {}", choice.split_whitespace().next().unwrap_or("")),
+                                ),
+                            }
+                        }
+                        self.dirty = true;
+                        return;
+                    }
+                    Key::Esc => {
+                        self.dirty = true;
+                        return;
+                    }
+                    _ => {}
+                }
+                self.pending = Some(Pending::Choose { title, options, index, action });
+                self.dirty = true;
+            }
             Pending::Confirm { what, reply, .. } => {
                 let yes = matches!(key, Key::Char('y') | Key::Char('Y') | Key::Enter);
                 if matches!(key, Key::Esc) || matches!(key, Key::Char('n') | Key::Char('N')) {
@@ -854,10 +945,22 @@ impl App {
         // Input or pending prompt.
         if let Some(pending) = &self.pending {
             match pending {
+                Pending::Choose { title, options, index, .. } => {
+                    let shown: Vec<String> = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, o)| {
+                            let marker = if i == *index { "▸" } else { " " };
+                            format!("{marker}{}. {o}", i + 1)
+                        })
+                        .collect();
+                    let line = format!("{title}: {}", shown.join("  "));
+                    screen.push_str(&self.palette.paint(Role::Info, &line));
+                }
                 Pending::Confirm { what, .. } => {
                     screen.push_str(&self.palette.paint(
                         Role::Info,
-                        &format!("allow {what}? y/N"),
+                        &format!("{what}? y/N"),
                     ));
                 }
                 Pending::Question { q, opts, mode, typed, .. } => {
@@ -1033,6 +1136,34 @@ pub fn run(mut session: Session, cfg: Config) -> Result<(), String> {
                 }
                 Ok(Cmd::Cancel) => cancel.store(true, Ordering::Relaxed),
                 Ok(Cmd::SetThinking(on)) => worker_session.cfg.thinking = on,
+                Ok(Cmd::SetAgent(name)) => {
+                    let found = worker_session
+                        .roster
+                        .iter()
+                        .find(|a| a.name == name)
+                        .cloned();
+                    if let Some(agent) = found {
+                        let mut hooks = WorkerHooks {
+                            tx: ev_tx.clone(),
+                            cancel: cancel.clone(),
+                        };
+                        let applied = worker_session.switch_agent(agent);
+                        let _ = ev_tx.send(Ev::Info(format!("agent: {applied}")));
+                        let _ = &mut hooks;
+                    } else {
+                        let _ = ev_tx.send(Ev::Error(format!("no agent {name}")));
+                    }
+                }
+                Ok(Cmd::Compact) => {
+                    let mut hooks = WorkerHooks {
+                        tx: ev_tx.clone(),
+                        cancel: cancel.clone(),
+                    };
+                    if let Err(e) = worker_session.compact(&mut hooks) {
+                        let _ = ev_tx.send(Ev::Error(e));
+                    }
+                    let _ = ev_tx.send(Ev::Done(None));
+                }
                 Ok(Cmd::Reset) => {
                     let system = worker_session
                         .history

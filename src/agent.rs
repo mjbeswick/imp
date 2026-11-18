@@ -4,7 +4,7 @@ use crate::api::{self, Accum, Message, RequestOptions, SseParser, ToolCall};
 use crate::config::Config;
 use crate::perm::{self, Decision};
 use crate::jobs::Jobs;
-use crate::store::Agent;
+use crate::store::{Agent, Log, Memory, Skill};
 use crate::tools::Tools;
 use serde_json::{json, Value};
 use std::sync::atomic::AtomicBool;
@@ -33,6 +33,9 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"read","description":"Read one or more files with line numbers.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
         json!({"type":"function","function":{"name":"write","description":"Create or replace a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}),
+        json!({"type":"function","function":{"name":"search","description":"Search the web, or fetch a page as markdown.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"url":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
+        json!({"type":"function","function":{"name":"memory","description":"Search stored notes, or save a new one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","save"]},"query":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}},"required":["op"]}}}),
+        json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
         json!({"type":"function","function":{"name":"ask","description":"Ask the user a question. Offer options for a choice; omit them for free text. Use only when blocked on a decision you cannot make yourself.","parameters":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"},"description":"Two to six short choices."}},"required":["question"]}}}),
     ]
 }
@@ -46,6 +49,9 @@ pub struct Session {
     pub roster: Vec<Agent>,
     pub jobs: Jobs,
     pub job_dir: std::path::PathBuf,
+    pub log: Option<Log>,
+    pub memory: Memory,
+    pub skills: Vec<Skill>,
 }
 
 impl Session {
@@ -65,6 +71,8 @@ impl Session {
             history.push(Message::system(agent.instructions.clone()));
         }
         let job_dir = out_dir.join("jobs");
+        let memory = Memory::discover(&cfg, &root);
+        let skills = crate::store::load_skills(&cfg, &root);
         Self {
             cfg,
             tools: Tools::new(root, out_dir),
@@ -74,7 +82,34 @@ impl Session {
             roster,
             jobs: Jobs::default(),
             job_dir,
+            log: None,
+            memory,
+            skills,
         }
+    }
+
+    pub fn attach_log(&mut self, log: Log) {
+        self.log = Some(log);
+    }
+
+    /// Replace history with a resumed one, keeping the current system prompt.
+    pub fn resume(&mut self, mut loaded: Vec<Message>) {
+        let system: Vec<Message> = self
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::System)
+            .cloned()
+            .collect();
+        loaded.retain(|m| m.role != crate::api::Role::System);
+        self.history = system;
+        self.history.extend(loaded);
+    }
+
+    fn say(&mut self, message: Message) {
+        if let Some(log) = &self.log {
+            log.append(&message);
+        }
+        self.history.push(message);
     }
 
     /// Switch profile. Appends a note instead of rewriting the prefix.
@@ -89,7 +124,7 @@ impl Session {
             "You are now acting as {}. The instructions below supersede your previous role instructions.\n{}",
             agent.name, agent.instructions
         );
-        self.history.push(Message::system(note));
+        self.say(Message::system(note));
         let name = agent.name.clone();
         self.agent = agent;
         name
@@ -188,18 +223,139 @@ impl Session {
         }
     }
 
+    /// Collapse old tool output to stubs once the wire gets large.
+    pub fn prune(&mut self, hooks: &mut dyn Hooks) -> usize {
+        let before = crate::api::estimate_tokens(&self.history);
+        if before < self.cfg.prune_at as u64 {
+            return 0;
+        }
+        let cutoff = self.history.len().saturating_sub(10);
+        let mut pruned = 0;
+        for (i, m) in self.history.iter_mut().enumerate() {
+            if i >= cutoff || m.role != crate::api::Role::Tool {
+                continue;
+            }
+            if m.content.len() <= 300 {
+                continue;
+            }
+            let len = m.content.len();
+            let head: String = m.content.chars().take(240).collect();
+            m.content = format!("{head}\n… [pruned; {len} bytes]");
+            pruned += 1;
+        }
+        if pruned > 0 {
+            hooks.ui(Ui::Info(format!(
+                "pruned {pruned} old tool results: {} → {} tokens",
+                before,
+                crate::api::estimate_tokens(&self.history)
+            )));
+        }
+        pruned
+    }
+
+    /// Summarise everything except the last four exchanges.
+    pub fn compact(&mut self, hooks: &mut dyn Hooks) -> Result<(), String> {
+        let before = crate::api::estimate_tokens(&self.history);
+        let user_positions: Vec<usize> = self
+            .history
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == crate::api::Role::User)
+            .map(|(i, _)| i)
+            .collect();
+        if user_positions.len() < 5 {
+            return Ok(());
+        }
+        let keep_from = user_positions[user_positions.len() - 4];
+        let system_prefix: Vec<Message> = self
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::System)
+            .cloned()
+            .collect();
+        let tail: Vec<Message> = self.history[keep_from..].to_vec();
+
+        let mut transcript = String::new();
+        for m in &self.history {
+            if m.role == crate::api::Role::System {
+                continue;
+            }
+            let body: String = m.content.chars().take(200).collect();
+            transcript.push_str(&format!("{}: {body}\n", m.role.as_str()));
+            for c in &m.tool_calls {
+                transcript.push_str(&format!("  call {} {}\n", c.name, c.arguments));
+            }
+        }
+
+        let prompt = format!(
+            "Summarise this conversation for another model that must continue the work.\n\
+             Cover: decisions made, files touched, open threads, user preferences, unresolved errors.\n\
+             Then add up to three lines starting with MEMORY: for durable facts worth saving.\n\
+             Be terse. 400 tokens maximum.\n\n{transcript}"
+        );
+        let summary = self.complete_once(&[
+            Message::system("You compress conversations without losing decisions."),
+            Message::user(prompt),
+        ])?;
+
+        let mut rebuilt = system_prefix;
+        rebuilt.push(Message::system(format!("[compacted]\n{summary}")));
+        rebuilt.extend(tail);
+        self.history = rebuilt;
+        if let Some(log) = &self.log {
+            log.event("compacted", &format!("{before} tokens before"));
+        }
+        hooks.ui(Ui::Info(format!(
+            "compacted: {} → {} tokens",
+            before,
+            crate::api::estimate_tokens(&self.history)
+        )));
+        Ok(())
+    }
+
+    fn complete_once(&self, messages: &[Message]) -> Result<String, String> {
+        let opts = RequestOptions {
+            model: self.cfg.model.clone(),
+            max_tokens: 400,
+            thinking: false,
+            temperature: Some(0.0),
+        };
+        let body = api::build_request(&opts, messages, &[]);
+        let url = format!("{}/chat/completions", self.cfg.base_url);
+        let auth = format!("Authorization: Bearer {}", self.cfg.api_key);
+        let headers = ["Content-Type: application/json", auth.as_str()];
+        let mut parser = SseParser::default();
+        let mut acc = Accum::default();
+        let result = crate::http::post_stream(&url, &headers, body.to_string().as_bytes(), |b| {
+            for ev in parser.push(b) {
+                acc.apply(ev);
+            }
+        });
+        match result {
+            Ok(r) if r.status == 200 => Ok(acc.content),
+            Ok(r) => Err(format!("summariser failed: HTTP {}", r.status)),
+            Err(e) => Err(e),
+        }
+    }
+
     /// One user turn: stream, run tools, repeat until the model answers.
     pub fn turn(&mut self, user: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
-        self.history.push(Message::user(user));
+        self.say(Message::user(user));
 
         for step in 0..MAX_STEPS {
+            self.prune(hooks);
+            if crate::api::estimate_tokens(&self.history) >= self.cfg.compact_at as u64 {
+                if let Err(e) = self.compact(hooks) {
+                    hooks.ui(Ui::Error(format!("compaction failed: {e}")));
+                }
+            }
             for (id, code, path) in self.jobs.poll() {
                 let note = format!(
                     "Background job {id} finished with exit {code}; output: {}",
                     path.display()
                 );
                 hooks.ui(Ui::Info(note.clone()));
-                self.history.push(Message::system(note));
+                self.say(Message::system(note));
             }
             self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
             let acc = self.request(hooks)?;
@@ -208,7 +364,7 @@ impl Session {
             assistant.reasoning = acc.reasoning.clone();
             assistant.tool_calls = acc.tool_calls();
             let calls = assistant.tool_calls.clone();
-            self.history.push(assistant);
+            self.say(assistant);
 
             if calls.is_empty() {
                 return Ok(());
@@ -221,7 +377,7 @@ impl Session {
 
             for call in calls {
                 let out = self.dispatch(&call, hooks);
-                self.history.push(Message::tool(call.id.clone(), out));
+                self.say(Message::tool(call.id.clone(), out));
             }
         }
         Ok(())
@@ -257,7 +413,7 @@ impl Session {
                 match perm::classify_command(cmd, self.cfg.permissions, self.cfg.allow_sudo) {
                     Decision::Deny(why) => return why,
                     Decision::Ask => {
-                        if !hooks.confirm(cmd) {
+                        if !hooks.confirm(&format!("run `{cmd}`")) {
                             return "the user declined to run this command".into();
                         }
                     }
@@ -347,6 +503,63 @@ impl Session {
                     other => format!("unknown job op {other}"),
                 }
             }
+            "search" => self.search_tool(args),
+            "memory" => {
+                let op = args.get("op").and_then(Value::as_str).unwrap_or("search");
+                match op {
+                    "search" => {
+                        let q = args.get("query").and_then(Value::as_str).unwrap_or("");
+                        let hits = self.memory.search(q, 5);
+                        if hits.is_empty() {
+                            format!("no notes match {q:?}")
+                        } else {
+                            hits.iter()
+                                .map(|(p, x)| format!("{}: {x}", p.display()))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        }
+                    }
+                    "save" => {
+                        let title = args.get("title").and_then(Value::as_str).unwrap_or("");
+                        let body = args.get("body").and_then(Value::as_str).unwrap_or("");
+                        if title.is_empty() || body.is_empty() {
+                            return "memory save needs a title and a body".into();
+                        }
+                        let target = self
+                            .memory
+                            .dirs
+                            .first()
+                            .map(|d| d.join(format!("{}.md", crate::store::slugify(title))))
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default();
+                        if !hooks.confirm(&format!("save note {target}")) {
+                            return "the user declined to save this note".into();
+                        }
+                        match self.memory.save(title, body) {
+                            Ok(p) => format!("saved {}", p.display()),
+                            Err(e) => e,
+                        }
+                    }
+                    other => format!("unknown memory op {other}"),
+                }
+            }
+            "skill_load" => {
+                let name = args.get("name").and_then(Value::as_str).unwrap_or("");
+                match self.skills.iter().find(|s| s.name == name) {
+                    Some(s) => {
+                        let body: String = s.body.chars().take(4096).collect();
+                        if s.body.chars().count() > 4096 {
+                            format!("{body}\n[truncated at 4 KB]")
+                        } else {
+                            body
+                        }
+                    }
+                    None => format!(
+                        "no skill {name:?}; available: {}",
+                        self.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
+                    ),
+                }
+            }
             "ask" => {
                 let q = args.get("question").and_then(Value::as_str).unwrap_or("");
                 let opts: Vec<String> = args
@@ -363,6 +576,86 @@ impl Session {
                 }
             }
             other => format!("unknown tool {other}"),
+        }
+    }
+
+    fn search_tool(&mut self, args: &Value) -> String {
+        let op = args.get("op").and_then(Value::as_str).unwrap_or("search");
+        let url = match op {
+            "search" => format!("{}/v1/tools/search", self.cfg.base_url),
+            "fetch" => format!("{}/v1/tools/fetch", self.cfg.base_url),
+            other => return format!("unknown search op {other}"),
+        };
+        let body = match op {
+            "search" => {
+                let q = args.get("query").and_then(Value::as_str).unwrap_or("");
+                if q.is_empty() {
+                    return "search needs a query".into();
+                }
+                serde_json::json!({
+                    "query": q,
+                    "count": args.get("count").and_then(Value::as_u64).unwrap_or(5).min(10),
+                    "need_content": false
+                })
+            }
+            _ => {
+                let u = args.get("url").and_then(Value::as_str).unwrap_or("");
+                if u.is_empty() {
+                    return "fetch needs a url".into();
+                }
+                serde_json::json!({ "url": u })
+            }
+        };
+
+        let auth = format!("Authorization: Bearer {}", self.cfg.api_key);
+        let headers = ["Content-Type: application/json", auth.as_str()];
+        let mut raw = Vec::new();
+        let resp = crate::http::post_stream(&url, &headers, body.to_string().as_bytes(), |b| {
+            if raw.len() < 2 * 1024 * 1024 {
+                raw.extend_from_slice(b);
+            }
+        });
+        match resp {
+            Ok(r) if r.status == 200 => {}
+            Ok(r) => return format!("{} failed: HTTP {}", op, r.status),
+            Err(e) => return format!("{} failed: {e}", op),
+        }
+        let text = String::from_utf8_lossy(&raw);
+        let Ok(v) = serde_json::from_str::<Value>(&text) else {
+            return "the search endpoint returned something unreadable".into();
+        };
+
+        match op {
+            "search" => {
+                let mut out = String::new();
+                for item in v["results"].as_array().cloned().unwrap_or_default() {
+                    let score = item["rerank_score"].as_f64().unwrap_or(0.0);
+                    if score > 0.0 && score < 1.5 {
+                        continue;
+                    }
+                    out.push_str(&format!(
+                        "{}\n{}\n{}\n\n",
+                        item["title"].as_str().unwrap_or(""),
+                        item["url"].as_str().unwrap_or(""),
+                        item["summary"].as_str().unwrap_or(item["snippet"].as_str().unwrap_or(""))
+                    ));
+                }
+                if out.is_empty() {
+                    "no results".into()
+                } else {
+                    self.tools.cap(&out)
+                }
+            }
+            _ => {
+                let title = v["title"].as_str().unwrap_or("");
+                let content = v["content"].as_str().unwrap_or("");
+                if content.is_empty() {
+                    return "the page had no readable content".into();
+                }
+                let outline = outline_of(content);
+                let packed = format!("{title}\n\n{content}");
+                format!("outline: {outline}\n\n{}", self.tools.cap(&packed))
+            }
         }
     }
 
@@ -393,6 +686,21 @@ impl Session {
         }
     }
 
+}
+
+fn outline_of(markdown: &str) -> String {
+    let mut heads: Vec<&str> = markdown
+        .lines()
+        .filter(|l| l.starts_with('#'))
+        .map(|l| l.trim_start_matches('#').trim())
+        .filter(|l| !l.is_empty())
+        .take(12)
+        .collect();
+    if heads.is_empty() {
+        return "(no headings)".into();
+    }
+    heads.dedup();
+    heads.join(" · ")
 }
 
 pub fn summarise(text: &str) -> String {
