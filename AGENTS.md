@@ -28,7 +28,9 @@ Do not change source, config, or assets outside an OpenSpec change.
    openspec validate --all --strict
    ./scripts/size.sh      # binary under 1.5 MB
    ```
-4. Commit per logical batch, with `jj commit`.
+4. Commit after every ticked task, with `jj commit`. One task, one commit.
+   Not at the end of a batch: batching is how the archive move in this repo was
+   briefly left uncommitted, and a commit you have not made is not a checkpoint.
 
 ## No exceptions
 
