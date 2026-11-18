@@ -568,6 +568,7 @@ pub struct App {
     menu_open: bool,
     menu_index: usize,
     pending: Option<Pending>,
+    pending_since: Option<Instant>,
     status: Status,
     agents: Vec<String>,
     sessions_dir: std::path::PathBuf,
@@ -630,6 +631,7 @@ impl App {
             menu_open: false,
             menu_index: 0,
             pending: None,
+            pending_since: None,
             status: Status {
                 tokens: 0,
                 hit: 0,
@@ -709,6 +711,7 @@ impl App {
             }
             Ev::Confirm { what, reply } => {
                 self.pending = Some(Pending::Confirm { what, reply });
+                self.pending_since = Some(Instant::now());
                 self.dirty = true;
             }
             Ev::Question { q, opts, reply } => {
@@ -719,6 +722,7 @@ impl App {
                     mode: AskMode::Choose,
                     typed: String::new(),
                 });
+                self.pending_since = Some(Instant::now());
                 self.dirty = true;
             }
             Ev::Stop(reason) => {
@@ -765,6 +769,9 @@ impl App {
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
         if let Some(pending) = self.pending.take() {
             self.answer(pending, key, tx);
+            if self.pending.is_none() {
+                self.pending_since = None;
+            }
             return;
         }
 
@@ -1337,7 +1344,9 @@ impl App {
                         .collect();
                     format!("{title}: {}", shown.join("  "))
                 }
-                Pending::Confirm { what, .. } => format!("{what}? y/N"),
+                Pending::Confirm { what, .. } => {
+                    format!("{what}? y/N  ({}s)", self.seconds_left())
+                }
                 Pending::ConfirmDelete { id } => format!("delete {id}? y/N"),
                 Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
                 Pending::Question { q, opts, mode, typed, .. } => {
@@ -1403,6 +1412,12 @@ impl App {
         let row = upto.matches('\n').count();
         let col = upto.rfind('\n').map(|i| i + 1).unwrap_or(0);
         (row, cursor - col)
+    }
+
+    /// Seconds left before an open confirmation gives up.
+    fn seconds_left(&self) -> u64 {
+        let spent = self.pending_since.map(|t| t.elapsed()).unwrap_or_default();
+        CONFIRM_WAIT.saturating_sub(spent).as_secs()
     }
 
     /// Byte offset of a row and column, clamped to what the row holds.
@@ -1859,6 +1874,32 @@ mod tests {
         assert_eq!(a.input, "aa\nbbb", "Up left the composer");
         assert_eq!(a.cursor, 2, "Up did not land on the row above");
         assert!(a.hist_pos.is_none(), "Up recalled history from the last row");
+    }
+
+    #[test]
+    fn the_confirm_row_counts_down() {
+        let mut a = app();
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm {
+            what: "run `rm -rf build`".into(),
+            reply,
+        });
+        let first = countdown(&a.frame(80, 12));
+        a.pending_since = Some(a.pending_since.expect("pending") - Duration::from_secs(10));
+        let second = countdown(&a.frame(80, 12));
+        assert!(first <= 60 && first >= 59, "deadline starts at {first}");
+        assert!(
+            second <= first - 9,
+            "countdown did not fall: {first} then {second}"
+        );
+    }
+
+    fn countdown(frame: &str) -> u64 {
+        let at = frame.rfind('(').expect("countdown in the prompt row");
+        let rest = &frame[at + 1..];
+        rest[..rest.find('s').expect("seconds marker")]
+            .parse()
+            .expect("seconds")
     }
 
     #[test]
