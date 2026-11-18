@@ -1510,6 +1510,23 @@ mod tests {
     }
 
     #[test]
+    fn choosing_a_session_sends_resume() {
+        let mut a = app();
+        a.pending = Some(Pending::Choose {
+            title: "session".into(),
+            options: vec!["abc123  title  3 msgs".into()],
+            index: 0,
+            action: ChooseKind::Session,
+        });
+        let (tx, rx) = channel();
+        a.handle_key(Key::Enter, &tx);
+        match rx.try_recv() {
+            Ok(Cmd::Resume(id)) => assert_eq!(id, "abc123"),
+            _ => panic!("expected a resume command"),
+        }
+    }
+
+    #[test]
     fn scroll_detaches_from_the_tail() {
         let mut a = app();
         for i in 0..40 {

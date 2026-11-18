@@ -36,7 +36,7 @@ tests, fixtures, and two known gaps. No new behaviour.
 
 ## 7. Memory
 
-- [ ] 7.5 Permission behaviour for memory writes in both scopes. Verify: a global save prompts in `normal`, a project save does not, and a refusal leaves the directory byte-identical.
+- [x] 7.5 Permission behaviour for memory writes in both scopes. Verify: a global save prompts in `normal`, a project save does not, and a refusal leaves the directory byte-identical.
 
 ## 8. Skills and agents
 
@@ -61,4 +61,4 @@ tests, fixtures, and two known gaps. No new behaviour.
 ## 12. Close the spec gaps
 
 - [x] 12.4 Mid-loop `context_length_exceeded`: truncate old tool results, retry once, then fail cleanly. Verify: a forced 400 with that body produces one retry and a second failure ends the turn.
-- [ ] 12.7 `/sessions` loads the chosen session in place. Verify: choosing an entry replaces the transcript and continues that session.
+- [x] 12.7 `/sessions` loads the chosen session in place. Verify: choosing an entry replaces the transcript and continues that session.

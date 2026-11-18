@@ -1027,6 +1027,25 @@ mod tests {
     }
 
     #[test]
+    fn a_declined_memory_write_changes_nothing() {
+        let d = tmp();
+        let memory_dir = d.join("memory");
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(tool_reply(
+                "c1",
+                "memory",
+                "{\"op\":\"save\",\"title\":\"note\",\"body\":\"a fact\"}",
+            )),
+            Script::Ok(text_reply("declined")),
+        ]);
+        s.memory = crate::store::Memory {
+            dirs: vec![memory_dir.clone()],
+        };
+        s.turn("save it", &mut Null).unwrap();
+        assert!(!memory_dir.exists() || std::fs::read_dir(&memory_dir).unwrap().count() == 0);
+    }
+
+    #[test]
     fn second_overflow_is_a_clean_error() {
         let (mut s, fake) = scripted(vec![
             Script::Fails(400, "context_length_exceeded".into()),
