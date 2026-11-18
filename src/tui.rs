@@ -1153,6 +1153,14 @@ impl App {
                 self.dirty = true;
             }
             Pending::Confirm { what, reply } => {
+                if matches!(key, Key::Ctrl('c')) {
+                    let _ = reply.send(false);
+                    self.cancel.store(true, Ordering::Relaxed);
+                    self.status.streaming = false;
+                    self.push(Role::Info, format!("interrupted: {what}"));
+                    self.dirty = true;
+                    return;
+                }
                 let yes = matches!(key, Key::Char('y') | Key::Char('Y') | Key::Enter);
                 if matches!(key, Key::Esc) || matches!(key, Key::Char('n') | Key::Char('N')) {
                     self.push(Role::Info, format!("declined: {what}"));
@@ -1884,6 +1892,24 @@ mod tests {
         assert_eq!(a.input, "aa\nbbb", "Up left the composer");
         assert_eq!(a.cursor, 2, "Up did not land on the row above");
         assert!(a.hist_pos.is_none(), "Up recalled history from the last row");
+    }
+
+    #[test]
+    fn ctrl_c_on_a_prompt_stops_the_turn() {
+        let mut a = app();
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm {
+            what: "run `ls`".into(),
+            reply,
+        });
+        a.status.streaming = true;
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.pending.is_none(), "the prompt stayed open");
+        assert_eq!(rx.try_recv().ok(), Some(false), "the prompt was not refused");
+        assert!(a.cancel.load(Ordering::Relaxed), "the turn kept running");
+        assert!(!a.quit, "Ctrl+C quit the whole interface");
+        assert!(!a.status.streaming);
     }
 
     #[test]
