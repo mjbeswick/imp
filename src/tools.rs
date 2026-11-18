@@ -44,6 +44,7 @@ impl Outcome {
 pub struct Tools {
     pub root: PathBuf,
     pub out_dir: PathBuf,
+    pub jail: bool,
     pub timeout: Duration,
     read_paths: HashSet<PathBuf>,
     seq: u64,
@@ -54,6 +55,7 @@ impl Tools {
         Self {
             root,
             out_dir,
+            jail: true,
             timeout: TIMEOUT,
             read_paths: HashSet::new(),
             seq: 0,
@@ -107,7 +109,7 @@ impl Tools {
             .root
             .canonicalize()
             .unwrap_or_else(|_| self.root.clone());
-        if !full.starts_with(&root) {
+        if self.jail && !full.starts_with(&root) {
             return Err(format!("{raw}: outside the session directory"));
         }
         Ok(full)

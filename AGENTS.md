@@ -3,6 +3,16 @@
 This repository uses OpenSpec. The specs are a contract, not a record of what
 happened.
 
+## Workflow
+
+1. Discuss before building. Reply with the change name, a 3–5 bullet scope, and
+   anything the request leaves open. Wait for a yes.
+2. Then write the artifacts: proposal, specs, design, tasks.
+3. Then code, ticking tasks as you go.
+4. A small fix joins the active change as a new task. Do not open a second
+   change for it, and do not code first and backfill the artifacts.
+5. Tooling, docs, and process changes use `skip_specs: true`.
+
 ## The rule
 
 Do not change source, config, or assets outside an OpenSpec change.

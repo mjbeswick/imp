@@ -339,6 +339,16 @@ impl Log {
         }
     }
 
+    /// The most recent event of a kind, for example the active agent.
+    pub fn last_event(&self, kind: &str) -> Option<String> {
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        text.lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["t"].as_str() == Some(kind))
+            .filter_map(|v| v["d"].as_str().map(str::to_string))
+            .next_back()
+    }
+
     /// Rebuild the wire history, dropping orphan tool results.
     pub fn load(&self) -> Vec<Message> {
         let Ok(text) = std::fs::read_to_string(&self.path) else {

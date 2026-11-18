@@ -71,11 +71,16 @@ impl Session {
             history.push(Message::system(agent.instructions.clone()));
         }
         let job_dir = out_dir.join("jobs");
+        let jail = crate::perm::jail_enabled(cfg.permissions);
         let memory = Memory::discover(&cfg, &root);
         let skills = crate::store::load_skills(&cfg, &root);
         Self {
             cfg,
-            tools: Tools::new(root, out_dir),
+            tools: {
+                let mut t = Tools::new(root, out_dir);
+                t.jail = jail;
+                t
+            },
             history,
             cancel: AtomicBool::new(false),
             agent,
@@ -90,6 +95,41 @@ impl Session {
 
     pub fn attach_log(&mut self, log: Log) {
         self.log = Some(log);
+    }
+
+    /// Load a session by id and continue it.
+    pub fn resume_id(&mut self, dir: &std::path::Path, id: &str) -> Result<(), String> {
+        let log = Log::open(dir, id).ok_or_else(|| format!("no session {id}"))?;
+        let messages = log.load();
+        self.resume(messages);
+        let agent = log.last_event("agent");
+        self.attach_log(log);
+        if let Some(name) = agent {
+            if let Some(found) = self.roster.iter().find(|a| a.name == name).cloned() {
+                self.apply_agent(found);
+            }
+        }
+        Ok(())
+    }
+
+    /// Re-read instructions and skills, rebuild the prefix.
+    pub fn reload(&mut self) -> Result<(), String> {
+        self.skills = crate::store::load_skills(&self.cfg, &self.tools.root);
+        self.memory = crate::store::Memory::discover(&self.cfg, &self.tools.root);
+        let prompt = crate::prompt::compose(&self.tools.root, &self.cfg);
+        let mut rest = std::mem::take(&mut self.history);
+        let first = rest
+            .iter()
+            .position(|m| m.role != crate::api::Role::System)
+            .unwrap_or(rest.len());
+        rest.drain(..first);
+        let mut rebuilt = vec![Message::system(prompt)];
+        rebuilt.extend(rest);
+        self.history = rebuilt;
+        if let Some(log) = &self.log {
+            log.event("reloaded", "");
+        }
+        Ok(())
     }
 
     /// Replace history with a resumed one, keeping the current system prompt.
@@ -126,19 +166,44 @@ impl Session {
         );
         self.say(Message::system(note));
         let name = agent.name.clone();
-        self.agent = agent;
+        if let Some(log) = &self.log {
+            log.event("agent", &name);
+        }
+        self.apply_agent(agent);
         name
+    }
+
+    /// Set the profile without touching history; used by resume and switch.
+    pub fn apply_agent(&mut self, agent: Agent) {
+        if let Some(model) = &agent.model {
+            self.cfg.model = model.clone();
+        }
+        if let Some(thinking) = agent.thinking {
+            self.cfg.thinking = thinking;
+        }
+        self.agent = agent;
     }
 
     fn active_tools(&self) -> Vec<Value> {
         schema()
             .into_iter()
             .filter(|t| {
-                t.get("function")
+                let Some(name) = t
+                    .get("function")
                     .and_then(|f| f.get("name"))
                     .and_then(Value::as_str)
-                    .map(|n| self.agent.allows(n))
-                    .unwrap_or(true)
+                else {
+                    return true;
+                };
+                if !self.agent.allows(name) {
+                    return false;
+                }
+                // 8. Feature tools only when the feature exists.
+                match name {
+                    "memory" => self.memory.dirs.iter().any(|d| d.exists()),
+                    "skill_load" => self.skills.iter().any(|s| s.path.is_some()),
+                    _ => true,
+                }
             })
             .collect()
     }
@@ -203,6 +268,18 @@ impl Session {
                 }
             }
 
+            let lower = raw_error.to_ascii_lowercase();
+            if status == 400
+                && (lower.contains("context_length") || lower.contains("maximum context"))
+                && attempt == 1
+            {
+                let freed = self.emergency_truncate();
+                hooks.ui(Ui::Info(format!(
+                    "context full; dropped {freed} old tool results and retrying once"
+                )));
+                continue;
+            }
+
             match api::classify(status, acc.finish.as_deref(), &raw_error) {
                 Ok(()) if status == 200 => return Ok(acc),
                 Ok(()) => {}
@@ -253,6 +330,20 @@ impl Session {
         pruned
     }
 
+    fn emergency_truncate(&mut self) -> usize {
+        let cutoff = self.history.len().saturating_sub(6);
+        let mut dropped = 0;
+        for (i, m) in self.history.iter_mut().enumerate() {
+            if i >= cutoff || m.role != crate::api::Role::Tool || m.content.len() <= 200 {
+                continue;
+            }
+            let head: String = m.content.chars().take(160).collect();
+            m.content = format!("{head}… [dropped: context full]");
+            dropped += 1;
+        }
+        dropped
+    }
+
     /// Summarise everything except the last four exchanges.
     pub fn compact(&mut self, hooks: &mut dyn Hooks) -> Result<(), String> {
         let before = crate::api::estimate_tokens(&self.history);
@@ -297,6 +388,22 @@ impl Session {
             Message::system("You compress conversations without losing decisions."),
             Message::user(prompt),
         ])?;
+
+        let mut facts: Vec<String> = summary
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("MEMORY:").map(|s| s.trim().to_string()))
+            .filter(|s| s.len() > 8)
+            .take(3)
+            .collect();
+        for fact in facts.drain(..) {
+            let title: String = fact.chars().take(48).collect();
+            if hooks.confirm(&format!("save note `{title}`")) {
+                match self.memory.save(&title, &fact) {
+                    Ok(p) => hooks.ui(Ui::Info(format!("saved {}", p.display()))),
+                    Err(e) => hooks.ui(Ui::Error(format!("memory: {e}"))),
+                }
+            }
+        }
 
         let mut rebuilt = system_prefix;
         rebuilt.push(Message::system(format!("[compacted]\n{summary}")));
@@ -409,6 +516,19 @@ impl Session {
                 let Some(cmd) = args.get("command").and_then(Value::as_str) else {
                     return "bash needs a command".into();
                 };
+                if let Some(rule) =
+                    perm::shell_touches_self_config(cmd, self.cfg.permissions)
+                {
+                    match rule {
+                        Decision::Deny(why) => return why,
+                        Decision::Ask => {
+                            if !hooks.confirm(&format!("run `{cmd}`")) {
+                                return "the user declined to run this command".into();
+                            }
+                        }
+                        Decision::Allow => {}
+                    }
+                }
                 match perm::classify_command(cmd, self.cfg.permissions, self.cfg.allow_sudo) {
                     Decision::Deny(why) => return why,
                     Decision::Ask => {

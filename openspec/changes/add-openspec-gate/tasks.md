@@ -8,3 +8,4 @@
 - [x] 1.4 Remove the dead-code warnings the gate surfaced (unused imports, constants, helper methods) so `cargo build` is quiet. Verify: `cargo build --release` prints no warnings.
 - [ ] 1.5 Project `opencode.jsonc`: deny edits to `target/**`, ask before editing change specs, deny `git push`, `cargo publish`, and `rm -rf`. Verify: config parses and `target/` edits are refused.
 - [ ] 1.6 A `spec` agent that may only edit `openspec/**`. Verify: as `spec`, an edit to `src/main.rs` is denied.
+- [x] 1.7 `AGENTS.md` workflow section: discuss before building, artifacts before code, small fixes join the active change, tooling uses `skip_specs`. Verify: the file names the hand-off point (a proposed change name and scope, then a wait for approval).
