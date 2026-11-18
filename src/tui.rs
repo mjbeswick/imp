@@ -466,6 +466,7 @@ const CONFIRM_WAIT: Duration = Duration::from_secs(60);
 
 struct WorkerHooks {
     tx: Sender<Ev>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Hooks for WorkerHooks {
@@ -496,6 +497,7 @@ impl Hooks for WorkerHooks {
         match wait_for_answer(&rx, CONFIRM_WAIT) {
             Some(answer) => answer,
             None => {
+                self.cancel.store(true, Ordering::Relaxed);
                 let _ = self.tx.send(Ev::Stop(format!(
                     "no answer within {}s; nothing ran and the turn stopped",
                     CONFIRM_WAIT.as_secs()
@@ -730,6 +732,8 @@ impl App {
                 self.dirty = true;
             }
             Ev::Stop(reason) => {
+                self.pending = None;
+                self.pending_since = None;
                 self.status.streaming = false;
                 self.cancel.store(true, Ordering::Relaxed);
                 self.push(Role::Error, reason);
@@ -1612,7 +1616,8 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                 Ok(Cmd::Prompt(text)) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
-                                };
+                        cancel: worker_session.cancel.clone(),
+                    };
                     let result = worker_session.turn(&text, &mut hooks);
                     let _ = ev_tx.send(Ev::Usage {
                         tokens: crate::api::estimate_tokens(&worker_session.history),
@@ -1632,7 +1637,8 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     if let Some(agent) = found {
                         let mut hooks = WorkerHooks {
                             tx: ev_tx.clone(),
-                                        };
+                            cancel: worker_session.cancel.clone(),
+                        };
                         let applied = worker_session.switch_agent(agent);
                         let _ = ev_tx.send(Ev::Info(format!("agent: {applied}")));
                         let _ = &mut hooks;
@@ -1700,7 +1706,8 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                 Ok(Cmd::Compact) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
-                                };
+                        cancel: worker_session.cancel.clone(),
+                    };
                     if let Err(e) = worker_session.compact(&mut hooks) {
                         let _ = ev_tx.send(Ev::Error(e));
                     }
@@ -1977,10 +1984,17 @@ mod tests {
     #[test]
     fn a_stop_event_ends_the_turn() {
         let mut a = app();
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm {
+            what: "run `ls`".into(),
+            reply,
+        });
         a.status.streaming = true;
         a.apply(Ev::Stop("no answer within 60s".into()));
         assert!(a.cancel.load(Ordering::Relaxed), "the turn kept running");
         assert!(!a.status.streaming);
+        assert!(a.pending.is_none(), "a stale prompt stayed on screen");
+        assert!(a.pending_since.is_none());
         assert!(a.entries.last().expect("entry").text.contains("no answer"));
     }
 
