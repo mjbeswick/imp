@@ -5,4 +5,4 @@
 - [x] 1.3 Draw the composer across rows with the caret on its row and a row budget of `min(8, rows / 2)`. Verify: a frame test shows two rows, the status last, and no bare line feed.
 - [x] 1.4 Move Up and Down between composer rows before history. Verify: a key test moves within rows and only then recalls history.
 - [x] 1.5 Update the key list in `help.rs` and the `tui` spec delta. Verify: `/help` names Shift+Enter and `openspec validate --all --strict` passes.
-- [ ] 1.6 Run the checks. Verify: `cargo test` and `./scripts/size.sh` pass.
+- [x] 1.6 Run the checks. Verify: `cargo test` and `./scripts/size.sh` pass.

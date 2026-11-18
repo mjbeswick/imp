@@ -1235,7 +1235,7 @@ impl App {
     pub fn frame(&self, cols: usize, rows: usize) -> String {
         let menu = if self.menu_open { self.menu_matches() } else { Vec::new() };
         let menu_rows = menu.len().min(6);
-        let composer = self.composer(cols, rows);
+        let composer = self.composer(cols, rows.saturating_sub(1 + menu_rows).max(1));
         let body_rows = rows
             .saturating_sub(1 + menu_rows + composer.len())
             .max(1);
@@ -1335,13 +1335,14 @@ impl App {
 
     /// The input area: one painted row per newline in the input.
     ///
-    /// The caret keeps its own row visible, and the area never takes more than
-    /// eight rows or half the screen.
-    fn composer(&self, cols: usize, rows: usize) -> Vec<String> {
+    /// `space` is what is left after the status line and the menu. The caret
+    /// keeps its own row visible, and the area never takes more than eight rows
+    /// or half the space.
+    fn composer(&self, cols: usize, space: usize) -> Vec<String> {
         if let Some(row) = self.pending_row(cols) {
             return vec![row];
         }
-        let budget = (rows / 2).clamp(1, 8);
+        let budget = (space / 2).clamp(1, 8);
         let (caret_row, caret_col) = self.caret_position();
         let mut plain = Vec::new();
         for (i, text) in self.input.split('\n').enumerate() {
