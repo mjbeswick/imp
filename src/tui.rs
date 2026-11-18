@@ -1525,9 +1525,7 @@ impl App {
                     format!("{title}: {}", shown.join("  "))
                 }
                 Pending::Confirm { what, .. } => {
-                    let suffix = format!("? y/N  ({}s)", self.seconds_left());
-                    let room = cols.saturating_sub(suffix.chars().count()).max(12);
-                    format!("{} {}", middle(what, room), suffix)
+                    format!("{} y/N  ({}s)", verb(what), self.seconds_left())
                 }
                 Pending::ConfirmDelete { id } => format!("delete {id}? y/N"),
                 Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
@@ -1706,6 +1704,17 @@ fn tail(text: &str, width: usize) -> String {
     }
     let keep: String = text.chars().skip(count - (width - 1)).collect();
     format!("…{keep}")
+}
+
+/// The prompt asks with the verb alone; the tool row above names the command.
+fn verb(what: &str) -> &'static str {
+    match what.split_whitespace().next().unwrap_or("") {
+        "run" => "run it?",
+        "write" => "write it?",
+        "save" => "save it?",
+        "delete" => "delete it?",
+        _ => "approve?",
+    }
 }
 
 /// Keep both ends of a row, so a command still shows what it starts and ends with.
@@ -2647,6 +2656,39 @@ mod tests {
         assert!(a.cancel_requested);
         a.apply(Ev::Done(None));
         assert!(!a.cancel_requested, "the latch survived the turn");
+    }
+
+    #[test]
+    fn a_confirm_asks_with_the_verb_alone() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `nmap -sV -T4 192.168.0.56`".into(),
+            args: "{}".into(),
+        });
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm {
+            what: "run `nmap -sV -T4 192.168.0.56`".into(),
+            reply,
+        });
+        let out = a.frame(90, 12);
+        assert!(out.contains("run it? y/N"), "no verb prompt: {out:?}");
+        assert_eq!(
+            out.matches("nmap -sV -T4 192.168.0.56").count(),
+            1,
+            "the command appears more than once: {out:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_verb_falls_back_to_approve() {
+        let mut a = app();
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm {
+            what: "overwrite /etc/hosts".into(),
+            reply,
+        });
+        assert!(a.frame(80, 12).contains("approve? y/N"));
     }
 
 }
