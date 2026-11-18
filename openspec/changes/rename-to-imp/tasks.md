@@ -16,7 +16,7 @@
 ## 3. Local
 
 - [x] 3.1 Move `~/.config/mote` to `~/.config/imp` and `~/.local/state/mote` to `~/.local/state/imp`. Verify: `imp -l` lists the existing sessions and `imp --version` prints the new name.
-- [ ] 3.2 Install the binary as `~/.local/bin/imp`, remove any installed `mote`. Verify: `command -v imp` resolves and `command -v mote` fails.
+- [x] 3.2 Install the binary as `~/.local/bin/imp`, remove any installed `mote`. Verify: `command -v imp` resolves and `command -v mote` fails.
 
 ## 4. Finish
 
