@@ -1,6 +1,6 @@
 //! `mote init`: create the layout, write two examples, overwrite nothing.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const CONFIG_TEMPLATE: &str = "\
 # mote configuration. Environment variables override every key.
@@ -127,16 +127,10 @@ pub fn print(report: &Report) {
     println!("  next: set DEEPSEEK_API_KEY, then run mote");
 }
 
-pub fn state_paths(state_dir: &Path) -> Vec<PathBuf> {
-    ["sessions", "memory", "out", "jobs"]
-        .iter()
-        .map(|d| state_dir.join(d))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn tmp() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};

@@ -19,7 +19,7 @@ pub enum Ui {
     Content(String),
     Reasoning(String),
     ToolStart { name: String, args: String },
-    ToolEnd { ok: bool, ms: u128, preview: String },
+    ToolEnd { ok: bool, preview: String },
     Info(String),
     Error(String),
 }
@@ -398,7 +398,6 @@ impl Session {
             ok: !out.starts_with("refused")
                 && !out.starts_with("cancelled")
                 && !out.starts_with("bad arguments"),
-            ms: 0,
             preview: summarise(&out),
         });
         out

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Static guardrails for this repository. The stateful rule (source changes
+  // need an active OpenSpec change) lives in scripts/check-drift.py, because
+  // permissions cannot see repository state.
+  "permissions": [
+    { "action": "edit", "resource": "target/**", "effect": "deny" },
+    { "action": "edit", "resource": "openspec/changes/**/specs/**", "effect": "ask" },
+    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "shell", "resource": "cargo publish *", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf *", "effect": "deny" }
+  ],
+
+  "agents": {
+    "spec": {
+      "description": "Writes OpenSpec artifacts. Cannot touch source, assets, or scripts.",
+      "permissions": [
+        { "action": "edit", "resource": "src/**", "effect": "deny" },
+        { "action": "edit", "resource": "assets/**", "effect": "deny" },
+        { "action": "edit", "resource": "scripts/**", "effect": "deny" },
+        { "action": "edit", "resource": "Cargo.toml", "effect": "deny" },
+        { "action": "edit", "resource": "openspec/**", "effect": "allow" }
+      ]
+    }
+  }
+}

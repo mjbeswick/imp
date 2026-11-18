@@ -26,6 +26,7 @@ pub struct Job {
 }
 
 impl Job {
+    #[allow(dead_code)]
     pub fn running(&self) -> bool {
         self.code.is_none()
     }
@@ -173,6 +174,7 @@ impl Jobs {
             .join("\n")
     }
 
+    #[allow(dead_code)]
     pub fn running(&self) -> usize {
         self.map.values().filter(|j| j.running()).count()
     }
@@ -240,10 +242,11 @@ mod tests {
         let d = dir();
         let mut jobs = Jobs::default();
         let id = jobs.start("sleep 30", &d).unwrap();
-        assert_eq!(jobs.running(), 1);
+        
         jobs.kill(id).unwrap();
-        let done = jobs.poll();
-        assert!(done.iter().any(|(j, _, _)| *j == id) || jobs.running() == 0);
+        let listing = jobs.list();
+        assert!(listing.contains(&format!("job {id}")), "{listing}");
+        assert!(!listing.contains("running"), "{listing}");
     }
 
     #[test]

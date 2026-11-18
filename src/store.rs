@@ -4,6 +4,7 @@ use crate::config::{dirs_config, Config};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Agent {
     pub name: String,
     pub description: String,
@@ -524,6 +525,7 @@ pub fn is_project(root: &Path) -> bool {
 
 // ------------------------------------------------------------------ skills
 
+#[allow(dead_code)]
 pub struct Skill {
     pub name: String,
     pub description: String,

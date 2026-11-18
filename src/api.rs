@@ -203,7 +203,6 @@ pub enum Event {
         cache_miss: u64,
     },
     Done,
-    Ignore,
 }
 
 /// Incremental SSE splitter. Feed it bytes, get events back.
@@ -358,7 +357,7 @@ impl Accum {
                 self.cache_hit = cache_hit;
                 self.cache_miss = cache_miss;
             }
-            Event::Done | Event::Ignore => {}
+            Event::Done => {}
         }
     }
 

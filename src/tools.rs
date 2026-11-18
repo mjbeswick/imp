@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::ffi::c_int;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -29,7 +29,6 @@ pub struct Outcome {
     pub ok: bool,
     pub text: String,
     pub code: Option<i32>,
-    pub ms: u128,
 }
 
 impl Outcome {
@@ -38,7 +37,6 @@ impl Outcome {
             ok: false,
             text: text.into(),
             code: None,
-            ms: 0,
         }
     }
 }
@@ -225,7 +223,6 @@ impl Tools {
 
         let raw = reader.join().unwrap_or_default();
         let text = String::from_utf8_lossy(&raw).to_string();
-        let ms = start.elapsed().as_millis();
 
         if killed {
             let why = if cancel.load(Ordering::Relaxed) {
@@ -237,7 +234,6 @@ impl Tools {
                 ok: false,
                 text: format!("{why}\n{}", self.cap(&text)),
                 code: None,
-                ms,
             };
         }
 
@@ -246,12 +242,10 @@ impl Tools {
             ok: code == Some(0),
             text: self.cap(&text),
             code,
-            ms,
         }
     }
 
     pub fn read(&mut self, paths: &[String], offset: Option<usize>, limit: Option<usize>) -> Outcome {
-        let start = Instant::now();
         let limit = limit.unwrap_or(READ_LINES).min(READ_LINES);
         let offset = offset.unwrap_or(0);
         let mut out = String::new();
@@ -311,12 +305,10 @@ impl Tools {
             ok,
             text: self.cap(&out),
             code: None,
-            ms: start.elapsed().as_millis(),
         }
     }
 
     pub fn write(&mut self, raw: &str, content: &str) -> Outcome {
-        let start = Instant::now();
         if content.len() as u64 > MAX_WRITE {
             return Outcome::error(format!("refused: {} bytes is over the 5 MB limit", content.len()));
         }
@@ -340,7 +332,6 @@ impl Tools {
                     ok: true,
                     text: format!("wrote {raw} ({} bytes)", content.len()),
                     code: None,
-                    ms: start.elapsed().as_millis(),
                 }
             }
             Err(e) => Outcome::error(format!("{raw}: {e}")),
@@ -348,7 +339,6 @@ impl Tools {
     }
 
     pub fn edit(&mut self, raw: &str, edits: &[(String, String)]) -> Outcome {
-        let start = Instant::now();
         let path = match self.resolve(raw) {
             Ok(p) => p,
             Err(e) => return Outcome::error(e),
@@ -384,15 +374,8 @@ impl Tools {
             ok: true,
             text: format!("edited {raw} ({} changes)", edits.len()),
             code: None,
-            ms: start.elapsed().as_millis(),
         }
     }
-}
-
-pub fn inside(path: &Path, root: &Path) -> bool {
-    let p = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let r = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    p.starts_with(r)
 }
 
 #[cfg(test)]

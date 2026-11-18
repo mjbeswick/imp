@@ -6,17 +6,14 @@
 
 use crate::agent::{Hooks, Session, Ui};
 use crate::config::{ColorMode, Config};
-use crate::tools::INLINE_CAP;
 use std::ffi::{c_int, c_ulong};
 use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{channel, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 const ALT_ON: &str = "\x1b[?1049h\x1b[?25l";
 const ALT_OFF: &str = "\x1b[?25h\x1b[?1049l";
-const HOME: &str = "\x1b[H";
-const CLEAR_LINE: &str = "\x1b[K";
 
 #[repr(C)]
 struct Winsize {
@@ -245,7 +242,6 @@ pub enum Ev {
 
 struct WorkerHooks {
     tx: Sender<Ev>,
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Hooks for WorkerHooks {
@@ -254,7 +250,7 @@ impl Hooks for WorkerHooks {
             Ui::Content(t) => Ev::Token(t),
             Ui::Reasoning(t) => Ev::Think(t),
             Ui::ToolStart { name, args } => Ev::ToolStart { name, args },
-            Ui::ToolEnd { ok, preview, .. } => Ev::ToolEnd { ok, preview },
+            Ui::ToolEnd { ok, preview } => Ev::ToolEnd { ok, preview },
             Ui::Info(t) => Ev::Info(t),
             Ui::Error(t) => Ev::Error(t),
         };
@@ -321,7 +317,7 @@ pub struct App {
 
 enum Pending {
     Choose { title: String, options: Vec<String>, index: usize, action: ChooseKind },
-    Confirm { what: String, reply: Sender<bool>, typed: String },
+    Confirm { what: String, reply: Sender<bool> },
     Question { q: String, opts: Vec<String>, reply: Sender<Option<String>>, mode: AskMode, typed: String },
 }
 
@@ -340,7 +336,6 @@ struct Status {
     tokens: u64,
     hit: u64,
     miss: u64,
-    note: String,
     streaming: bool,
 }
 
@@ -372,7 +367,6 @@ impl App {
                 tokens: 0,
                 hit: 0,
                 miss: 0,
-                note: String::new(),
                 streaming: false,
             },
             agents,
@@ -430,11 +424,7 @@ impl App {
                 self.dirty = true;
             }
             Ev::Confirm { what, reply } => {
-                self.pending = Some(Pending::Confirm {
-                    what,
-                    reply,
-                    typed: String::new(),
-                });
+                self.pending = Some(Pending::Confirm { what, reply });
                 self.dirty = true;
             }
             Ev::Question { q, opts, reply } => {
@@ -777,18 +767,14 @@ impl App {
                 self.pending = Some(Pending::Choose { title, options, index, action });
                 self.dirty = true;
             }
-            Pending::Confirm { what, reply, .. } => {
+            Pending::Confirm { what, reply } => {
                 let yes = matches!(key, Key::Char('y') | Key::Char('Y') | Key::Enter);
                 if matches!(key, Key::Esc) || matches!(key, Key::Char('n') | Key::Char('N')) {
                     self.push(Role::Info, format!("declined: {what}"));
                 } else if yes {
                     self.push(Role::Info, format!("approved: {what}"));
                 } else {
-                    self.pending = Some(Pending::Confirm {
-                        what,
-                        reply,
-                        typed: String::new(),
-                    });
+                    self.pending = Some(Pending::Confirm { what, reply });
                     return;
                 }
                 let _ = reply.send(yes);
@@ -1103,7 +1089,7 @@ fn save_history(history: &[String]) {
 }
 
 /// Run the interface until the user quits.
-pub fn run(mut session: Session, cfg: Config) -> Result<(), String> {
+pub fn run(session: Session, cfg: Config) -> Result<(), String> {
     let _raw = RawMode::enter();
     let mut app = App::new(cfg);
 
@@ -1119,8 +1105,7 @@ pub fn run(mut session: Session, cfg: Config) -> Result<(), String> {
                 Ok(Cmd::Prompt(text)) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
-                        cancel: cancel.clone(),
-                    };
+                                };
                     let result = worker_session.turn(&text, &mut hooks);
                     let _ = ev_tx.send(Ev::Usage {
                         tokens: crate::api::estimate_tokens(&worker_session.history),
@@ -1140,8 +1125,7 @@ pub fn run(mut session: Session, cfg: Config) -> Result<(), String> {
                     if let Some(agent) = found {
                         let mut hooks = WorkerHooks {
                             tx: ev_tx.clone(),
-                            cancel: cancel.clone(),
-                        };
+                                        };
                         let applied = worker_session.switch_agent(agent);
                         let _ = ev_tx.send(Ev::Info(format!("agent: {applied}")));
                         let _ = &mut hooks;
@@ -1152,8 +1136,7 @@ pub fn run(mut session: Session, cfg: Config) -> Result<(), String> {
                 Ok(Cmd::Compact) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
-                        cancel: cancel.clone(),
-                    };
+                                };
                     if let Err(e) = worker_session.compact(&mut hooks) {
                         let _ = ev_tx.send(Ev::Error(e));
                     }
