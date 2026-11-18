@@ -1,6 +1,6 @@
 //! Help text. One renderer, used by `--help`, `/help`, and line mode.
 
-pub const KEYS: &str = "Enter send · Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear · Up/Down history · Tab complete";
+pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear · Up/Down history · Tab complete";
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
@@ -210,6 +210,12 @@ mod tests {
         for line in text.lines() {
             assert!(line.chars().count() <= 80, "too wide: {line:?}");
         }
+    }
+
+    #[test]
+    fn keys_mention_shift_enter() {
+        let text = commands();
+        assert!(text.contains("Shift+Enter"), "{text}");
     }
 
     #[test]
