@@ -14,6 +14,10 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 - **WHEN** the transcript exceeds the screen height
 - **THEN** it scrolls within the same column and no second pane appears
 
+#### Scenario: Taller composer
+- **WHEN** the composer holds three rows
+- **THEN** the transcript gives up two rows, the status line stays last, and the layout is otherwise unchanged
+
 #### Scenario: Resized window
 - **WHEN** the window width changes between turns
 - **THEN** the next turn carries one line naming the new width, and later turns at that width carry none
