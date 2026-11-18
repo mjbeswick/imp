@@ -245,34 +245,6 @@ The system SHALL persist submitted prompts to a history file, SHALL recall them 
 - **WHEN** the composer holds three rows and the caret is on the third
 - **THEN** Up moves the caret to the second row and the recalled history entry does not appear
 
-### Requirement: Eight slash commands, no more
-
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload`, `/mode`, or `/cost`.
-
-#### Scenario: Help
-- **WHEN** the user types `/help`
-- **THEN** all six commands appear with a one-line description
-
-#### Scenario: Unknown command
-- **WHEN** the user types `/nope`
-- **THEN** nothing is sent to the model and the nearest matching command is suggested
-
-#### Scenario: Command effect
-- **WHEN** the user runs `/compact`
-- **THEN** compaction runs immediately and the result is reported in the transcript
-
-#### Scenario: Reload
-- **WHEN** the user runs `/reload` after editing `AGENTS.md`
-- **THEN** the next request carries the new instructions and the interface says the cache was reset
-
-#### Scenario: Duplicate affordance is absent
-- **WHEN** the user types `/clear`
-- **THEN** it is not a command; Ctrl+L clears the view
-
-#### Scenario: Line mode
-- **WHEN** the user runs `/help` in line mode
-- **THEN** it prints the same list as a plain block
-
 ### Requirement: Help is grouped, aligned, and shared
 
 The system SHALL render `--help` with titled sections (usage, sessions, running, other, examples, environment, files), aligned columns, defaults in brackets, and descriptions wrapped to the terminal width, and SHALL render `/help` from the same command table in both front-ends.
@@ -464,3 +436,39 @@ The system SHALL draw `[text](url)` as the link text wrapped in an OSC 8 hyperli
 #### Scenario: Off
 - **WHEN** `links=never`
 - **THEN** no OSC 8 sequence is emitted and links render as text with the URL
+
+### Requirement: Nine slash commands, no more
+
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
+
+#### Scenario: Help
+- **WHEN** the user types `/help`
+- **THEN** all nine commands appear with a one-line description
+
+#### Scenario: Unknown command
+- **WHEN** the user types `/nope`
+- **THEN** nothing is sent to the model and the nearest matching command is suggested
+
+#### Scenario: Command effect
+- **WHEN** the user runs `/compact`
+- **THEN** compaction runs immediately and the result is reported in the transcript
+
+#### Scenario: Reload
+- **WHEN** the user runs `/reload` after editing `AGENTS.md`
+- **THEN** the next request carries the new instructions and the interface says the cache was reset
+
+#### Scenario: Yolo on
+- **WHEN** the user runs `/yolo` in a session launched in `normal`
+- **THEN** the mode becomes `yolo`, the path jail turns off, the transcript names both, and the config file is untouched
+
+#### Scenario: Yolo off
+- **WHEN** the user runs `/yolo` again in that session
+- **THEN** the mode returns to `normal` and the path jail returns
+
+#### Scenario: Duplicate affordance is absent
+- **WHEN** the user types `/clear`
+- **THEN** it is not a command; Ctrl+L clears the view
+
+#### Scenario: Line mode
+- **WHEN** the user runs `/help` in line mode
+- **THEN** it prints the same list as a plain block
