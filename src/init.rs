@@ -11,6 +11,7 @@ const CONFIG_TEMPLATE: &str = "\
 # permissions=normal          # normal | strict | yolo
 # allow_sudo=false
 # thinking=false
+# links=auto                  # auto | always | never
 # prune_at=45000
 # compact_at=60000
 # max_tokens=8192

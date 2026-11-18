@@ -297,6 +297,7 @@ impl Palette {
             format!("\x1b[38;5;{fallback}m{text}\x1b[0m")
         }
     }
+
 }
 
 extern "C" {
@@ -582,6 +583,12 @@ fn wait_for_answer(rx: &Receiver<bool>, wait: Duration) -> Option<bool> {
 struct Entry {
     role: Role,
     text: String,
+}
+
+/// One drawn row: plain text, or styled spans from the markdown renderer.
+enum Line {
+    Text(String),
+    Spans(Vec<crate::render::Span>),
 }
 
 /// The tool call on screen: one row, updated in place when it finishes.
@@ -1275,7 +1282,7 @@ impl App {
                 if matches!(key, Key::Esc) || matches!(key, Key::Char('n') | Key::Char('N')) {
                     self.push(Role::Info, format!("declined: {what}"));
                 } else if yes {
-                    self.push(Role::Info, format!("approved: {what}"));
+                    // The tool row carries the result, so approval needs no row of its own.
                 } else {
                     self.pending = Some(Pending::Confirm { what, reply });
                     return;
@@ -1395,8 +1402,15 @@ impl App {
             .saturating_sub(1 + menu_rows + composer.len())
             .max(1);
 
-        let mut lines: Vec<(Role, String)> = Vec::new();
+        let markdown = self.cfg.links.supported();
+        let mut lines: Vec<(Role, Line)> = Vec::new();
         for entry in &self.entries {
+            if entry.role == Role::Assistant {
+                for row in crate::render::lines(&entry.text, cols, markdown) {
+                    lines.push((entry.role, Line::Spans(row)));
+                }
+                continue;
+            }
             for (i, part) in wrap(&entry.text, cols.saturating_sub(2)).into_iter().enumerate() {
                 let prefix = if i == 0 {
                     match entry.role {
@@ -1408,7 +1422,7 @@ impl App {
                 } else {
                     "  "
                 };
-                lines.push((entry.role, format!("{prefix}{part}")));
+                lines.push((entry.role, Line::Text(format!("{prefix}{part}"))));
             }
         }
 
@@ -1422,9 +1436,12 @@ impl App {
         for _ in 0..body_rows.saturating_sub(visible.len()) {
             screen.push_str("\x1b[2K\r\n");
         }
-        for (role, text) in visible.iter().take(body_rows) {
+        for (role, line) in visible.iter().take(body_rows) {
             screen.push_str("\x1b[2K");
-            screen.push_str(&self.palette.paint(*role, &fit(text, cols)));
+            match line {
+                Line::Text(text) => screen.push_str(&self.palette.paint(*role, &fit(text, cols))),
+                Line::Spans(spans) => screen.push_str(&self.paint_spans(*role, spans)),
+            }
             screen.push_str("\r\n");
         }
 
@@ -1451,6 +1468,33 @@ impl App {
         screen.push_str("\x1b[?7h");
 
         screen
+    }
+
+
+    /// Paint one row of styled spans, with a hyperlink around each linked run.
+    fn paint_spans(&self, role: Role, spans: &[crate::render::Span]) -> String {
+        let mut out = String::new();
+        for span in spans {
+            let colour = if span.style.code || span.style.dim {
+                Role::Thinking
+            } else {
+                role
+            };
+            let mut text = self.palette.paint(colour, &span.text);
+            if self.palette.on {
+                if span.style.bold {
+                    text = format!("\x1b[1m{text}");
+                }
+                if span.style.italic {
+                    text = format!("\x1b[3m{text}");
+                }
+            }
+            if let Some(url) = &span.link {
+                text = crate::render::hyperlink(url, &text);
+            }
+            out.push_str(&text);
+        }
+        out
     }
 
     /// A single row for an open question or confirmation, if any.
@@ -2223,6 +2267,18 @@ mod tests {
         assert!(text.contains("total 8"), "{text}");
         a.handle_key(Key::Ctrl('o'), &tx);
         assert!(!a.entries[0].text.contains("args:"), "it did not collapse");
+    }
+
+    #[test]
+    fn assistant_rows_render_markdown() {
+        let mut a = app();
+        a.push(Role::Assistant, "**bold** and `code`\n\n- item one");
+        let out = a.frame(60, 14);
+        assert!(!out.contains("**"), "markers kept: {out:?}");
+        assert!(!out.contains("`code`"), "backticks kept: {out:?}");
+        assert!(out.contains("bold"), "{out:?}");
+        assert!(out.contains("item one"), "{out:?}");
+        assert!(out.contains('•'), "no bullet marker: {out:?}");
     }
 
     #[test]

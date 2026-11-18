@@ -98,6 +98,7 @@ pub struct Config {
     pub max_tokens: u32,
     pub thinking: bool,
     pub color: ColorMode,
+    pub links: Links,
     pub skills_dir: Option<PathBuf>,
 }
 
@@ -114,6 +115,7 @@ impl Default for Config {
             max_tokens: 8192,
             thinking: false,
             color: ColorMode::Auto,
+            links: Links::Auto,
             skills_dir: None,
         }
     }
@@ -157,6 +159,7 @@ impl Config {
             "compact_at" => self.compact_at = parse_u32(key, value)?,
             "max_tokens" => self.max_tokens = parse_u32(key, value)?,
             "thinking" => self.thinking = parse_bool(value)?,
+            "links" => self.links = Links::parse(value)?,
             "color" => self.color = ColorMode::parse(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Unknown keys are ignored so newer configs do not break older runs.
@@ -193,6 +196,9 @@ impl Config {
         }
         if let Some(v) = set("IMP_SKILLS_DIR") {
             self.skills_dir = Some(PathBuf::from(v));
+        }
+        if let Some(v) = set("IMP_LINKS") {
+            self.links = Links::parse(&v)?;
         }
         if let Some(v) = set("IMP_COLOR") {
             self.color = ColorMode::parse(&v)?;
@@ -273,6 +279,13 @@ mod tests {
     #[test]
     fn bad_bool_is_an_error() {
         assert!(Config::from_str("allow_sudo=perhaps").is_err());
+    }
+
+    #[test]
+    fn links_setting_parses() {
+        assert_eq!(Config::from_str("links=never").unwrap().links, Links::Never);
+        assert_eq!(Config::from_str("links=always").unwrap().links, Links::Always);
+        assert!(Config::from_str("links=sometimes").is_err());
     }
 
     #[test]

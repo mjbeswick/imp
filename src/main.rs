@@ -8,6 +8,7 @@ mod jobs;
 mod perm;
 mod pricing;
 mod prompt;
+mod render;
 mod store;
 mod tools;
 mod transport;
