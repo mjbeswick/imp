@@ -135,11 +135,31 @@ The system SHALL show the model name, estimated context tokens, the share of inp
 
 ### Requirement: Confirmation prompts appear inline
 
-The system SHALL ask before a destructive command or a memory write with a single-line prompt in the input area, SHALL accept `y` or Enter as approval and `n` or Esc as refusal, and SHALL return the refusal to the model as a tool result.
+The system SHALL ask before a destructive command or a memory write with a single-line prompt in the input area, SHALL accept `y` or Enter as approval and `n` or Esc as refusal, SHALL show the seconds left and keep the answer hint visible on a long command, and SHALL refuse and stop the turn when no answer arrives within 60 seconds.
 
 #### Scenario: Declined command
 - **WHEN** the model asks to run `rm -rf build` and the user refuses
 - **THEN** the model receives a tool result stating the user declined and the turn continues
+
+#### Scenario: Deadline shown
+- **WHEN** a confirmation opens
+- **THEN** its row shows the seconds left and the count falls with each frame
+
+#### Scenario: Long command
+- **WHEN** the command in a confirmation is longer than the row
+- **THEN** the command is cut in the middle and `y/N` with the seconds left stays visible
+
+#### Scenario: Attention
+- **WHEN** a confirmation opens
+- **THEN** the terminal bell rings once and does not ring again for that prompt
+
+#### Scenario: No answer
+- **WHEN** 60 seconds pass without an answer
+- **THEN** the command does not run, the transcript says the turn stopped for want of an answer, and the turn ends
+
+#### Scenario: Interrupt a prompt
+- **WHEN** the user presses Ctrl+C while a confirmation is open
+- **THEN** the prompt closes, the command does not run, and the turn stops
 
 ### Requirement: Questions are answerable by key or by typing
 
@@ -279,7 +299,7 @@ The system SHALL run any input beginning with `!` as a local shell command inste
 
 ### Requirement: Typed commands bypass confirmation but not denial
 
-The system SHALL treat a command typed by the user as already approved, SHALL NOT prompt for it, and SHALL still refuse anything on the deny list unless the mode is `yolo`.
+The system SHALL treat a command typed by the user as already approved, SHALL NOT prompt for it, and SHALL still refuse anything on the deny list in every mode.
 
 #### Scenario: No prompt
 - **WHEN** the user types `!npm install`
@@ -287,6 +307,10 @@ The system SHALL treat a command typed by the user as already approved, SHALL NO
 
 #### Scenario: Denied
 - **WHEN** the user types `!sudo rm -rf /`
+- **THEN** it is refused with a message naming the rule
+
+#### Scenario: Denied in yolo
+- **WHEN** the mode is `yolo` and the user types `!rm -rf /`
 - **THEN** it is refused with a message naming the rule
 
 ### Requirement: Typed commands are visible to the model
