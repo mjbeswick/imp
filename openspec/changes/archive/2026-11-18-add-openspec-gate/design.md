@@ -24,6 +24,15 @@ spec delta would be invented. Recorded in `.openspec.yaml`.
 **One entry point.** `scripts/check.sh` is what a human or agent runs; CI would
 call the same file. Multiple gates with different names is how gates get skipped.
 
+## Decisions dropped
+
+Two tasks proposed verifying that `opencode.jsonc` refuses edits to `target/**`
+and that the `spec` agent cannot write source. They are dropped: permissions are
+static and cannot express "only with an active change", so the config is
+documented as guardrails and the stateful rule stays in AGENTS.md plus the
+drift check. Verifying static config in a headless run would prove nothing about
+the case that matters.
+
 ## Risks / Trade-offs
 
 - Allows a change to be ticked without really being done → mitigated by the
