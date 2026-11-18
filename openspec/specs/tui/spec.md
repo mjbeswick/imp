@@ -127,7 +127,7 @@ The system SHALL offer a line mode and a full-screen chat mode, SHALL pick the f
 
 ### Requirement: The interface is one chat column
 
-The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, and SHALL NOT use panes, borders, tabs, or widgets.
+The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL NOT use panes, borders, tabs, or widgets, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
 
 #### Scenario: Quiet layout
 - **WHEN** the session is idle
@@ -140,6 +140,14 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 #### Scenario: Taller composer
 - **WHEN** the composer holds three rows
 - **THEN** the transcript gives up two rows, the status line stays last, and the layout is otherwise unchanged
+
+#### Scenario: Resized window
+- **WHEN** the window width changes between turns
+- **THEN** the next turn carries one line naming the new width, and later turns at that width carry none
+
+#### Scenario: Piped output
+- **WHEN** input is a pipe with no terminal size
+- **THEN** no width line is sent
 
 ### Requirement: The status line reports cost signals
 
