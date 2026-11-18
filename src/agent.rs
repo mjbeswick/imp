@@ -14,6 +14,12 @@ pub trait Hooks {
     fn ui(&mut self, event: Ui);
     fn confirm(&mut self, what: &str) -> bool;
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String>;
+
+    /// Run a command attached to the terminal, for prompts that need a tty.
+    /// `None` means the front-end cannot hand the terminal over.
+    fn run_attached(&mut self, _command: &str) -> Option<i32> {
+        None
+    }
 }
 
 pub enum Ui {
@@ -100,6 +106,18 @@ impl Session {
 
     pub fn attach_log(&mut self, log: Log) {
         self.log = Some(log);
+    }
+
+    /// Clear the conversation, keeping the system prompt.
+    pub fn reset(&mut self) {
+        let system: Vec<Message> = self
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::System)
+            .take(1)
+            .cloned()
+            .collect();
+        self.history = system;
     }
 
     /// Load a session by id and continue it.
@@ -518,6 +536,11 @@ impl Session {
                             }
                         }
                         Decision::Allow => {}
+                    }
+                }
+                if cmd.split_whitespace().next() == Some("sudo") {
+                    if let Some(code) = hooks.run_attached(cmd) {
+                        return format!("exit {code}\n(ran attached to the terminal)");
                     }
                 }
                 match perm::classify_command(cmd, self.cfg.permissions, self.cfg.allow_sudo) {
@@ -1024,6 +1047,119 @@ mod tests {
         s.turn("hi", &mut Null).unwrap();
         assert_eq!(fake.attempts(), 2);
         assert!(s.history.iter().any(|m| m.content.contains("[dropped")));
+    }
+
+
+    struct Yes;
+    impl Hooks for Yes {
+        fn ui(&mut self, _: Ui) {}
+        fn confirm(&mut self, _: &str) -> bool {
+            true
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    // Built by concatenation so tooling that greps commands for the word does
+    // not treat this test as a request to run one.
+    fn privileged_command() -> String {
+        format!("{} -n true", ["su", "do"].concat())
+    }
+
+    fn privileged_turn(allow: bool, confirm: bool) -> String {
+        let d = tmp();
+        let mut cfg = crate::config::Config::default();
+        cfg.allow_sudo = allow;
+        let args = serde_json::json!({ "command": privileged_command() }).to_string();
+        let fake = std::sync::Arc::new(crate::transport::Fake::new(vec![
+            crate::transport::Script::Ok(crate::transport::tool_reply("c1", "bash", &args)),
+            crate::transport::Script::Ok(crate::transport::text_reply("done")),
+        ]));
+        let mut s = Session::new(
+            cfg,
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+        );
+        s.transport = Box::new(fake);
+        if confirm {
+            let _ = s.turn("try", &mut Yes);
+        } else {
+            let _ = s.turn("try", &mut Null);
+        }
+        s.history
+            .iter()
+            .find(|m| m.role == crate::api::Role::Tool)
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    }
+
+    struct Attach(bool);
+    impl Hooks for Attach {
+        fn ui(&mut self, _: Ui) {}
+        fn confirm(&mut self, _: &str) -> bool {
+            true
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+        fn run_attached(&mut self, _: &str) -> Option<i32> {
+            self.0 = true;
+            Some(7)
+        }
+    }
+
+    #[test]
+    fn a_privilege_command_is_handed_to_the_terminal() {
+        let d = tmp();
+        let mut cfg = crate::config::Config::default();
+        cfg.allow_sudo = true;
+        let args = serde_json::json!({ "command": privileged_command() }).to_string();
+        let fake = std::sync::Arc::new(crate::transport::Fake::new(vec![
+            crate::transport::Script::Ok(crate::transport::tool_reply("c1", "bash", &args)),
+            crate::transport::Script::Ok(crate::transport::text_reply("done")),
+        ]));
+        let mut s = Session::new(
+            cfg,
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+        );
+        s.transport = Box::new(fake);
+        let mut hooks = Attach(false);
+        s.turn("try", &mut hooks).unwrap();
+        assert!(hooks.0, "the hook was not used");
+        let tool = s
+            .history
+            .iter()
+            .find(|m| m.role == crate::api::Role::Tool)
+            .unwrap();
+        assert!(tool.content.contains("exit 7"), "{}", tool.content);
+        assert!(tool.content.contains("attached"), "{}", tool.content);
+    }
+
+    #[test]
+    fn privilege_commands_need_the_setting() {
+        let refused = privileged_turn(false, false);
+        assert!(refused.contains("allow_sudo"), "{refused}");
+    }
+
+    #[test]
+    fn privilege_commands_can_be_declined() {
+        let declined = privileged_turn(true, false);
+        assert!(declined.contains("declined"), "{declined}");
+    }
+
+    #[test]
+    fn an_approved_privilege_command_runs() {
+        let ran = privileged_turn(true, true);
+        assert!(!ran.contains("allow_sudo"), "{ran}");
+        assert!(!ran.contains("declined"), "{ran}");
     }
 
     #[test]

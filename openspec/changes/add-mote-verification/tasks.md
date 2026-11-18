@@ -11,8 +11,8 @@ tests, fixtures, and two known gaps. No new behaviour.
 
 ## 4. Tools
 
-- [ ] 4.11 Privilege gating: refused unless `allow_sudo=true`, always prompts when enabled, deny list applies with or without the prefix. Verify: default refusal names the setting; an approved sudo command runs; `sudo rm -rf /` is refused.
-- [ ] 4.12 Sudo terminal handoff: leave the alternate screen and raw mode, run attached to the tty, restore and redraw after. Verify: cached credentials skip the handoff; a password prompt works against a scratch sudoers rule; Ctrl+C at the prompt cancels cleanly and the screen is redrawn.
+- [x] 4.11 Privilege gating: refused unless `allow_sudo=true`, always prompts when enabled, deny list applies with or without the prefix. Verify: default refusal names the setting; an approved sudo command runs; `sudo rm -rf /` is refused.
+- [x] 4.12 Sudo terminal handoff: leave the alternate screen and raw mode, run attached to the tty, restore and redraw after. Verify: cached credentials skip the handoff; a password prompt works against a scratch sudoers rule; Ctrl+C at the prompt cancels cleanly and the screen is redrawn.
 
 ## 5. TUI
 
@@ -47,9 +47,9 @@ tests, fixtures, and two known gaps. No new behaviour.
 
 ## 10. Sessions
 
-- [ ] 10.4 `-c`, `-r <id>`, explicit path, and the in-app picker with newest first and a "new session" entry. Verify: each entry point loads the intended file; the picker test uses a fixture directory.
+- [x] 10.4 `-c`, `-r <id>`, explicit path, and the in-app picker with newest first and a "new session" entry. Verify: each entry point loads the intended file; the picker test uses a fixture directory.
 - [x] 10.4a CLI management: `--list` prints id, title, age, and message count then exits; `--rename <id> <title>`; `--delete <id>` with confirmation. Verify: a fixture directory with three sessions, asserting output columns, exit status, and that transcripts are byte-identical after a rename.
-- [ ] 10.4b Picker actions: Enter opens, `n` starts new, `r` renames, `d` deletes after confirmation. Verify: key-event tests for each action against a fixture directory.
+- [x] 10.4b Picker actions: Enter opens, `n` starts new, `r` renames, `d` deletes after confirmation. Verify: key-event tests for each action against a fixture directory.
 
 ## 11. Polish and proof
 

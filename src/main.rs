@@ -289,6 +289,15 @@ impl Hooks for Cli {
         confirm(what)
     }
 
+    fn run_attached(&mut self, command: &str) -> Option<i32> {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .status()
+            .ok()
+            .map(|s| s.code().unwrap_or(-1))
+    }
+
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
         println!("\n{question}");
         for (i, o) in options.iter().enumerate() {

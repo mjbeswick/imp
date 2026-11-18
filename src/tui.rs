@@ -263,6 +263,9 @@ pub enum Cmd {
     Compact,
     Resume(String),
     Reload,
+    Rename(String, String),
+    Delete(String),
+    NewSession,
     Reset,
     Quit,
 }
@@ -317,6 +320,26 @@ impl Hooks for WorkerHooks {
         rx.recv_timeout(Duration::from_secs(300)).unwrap_or(false)
     }
 
+    fn run_attached(&mut self, command: &str) -> Option<i32> {
+        print!("\x1b[?25h\x1b[?1049l");
+        std::io::stdout().flush().ok();
+        if let Ok(saved) = SAVED.lock() {
+            if let Some(s) = &*saved {
+                let _ = std::process::Command::new("stty").arg(s).status();
+            }
+        }
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .status();
+        let _ = std::process::Command::new("stty")
+            .args(["raw", "-echo"])
+            .status();
+        print!("\x1b[?1049h\x1b[?25l");
+        std::io::stdout().flush().ok();
+        Some(status.ok().and_then(|s| s.code()).unwrap_or(-1))
+    }
+
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
         let (tx, rx) = channel();
         if self
@@ -364,6 +387,8 @@ pub struct App {
 enum Pending {
     Choose { title: String, options: Vec<String>, index: usize, action: ChooseKind },
     Confirm { what: String, reply: Sender<bool> },
+    Prompt { label: String, value: String, rename_id: String },
+    ConfirmDelete { id: String },
     Question { q: String, opts: Vec<String>, reply: Sender<Option<String>>, mode: AskMode, typed: String },
 }
 
@@ -796,6 +821,44 @@ impl App {
 
     fn answer(&mut self, pending: Pending, key: Key, tx: &Sender<Cmd>) {
         match pending {
+            Pending::Prompt { label, mut value, rename_id } => {
+                match key {
+                    Key::Esc => {
+                        self.push(Role::Info, "rename cancelled");
+                        self.dirty = true;
+                    }
+                    Key::Enter => {
+                        let _ = tx.send(Cmd::Rename(rename_id, value.clone()));
+                        self.push(Role::Info, format!("renamed to {value:?}"));
+                        self.dirty = true;
+                    }
+                    Key::Char(c) => {
+                        value.push(c);
+                        self.pending = Some(Pending::Prompt { label, value, rename_id });
+                        self.dirty = true;
+                    }
+                    Key::Backspace => {
+                        value.pop();
+                        self.pending = Some(Pending::Prompt { label, value, rename_id });
+                        self.dirty = true;
+                    }
+                    _ => {
+                        self.pending = Some(Pending::Prompt { label, value, rename_id });
+                    }
+                }
+                return;
+            }
+            Pending::ConfirmDelete { id } => {
+                match key {
+                    Key::Char('y') | Key::Char('Y') | Key::Enter => {
+                        let _ = tx.send(Cmd::Delete(id.clone()));
+                        self.push(Role::Info, format!("deleted {id}"));
+                    }
+                    _ => self.push(Role::Info, "delete cancelled"),
+                }
+                self.dirty = true;
+                return;
+            }
             Pending::Choose { title, options, mut index, action } => {
                 match key {
                     Key::Up => index = index.saturating_sub(1),
@@ -809,6 +872,33 @@ impl App {
                         if n >= 1 && n <= options.len().min(9) {
                             index = n - 1;
                         }
+                    }
+                    Key::Char('n') => {
+                        let _ = tx.send(Cmd::NewSession);
+                        self.entries.clear();
+                        self.push(Role::Info, "new conversation");
+                        self.dirty = true;
+                        return;
+                    }
+                    Key::Char('r') => {
+                        if let Some(choice) = options.get(index) {
+                            let id = choice.split_whitespace().next().unwrap_or("").to_string();
+                            self.pending = Some(Pending::Prompt {
+                                label: format!("new title for {id}"),
+                                value: String::new(),
+                                rename_id: id,
+                            });
+                        }
+                        self.dirty = true;
+                        return;
+                    }
+                    Key::Char('d') => {
+                        if let Some(choice) = options.get(index) {
+                            let id = choice.split_whitespace().next().unwrap_or("").to_string();
+                            self.pending = Some(Pending::ConfirmDelete { id });
+                        }
+                        self.dirty = true;
+                        return;
                     }
                     Key::Enter => {
                         if let Some(choice) = options.get(index) {
@@ -1033,6 +1123,8 @@ impl App {
                     format!("{title}: {}", shown.join("  "))
                 }
                 Pending::Confirm { what, .. } => format!("{what}? y/N"),
+                Pending::ConfirmDelete { id } => format!("delete {id}? y/N"),
+                Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
                 Pending::Question { q, opts, mode, typed, .. } => {
                     let mut text = format!("{q}   ");
                     for (i, o) in opts.iter().enumerate() {
@@ -1235,6 +1327,39 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     match worker_session.resume_id(&sessions_dir, &id) {
                         Ok(()) => {
                             let _ = ev_tx.send(Ev::Info(format!("resumed {id}")));
+                        }
+                        Err(e) => {
+                            let _ = ev_tx.send(Ev::Error(e));
+                        }
+                    }
+                    let _ = ev_tx.send(Ev::Done(None));
+                }
+                Ok(Cmd::NewSession) => {
+                    let log = crate::store::Log::create(
+                        &sessions_dir,
+                        &worker_session.tools.root,
+                        &worker_session.cfg.model,
+                    );
+                    worker_session.reset();
+                    worker_session.attach_log(log);
+                    let _ = ev_tx.send(Ev::Info("new session".into()));
+                    let _ = ev_tx.send(Ev::Done(None));
+                }
+                Ok(Cmd::Rename(id, title)) => {
+                    match crate::store::Log::rename(&sessions_dir, &id, &title) {
+                        Ok(()) => {
+                            let _ = ev_tx.send(Ev::Info(format!("renamed {id}")));
+                        }
+                        Err(e) => {
+                            let _ = ev_tx.send(Ev::Error(e));
+                        }
+                    }
+                    let _ = ev_tx.send(Ev::Done(None));
+                }
+                Ok(Cmd::Delete(id)) => {
+                    match crate::store::Log::delete(&sessions_dir, &id) {
+                        Ok(()) => {
+                            let _ = ev_tx.send(Ev::Info(format!("deleted {id}")));
                         }
                         Err(e) => {
                             let _ = ev_tx.send(Ev::Error(e));
@@ -1507,6 +1632,56 @@ mod tests {
         });
         assert_eq!(a.entries.last().unwrap().role, Role::Error);
         assert!(a.entries.last().unwrap().text.contains("ms"));
+    }
+
+    fn picker() -> App {
+        let mut a = app();
+        a.pending = Some(Pending::Choose {
+            title: "session".into(),
+            options: vec!["abc123  3m  old title  4 msgs".into()],
+            index: 0,
+            action: ChooseKind::Session,
+        });
+        a
+    }
+
+    #[test]
+    fn picker_new_session_key() {
+        let mut a = picker();
+        let (tx, rx) = channel();
+        a.handle_key(Key::Char('n'), &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::NewSession)));
+    }
+
+    #[test]
+    fn picker_delete_needs_confirmation() {
+        let mut a = picker();
+        let (tx, rx) = channel();
+        a.handle_key(Key::Char('d'), &tx);
+        assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })));
+        a.handle_key(Key::Char('y'), &tx);
+        match rx.try_recv() {
+            Ok(Cmd::Delete(id)) => assert_eq!(id, "abc123"),
+            _ => panic!("expected delete"),
+        }
+    }
+
+    #[test]
+    fn picker_rename_edits_a_title() {
+        let mut a = picker();
+        let (tx, rx) = channel();
+        a.handle_key(Key::Char('r'), &tx);
+        for c in "new name".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Enter, &tx);
+        match rx.try_recv() {
+            Ok(Cmd::Rename(id, title)) => {
+                assert_eq!(id, "abc123");
+                assert_eq!(title, "new name");
+            }
+            _ => panic!("expected rename"),
+        }
     }
 
     #[test]
