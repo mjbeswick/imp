@@ -34,6 +34,7 @@ pub enum Ui {
     ToolEnd {
         ok: bool,
         preview: String,
+        output: String,
         ms: u128,
     },
     Info(String),
@@ -525,6 +526,7 @@ impl Session {
         hooks.ui(Ui::ToolEnd {
             ok,
             preview: summarise(&out),
+            output: out.clone(),
             ms: spent.as_millis(),
         });
         out

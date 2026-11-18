@@ -453,6 +453,7 @@ pub enum Ev {
     ToolEnd {
         ok: bool,
         preview: String,
+        output: String,
         ms: u128,
     },
     Info(String),
@@ -488,7 +489,12 @@ impl Hooks for WorkerHooks {
                 summary,
                 args,
             },
-            Ui::ToolEnd { ok, preview, ms } => Ev::ToolEnd { ok, preview, ms },
+            Ui::ToolEnd { ok, preview, output, ms } => Ev::ToolEnd {
+                ok,
+                preview,
+                output,
+                ms,
+            },
             Ui::Info(t) => Ev::Info(t),
             Ui::Error(t) => Ev::Error(t),
         };
@@ -583,6 +589,7 @@ struct ToolRow {
     index: usize,
     summary: String,
     args: String,
+    preview: String,
     output: String,
     ok: bool,
     ms: u128,
@@ -591,7 +598,19 @@ struct ToolRow {
 
 fn tool_row_text(row: &ToolRow) -> String {
     let mark = if row.ok { "✓" } else { "✗" };
-    format!("{mark} {} · {} ms", row.summary, row.ms)
+    let mut text = format!("{mark} {} · {} ms", row.summary, row.ms);
+    if row.expanded {
+        text.push_str("\n  args: ");
+        text.push_str(&row.args);
+        if !row.output.is_empty() {
+            text.push_str("\n  ");
+            text.push_str(&row.output.lines().take(20).collect::<Vec<_>>().join("\n  "));
+        }
+    } else if !row.preview.is_empty() && !row.ok {
+        text.push_str(" · ");
+        text.push_str(&row.preview);
+    }
+    text
 }
 
 pub struct App {
@@ -729,6 +748,7 @@ impl App {
                     index: self.entries.len(),
                     summary: summary.clone(),
                     args,
+                    preview: String::new(),
                     output: String::new(),
                     ok: true,
                     ms: 0,
@@ -736,13 +756,19 @@ impl App {
                 });
                 self.push(Role::Tool, format!("⠹ {summary}"))
             }
-            Ev::ToolEnd { ok, preview, ms } => {
+            Ev::ToolEnd {
+                ok,
+                preview,
+                output,
+                ms,
+            } => {
                 let role = if ok { Role::Tool } else { Role::Error };
                 match self.tool.take() {
                     Some(mut row) => {
                         row.ok = ok;
                         row.ms = ms;
-                        row.output = preview;
+                        row.output = output;
+                        row.preview = preview;
                         let text = tool_row_text(&row);
                         if let Some(entry) = self.entries.get_mut(row.index) {
                             entry.role = role;
@@ -891,6 +917,10 @@ impl App {
                 }
             }
             Key::Ctrl('d') => self.quit = true,
+            Key::Ctrl('o') => {
+                self.toggle_tool();
+                self.dirty = true;
+            }
             Key::Ctrl('l') => {
                 self.entries.clear();
                 self.dirty = true;
@@ -989,6 +1019,19 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Show or hide the full arguments and output of the last tool call.
+    fn toggle_tool(&mut self) {
+        let Some(mut row) = self.tool.take() else {
+            return;
+        };
+        row.expanded = !row.expanded;
+        let text = tool_row_text(&row);
+        if let Some(entry) = self.entries.get_mut(row.index) {
+            entry.text = text;
+        }
+        self.tool = Some(row);
     }
 
     fn sync_menu(&mut self) {
@@ -2147,6 +2190,30 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_o_expands_the_last_tool_call() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `ls -la`".into(),
+            args: "{\"command\":\"ls -la\"}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: "exit 0".into(),
+            output: "total 8\nfoo".into(),
+            ms: 4,
+        });
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('o'), &tx);
+        let text = a.entries[0].text.clone();
+        assert!(text.contains("args:"), "{text}");
+        assert!(text.contains("ls -la"), "{text}");
+        assert!(text.contains("total 8"), "{text}");
+        a.handle_key(Key::Ctrl('o'), &tx);
+        assert!(!a.entries[0].text.contains("args:"), "it did not collapse");
+    }
+
+    #[test]
     fn composer_draws_one_row_per_line() {
         let mut a = app();
         a.input = "line one\nline two".into();
@@ -2270,6 +2337,7 @@ mod tests {
         a.apply(Ev::ToolEnd {
             ok: false,
             preview: "exit 1".into(),
+            output: "exit 1".into(),
             ms: 7,
         });
         assert_eq!(a.entries.len(), 1, "the finish added a second row");
