@@ -826,16 +826,10 @@ impl Session {
                     self.tools.cap(&out)
                 }
             }
-            _ => {
-                let title = v["title"].as_str().unwrap_or("");
-                let content = v["content"].as_str().unwrap_or("");
-                if content.is_empty() {
-                    return "the page had no readable content".into();
-                }
-                let outline = outline_of(content);
-                let packed = format!("{title}\n\n{content}");
-                format!("outline: {outline}\n\n{}", self.tools.cap(&packed))
-            }
+            _ => match page_text(&v) {
+                Some(text) => self.tools.cap(&text),
+                None => "the page had no readable content".into(),
+            },
         }
     }
 
@@ -910,19 +904,18 @@ pub fn include_tool(name: &str, has_memory: bool, has_skills: bool) -> bool {
     }
 }
 
-fn outline_of(markdown: &str) -> String {
-    let mut heads: Vec<&str> = markdown
-        .lines()
-        .filter(|l| l.starts_with('#'))
-        .map(|l| l.trim_start_matches('#').trim())
-        .filter(|l| !l.is_empty())
-        .take(12)
-        .collect();
-    if heads.is_empty() {
-        return "(no headings)".into();
+/// The page as the model should read it: title, then body, nothing in front.
+fn page_text(v: &Value) -> Option<String> {
+    let content = v["content"].as_str().unwrap_or("");
+    if content.is_empty() {
+        return None;
     }
-    heads.dedup();
-    heads.join(" · ")
+    let title = v["title"].as_str().unwrap_or("").trim();
+    Some(if title.is_empty() {
+        content.to_string()
+    } else {
+        format!("{title}\n\n{content}")
+    })
 }
 
 pub fn summarise(text: &str) -> String {
@@ -1113,6 +1106,19 @@ mod tests {
             out.contains("outside the session directory"),
             "no reason given: {out}"
         );
+    }
+
+    #[test]
+    fn a_fetch_starts_with_the_page_not_its_headings() {
+        let v = serde_json::json!({
+            "title": "Steno",
+            "content": "# One\n\nbody text\n\n## Two\n\nmore"
+        });
+        let text = page_text(&v).expect("a page");
+        assert!(text.starts_with("Steno"), "{text}");
+        assert!(!text.contains("outline:"), "{text}");
+        assert!(text.contains("body text"), "{text}");
+        assert!(page_text(&serde_json::json!({"content": ""})).is_none());
     }
 
     #[test]
