@@ -436,6 +436,7 @@ pub enum Cmd {
     Compact,
     Resume(String),
     Reload,
+    Yolo,
     Rename(String, String),
     Delete(String),
     NewSession,
@@ -1118,6 +1119,9 @@ impl App {
                     action: ChooseKind::Agent,
                 });
                 self.dirty = true;
+            }
+            "yolo" => {
+                let _ = tx.send(Cmd::Yolo);
             }
             "reload" => {
                 let _ = tx.send(Cmd::Reload);
@@ -1888,6 +1892,10 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                         }
                     }
                     let _ = ev_tx.send(Ev::Done(None));
+                }
+                Ok(Cmd::Yolo) => {
+                    let line = worker_session.toggle_yolo();
+                    let _ = ev_tx.send(Ev::Info(format!("{line} ({})", worker_session.cfg.permissions.as_str())));
                 }
                 Ok(Cmd::Reload) => {
                     match worker_session.reload() {

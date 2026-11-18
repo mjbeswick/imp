@@ -10,6 +10,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
     ("/think", "toggle thinking for the next turn"),
+    ("/yolo", "prompt-free for this session"),
     ("/quit", "leave"),
 ];
 
@@ -219,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn commands_lists_all_seven() {
+    fn commands_lists_every_command() {
         let text = commands();
         for (name, _) in COMMANDS {
             assert!(text.contains(name), "missing {name}");

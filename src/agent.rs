@@ -1,7 +1,7 @@
 //! The turn loop: request, stream, run tools, repeat.
 
 use crate::api::{self, Accum, Message, RequestOptions, SseParser, ToolCall};
-use crate::config::Config;
+use crate::config::{Config, Permissions};
 use crate::perm::{self, Decision};
 use crate::jobs::Jobs;
 use crate::transport::{Live, Transport};
@@ -59,6 +59,7 @@ pub fn schema() -> Vec<Value> {
 
 pub struct Session {
     pub cfg: Config,
+    launch_permissions: Permissions,
     pub tools: Tools,
     pub history: Vec<Message>,
     pub cancel: std::sync::Arc<AtomicBool>,
@@ -97,6 +98,7 @@ impl Session {
         let memory = Memory::discover(&cfg, &root);
         let skills = crate::store::load_skills(&cfg, &root);
         Self {
+            launch_permissions: cfg.permissions,
             cfg,
             tools: {
                 let mut t = Tools::new(root, out_dir);
@@ -513,6 +515,22 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Switch between the launch mode and `yolo` for this session only.
+    pub fn toggle_yolo(&mut self) -> &'static str {
+        let next = if self.cfg.permissions == Permissions::Yolo {
+            self.launch_permissions
+        } else {
+            Permissions::Yolo
+        };
+        self.cfg.permissions = next;
+        self.tools.jail = crate::perm::jail_enabled(next);
+        if next == Permissions::Yolo {
+            "yolo for this session · deny list still applies · path jail off"
+        } else {
+            "back to the session mode · prompts return"
+        }
     }
 
     /// Tell the model how wide the screen is, once per change.
@@ -1659,4 +1677,27 @@ mod tests {
         session.resume_id(&sessions, &log.id).unwrap();
         assert!(session.history.iter().all(|m| m.tool_call_id.is_none()));
     }
+    #[test]
+    fn yolo_toggles_back_to_the_launch_mode() {
+        let d = tmp();
+        let mut cfg = crate::config::Config::default();
+        cfg.permissions = Permissions::Strict;
+        let mut s = Session::new(
+            cfg,
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        );
+        assert!(s.tools.jail, "strict starts with the jail");
+        s.toggle_yolo();
+        assert_eq!(s.cfg.permissions, Permissions::Yolo);
+        assert!(!s.tools.jail, "yolo left the jail on");
+        s.toggle_yolo();
+        assert_eq!(s.cfg.permissions, Permissions::Strict, "did not restore strict");
+        assert!(s.tools.jail, "the jail did not come back");
+    }
+
 }

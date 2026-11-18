@@ -296,6 +296,10 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     session.cfg.thinking = !session.cfg.thinking;
                     println!("thinking {}", if session.cfg.thinking { "on" } else { "off" });
                 }
+                "yolo" => {
+                    let line = session.toggle_yolo();
+                    println!("{line} ({})", session.cfg.permissions.as_str());
+                }
                 "reload" => match session.reload() {
                     Ok(()) => println!("reloaded; prompt cache reset"),
                     Err(e) => eprintln!("imp: {e}"),
