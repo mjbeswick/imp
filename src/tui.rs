@@ -406,7 +406,18 @@ fn disambiguated(params: &[u8]) -> Key {
     let mut parts = text.split(';');
     let code: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     let modifiers: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
-    let shift = modifiers.saturating_sub(1) & 1 == 1;
+    let bits = modifiers.saturating_sub(1);
+    let shift = bits & 1 == 1;
+    // Ctrl is bit 4 of the modifier set; the terminal reports it as the letter's
+    // codepoint, so map it back to the control key the handler knows.
+    if bits & 4 == 4 {
+        if let Some(c) = char::from_u32(code) {
+            let lower = c.to_ascii_lowercase();
+            if lower.is_ascii_lowercase() {
+                return Key::Ctrl(lower);
+            }
+        }
+    }
     match code {
         13 if shift => Key::Newline,
         13 => Key::Enter,
@@ -2681,6 +2692,24 @@ mod tests {
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
         assert!(a.quit, "Ctrl+C did not exit on a confirmation");
+    }
+
+    #[test]
+    fn ctrl_letters_survive_the_keyboard_protocol() {
+        let mut buf = b"\x1b[99;5u\x1b[108;5u\x1b[100;5u".to_vec();
+        let keys = decode(&mut buf);
+        assert_eq!(keys.len(), 3, "{keys:?}");
+        assert!(matches!(keys[0], Key::Ctrl('c')), "{:?}", keys[0]);
+        assert!(matches!(keys[1], Key::Ctrl('l')), "{:?}", keys[1]);
+        assert!(matches!(keys[2], Key::Ctrl('d')), "{:?}", keys[2]);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn ctrl_shift_letter_still_maps_to_ctrl() {
+        let mut buf = b"\x1b[67;6u".to_vec();
+        let keys = decode(&mut buf);
+        assert!(matches!(keys[0], Key::Ctrl('c')), "{:?}", keys[0]);
     }
 
 }
