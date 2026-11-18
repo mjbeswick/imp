@@ -397,6 +397,10 @@ The system SHALL restore cursor visibility, cooked input mode, and the primary s
 - **WHEN** the process receives SIGINT or SIGTERM while a turn runs
 - **THEN** the primary screen and cooked input mode are restored before it exits
 
+#### Scenario: Linux terminal
+- **WHEN** the interface runs on Linux
+- **THEN** raw mode is applied with the platform's own `termios` layout, so typed keys reach the composer and the original mode is restored on exit
+
 ### Requirement: The composer grows with its text
 
 The system SHALL draw the composer across one row per newline in the input, SHALL prefix the first row with `> ` and every other row with two spaces, SHALL keep the caret visible on its row, SHALL grow to at most eight rows or half the screen, whichever is smaller, and SHALL never wrap a composer row past the terminal width.
