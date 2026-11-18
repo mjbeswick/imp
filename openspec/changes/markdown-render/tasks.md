@@ -7,3 +7,5 @@
 - [ ] 2.5 Add the `links` setting with `auto`, `always`, `never`, `IMP_LINKS`, and terminal detection. Verify: config and detection tests, and the init template names it.
 - [ ] 2.6 Render assistant rows through the parser in the TUI. Verify: a frame test shows bold, a bullet, and a code block from one reply.
 - [ ] 2.7 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 2.8 Indent the wrapped rows of a list item under its text. Verify: a render test wraps a bullet and every continuation row starts with two spaces.
+- [ ] 2.9 Fold approval into the tool row. Verify: a frame test shows one row per call and no `approved:` line.
