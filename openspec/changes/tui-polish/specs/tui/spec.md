@@ -90,7 +90,7 @@ The system SHALL paint an open confirmation, question, or input prompt in the ac
 
 ### Requirement: Value commands share one form
 
-The system SHALL treat `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` as value commands: bare, the chat SHALL open the picker on the current entry and line mode SHALL print aligned rows with `current` beside the active one; a typed value SHALL apply directly in both front-ends, and `/sessions <id>` SHALL resume that session.
+The system SHALL treat `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` as value commands: bare, the chat SHALL open the picker on the current entry and line mode SHALL print aligned rows with `current` beside the active one, except `/sessions`, which lists newest first; a typed value SHALL apply directly in both front-ends, except `/provider` subcommands, which run only in the chat; and `/sessions <id>` SHALL resume that session.
 
 #### Scenario: Line-mode values
 - **WHEN** the user runs `/theme` in line mode
