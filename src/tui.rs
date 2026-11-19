@@ -3219,7 +3219,9 @@ impl App {
     fn paint_spans(&self, role: Role, spans: &[crate::render::Span]) -> String {
         let mut out = String::new();
         for span in spans {
-            let colour = if span.style.code {
+            let colour = if span.style.border {
+                Role::Border
+            } else if span.style.code {
                 Role::Code
             } else if span.link.is_some() {
                 Role::Link

@@ -46,6 +46,8 @@ pub struct Style {
     pub italic: bool,
     pub code: bool,
     pub dim: bool,
+    /// Table lines, painted in the border colour.
+    pub border: bool,
 }
 
 /// A run of text with one style and at most one link.
@@ -85,7 +87,11 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
     let mut fence_body: Vec<String> = Vec::new();
 
     let markdown = clean(markdown).replace('\t', "    ");
-    for raw in markdown.split('\n') {
+    let all: Vec<&str> = markdown.split('\n').collect();
+    let mut at = 0;
+    while at < all.len() {
+        let raw = all[at];
+        at += 1;
         let line = raw.trim_end();
         if let Some(marker) = fence {
             if is_fence(line, marker) {
@@ -103,6 +109,16 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
         }
         if let Some(marker) = fence_start(line) {
             fence = Some(marker);
+            continue;
+        }
+        if let Some(aligns) = all.get(at).and_then(|next| separator(next)).filter(|_| line.contains('|')) {
+            let mut end = at + 1;
+            while end < all.len() && all[end].contains('|') && !all[end].trim().is_empty() {
+                end += 1;
+            }
+            let body: Vec<Vec<String>> = all[at + 1..end].iter().map(|l| cells(l)).collect();
+            rows.extend(table(&cells(line), &aligns, &body, width, links));
+            at = end;
             continue;
         }
 
@@ -139,6 +155,143 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
         ));
     }
     rows
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Align {
+    Left,
+    Centre,
+    Right,
+}
+
+/// The cells of one table row; outer pipes are optional and `\|` is a pipe.
+fn cells(line: &str) -> Vec<String> {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let line = if line.ends_with('|') && !line.ends_with("\\|") { &line[..line.len() - 1] } else { line };
+    let mut out = vec![String::new()];
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                chars.next();
+                out.last_mut().unwrap().push('|');
+            }
+            '|' => out.push(String::new()),
+            c => out.last_mut().unwrap().push(c),
+        }
+    }
+    out.into_iter().map(|c| c.trim().to_string()).collect()
+}
+
+/// A separator row such as `|:---|---:|`, as the column alignments.
+fn separator(line: &str) -> Option<Vec<Align>> {
+    if !line.contains('-') {
+        return None;
+    }
+    cells(line)
+        .iter()
+        .map(|c| {
+            let core = c.trim_matches(':');
+            if core.is_empty() || !core.chars().all(|ch| ch == '-') {
+                return None;
+            }
+            Some(match (c.starts_with(':'), c.ends_with(':')) {
+                (true, true) => Align::Centre,
+                (false, true) => Align::Right,
+                _ => Align::Left,
+            })
+        })
+        .collect()
+}
+
+fn span_width(spans: &[Span]) -> usize {
+    spans.iter().map(|s| s.text.chars().count()).sum()
+}
+
+/// A markdown table as boxed rows that fit `width`: the widest columns give
+/// way first, and a table that cannot fit at all becomes `header: value` lines.
+fn table(head: &[String], aligns: &[Align], body: &[Vec<String>], width: usize, links: bool) -> Vec<Vec<Span>> {
+    let n = head.len();
+    let bold = Style { bold: true, ..Style::default() };
+    let parse = |row: &[String], style: Style| -> Vec<Vec<Span>> {
+        (0..n).map(|c| inline(row.get(c).map_or("", |s| s.as_str()), style, links)).collect()
+    };
+    let header = parse(head, bold);
+    let rows: Vec<Vec<Vec<Span>>> = body.iter().map(|r| parse(r, Style::default())).collect();
+    let frame = 3 * n + 1;
+
+    if n * 3 + frame > width {
+        // Records: one `header: value` line per cell, a blank row between rows.
+        let mut out = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            if i > 0 {
+                out.push(Vec::new());
+            }
+            for (c, cell) in row.iter().enumerate() {
+                let mut line = vec![Span::styled(format!("{}: ", head[c]), bold)];
+                line.extend(cell.iter().cloned());
+                out.extend(wrap(&line, width));
+            }
+        }
+        return out;
+    }
+
+    let mut cols: Vec<usize> = (0..n)
+        .map(|c| {
+            std::iter::once(&header[c])
+                .chain(rows.iter().map(|r| &r[c]))
+                .map(|cell| span_width(cell))
+                .max()
+                .unwrap_or(0)
+                .max(1)
+        })
+        .collect();
+    while cols.iter().sum::<usize>() + frame > width {
+        let widest = (0..n).max_by_key(|&c| cols[c]).unwrap_or(0);
+        if cols[widest] <= 3 {
+            break;
+        }
+        cols[widest] -= 1;
+    }
+
+    let line = |text: String| Span::styled(text, Style { border: true, ..Style::default() });
+    let rule = |l: &str, m: &str, r: &str| {
+        let parts: Vec<String> = cols.iter().map(|w| "─".repeat(w + 2)).collect();
+        vec![line(format!("{l}{}{r}", parts.join(m)))]
+    };
+    let draw = |cells: &[Vec<Span>]| -> Vec<Vec<Span>> {
+        let wrapped: Vec<Vec<Vec<Span>>> = (0..n).map(|c| wrap(&cells[c], cols[c])).collect();
+        let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+        (0..height)
+            .map(|k| {
+                let mut out = vec![line("│ ".into())];
+                for c in 0..n {
+                    let part = wrapped[c].get(k).cloned().unwrap_or_default();
+                    let gap = cols[c].saturating_sub(span_width(&part));
+                    let (before, after) = match aligns.get(c).copied().unwrap_or(Align::Left) {
+                        Align::Left => (0, gap),
+                        Align::Right => (gap, 0),
+                        Align::Centre => (gap / 2, gap - gap / 2),
+                    };
+                    out.push(Span::plain(" ".repeat(before)));
+                    out.extend(part);
+                    out.push(Span::plain(" ".repeat(after)));
+                    out.push(line(if c + 1 == n { " │".into() } else { " │ ".into() }));
+                }
+                out
+            })
+            .collect()
+    };
+
+    let mut out = vec![rule("┌", "┬", "┐")];
+    out.extend(draw(&header));
+    out.push(rule("├", "┼", "┤"));
+    for row in &rows {
+        out.extend(draw(row));
+    }
+    out.push(rule("└", "┴", "┘"));
+    out
 }
 
 fn fence_start(line: &str) -> Option<char> {
@@ -477,6 +630,56 @@ mod tests {
         assert_eq!(clean("50%\r100%\u{7}"), "50%100%");
         assert_eq!(clean("tab\there\nnext"), "tab\there\nnext");
         assert_eq!(clean("é ✓ 漢"), "é ✓ 漢");
+    }
+
+    fn text(row: &[Span]) -> String {
+        row.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    const TABLE: &str = "| Name | Size | Kind |\n|:-----|-----:|:----:|\n| raspios.img | 2.4 GB | **disk** |\n| mercury.zip | 956 MB | `zip` |";
+
+    #[test]
+    fn a_table_is_boxed_and_aligned() {
+        let rows: Vec<String> = lines(TABLE, 80, true).iter().map(|r| text(r)).collect();
+        assert_eq!(rows.len(), 6, "{rows:#?}");
+        assert!(rows[0].starts_with('┌') && rows[0].ends_with('┐'), "{rows:#?}");
+        assert!(rows[2].starts_with('├') && rows[5].starts_with('└'), "{rows:#?}");
+        assert_eq!(rows[3], "│ raspios.img │ 2.4 GB │ disk │");
+        assert_eq!(rows[4], "│ mercury.zip │ 956 MB │ zip  │");
+        assert!(rows.iter().all(|r| r.chars().count() == rows[0].chars().count()));
+        let head = &lines(TABLE, 80, true)[1];
+        assert!(head.iter().any(|s| s.text == "Name" && s.style.bold));
+        assert!(lines(TABLE, 80, true)[0][0].style.border);
+    }
+
+    #[test]
+    fn a_wide_table_wraps_inside_its_cells() {
+        let wide = "| a | b |\n|---|---|\n| one two three four five six seven | x |";
+        let rows: Vec<String> = lines(wide, 20, true).iter().map(|r| text(r)).collect();
+        assert!(rows.len() > 5, "{rows:#?}");
+        for row in &rows {
+            assert!(row.chars().count() <= 20, "{row:?}");
+        }
+        assert!(rows.iter().any(|r| r.contains("seven")), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_table_that_cannot_fit_becomes_records() {
+        let rows: Vec<String> = lines(TABLE, 18, true).iter().map(|r| text(r)).collect();
+        assert!(rows.contains(&"Name: raspios.img".to_string()), "{rows:#?}");
+        assert!(rows.iter().any(|r| r.starts_with("Size: 956")), "{rows:#?}");
+        assert!(!rows.iter().any(|r| r.contains('│')), "{rows:#?}");
+    }
+
+    #[test]
+    fn table_rows_tolerate_loose_pipes() {
+        let loose = "a | b\n--|--\nx \\| y | z\nshort";
+        let rows: Vec<String> = lines(loose, 40, true).iter().map(|r| text(r)).collect();
+        assert!(rows.iter().any(|r| r.contains("x | y") && r.contains('z')), "{rows:#?}");
+        assert_eq!(rows.last().unwrap(), "short", "{rows:#?}");
+        // A lone pipe without a separator is just text.
+        let plain: Vec<String> = lines("a | b", 40, true).iter().map(|r| text(r)).collect();
+        assert_eq!(plain, vec!["a | b"]);
     }
 
     #[test]
