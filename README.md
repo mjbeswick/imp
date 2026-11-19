@@ -45,6 +45,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 ```
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn scroll
+Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab pick directory · Left up · Esc cancel
 ```
 
 ### Commands
@@ -52,13 +53,20 @@ Up/Down history · Tab complete · PgUp/PgDn scroll
 ```
 /help      keys and commands     /agent     switch profile
 /new       fresh conversation    /reload    re-read instructions and skills
-/sessions  list and pick         /compact   compact now
+/sessions  pick a session        /compact   compact now
 /think     thinking toggle       /yolo      prompt-free for this session
-/verbosity tool detail: low|high /cwd       show the session directory
-/cd        change the directory  /image     attach an image by path
-/fork      copy the session     /theme     set the colour theme
+/verbosity level: low or high    /cwd       show the session directory
+/cd        browse or change cwd  /image     browse or attach an image
+/fork      copy the session      /theme     set the colour theme
 /quit      leave
 ```
+
+A bare `/agent`, `/sessions`, or `/verbosity` opens a centred picker over the
+transcript. Type to filter, move with Up/Down or PgUp/PgDn, choose with Enter,
+and cancel with Esc. A typed value still applies directly. Bare `/cd` browses
+directories from the session root, with Enter to open one, Tab to select it,
+and Left to go up. Bare `/image` browses directories and PNG, JPEG, GIF, and
+WebP files, and Enter attaches the highlighted image.
 
 `/image <path>` or pasting an image path attaches PNG, JPEG, GIF, or WebP up to
 10 MB to the next message.

@@ -1,20 +1,20 @@
 //! Help text. One renderer, used by `--help`, `/help`, and line mode.
 
-pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear · PgUp/PgDn scroll · Up/Down history · Tab complete · !cmd shell";
+pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear · PgUp/PgDn scroll · Up/Down history · Tab complete · !cmd shell · picker: type to filter, Enter choose, Esc cancel";
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
     ("/new", "start a fresh conversation"),
-    ("/sessions", "list and pick sessions"),
+    ("/sessions", "pick a session"),
     ("/reload", "re-read instructions and skills"),
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
     ("/think", "toggle thinking for the next turn"),
     ("/yolo", "prompt-free for this session"),
-    ("/verbosity", "tool detail: low or high"),
+    ("/verbosity", "tool detail: low, high, or pick"),
     ("/cwd", "show the session directory"),
-    ("/cd", "change the session directory"),
-    ("/image", "attach an image by path"),
+    ("/cd", "browse or change the directory"),
+    ("/image", "browse or attach an image"),
     ("/fork", "copy the session and continue there"),
     ("/theme", "set the colour theme"),
     ("/quit", "leave"),
@@ -258,6 +258,19 @@ mod tests {
             assert!(text.contains(name), "missing {name}");
         }
         assert!(text.contains("Tab"));
+    }
+
+    #[test]
+    fn commands_describe_the_picker_forms() {
+        let text = commands();
+        for phrase in [
+            "pick a session",
+            "low, high, or pick",
+            "browse or change the directory",
+            "browse or attach an image",
+        ] {
+            assert!(text.contains(phrase), "missing {phrase:?}");
+        }
     }
 
     #[test]

@@ -34,12 +34,16 @@ user to type a path from memory in a terminal with no file manager.
 ### Modified Capabilities
 
 - `tui`: one centred overlay is allowed; every other row stays in the single
-  chat column.
+  chat column. Bare `/verbosity` opens the picker and bare `/cd` opens the
+  browser.
+- `images`: bare `/image` opens the browser and Enter attaches the highlighted
+  image.
 
 ## Impact
 
-- `src/tui.rs`: a `Picker` state, overlay compositing, key handling, and the
-  command wiring.
-- `openspec/specs/tui/spec.md`: the one-column exception.
-- `src/help.rs` and `README.md`: no-argument forms.
+- `src/tui.rs`: a `Picker` state, overlay compositing, key handling, the
+  directory and image browsers, and the command wiring.
+- `openspec/specs/tui/spec.md` and `openspec/specs/images/spec.md`: the
+  one-column exception and the bare command forms.
+- `src/help.rs` and `README.md`: no-argument forms and picker keys.
 - Depends on `cwd-commands` and `image-paste` for the commands it enhances.
