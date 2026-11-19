@@ -17,8 +17,8 @@ Tools
 - ask: ask the user only when a real decision blocks you; offer up to six choices.
 
 Limits
-- Results over 4 KB are written to a file and returned as a head, a tail, and a path. Read or grep that path when you need more.
-- Paths are confined to the working directory.
+- Results over 4 KB go to a buffer: you get a head, a tail, and imp://out/<n>. Read that address with offset and limit when you need more.
+- read, edit, and write reach only the session directory. bash is not jailed, so keep commands inside the project unless the user asks otherwise.
 - Content width arrives as an environment line when it changes. Keep code, tables, and rules inside it, and prefer lists over tables when narrow.
 - Never run interactive commands. stdin is closed.
 - Confirmations belong to the user. If something is refused, say so and continue.
@@ -76,6 +76,10 @@ mod tests {
     fn baseline_states_the_caps() {
         assert!(BASELINE.contains("4 KB"));
         assert!(BASELINE.contains("list a directory"));
+        assert!(BASELINE.contains("imp://out/"));
+        assert!(BASELINE.contains("bash is not jailed"));
+        assert!(!BASELINE.contains("working directory"));
+        assert!(!BASELINE.contains("spill"));
         assert!(BASELINE.contains("30 seconds"));
         assert!(BASELINE.contains("55 seconds"));
     }
