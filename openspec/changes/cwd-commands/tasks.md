@@ -5,4 +5,4 @@
 - [x] 1.3 Add `/cwd` and `/cd` to the interface. Resolve against the App root, send `Cmd::SetRoot`, apply `Ev::Root`, and keep typed `!` commands in step. Verify: `/cwd` shows the root, `/cd ..` changes it, a missing path leaves it unchanged, and `!pwd` prints the new root.
 - [x] 1.4 Add line mode and resume precedence. `/cd` calls `Session::set_root`; resume uses `--cwd`, then the sidecar `cwd`, then launch, falling back with a note when the recorded directory is gone. Verify: a resumed session lands in its recorded directory, `--cwd` overrides it, and a deleted directory falls back.
 - [x] 1.5 Document the commands. Add both to `help::COMMANDS` and the README, and update the command-count expectations. Verify: `/help` lists twelve commands, and the help tests name `/cwd` and `/cd`.
-- [ ] 1.6 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 1.6 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
