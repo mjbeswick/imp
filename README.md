@@ -133,6 +133,10 @@ One JSONL transcript plus a small sidecar per session under
 results and the compaction summary, so the model continues with real context.
 `--list`, `--rename`, `--delete` work headlessly; delete moves to trash.
 
+Job logs live under `~/.local/state/imp/out/jobs/`. They are kept for seven
+days, and the output directory is capped at 64 MB; legacy spill files are
+removed at startup.
+
 ## Development
 
 ```sh
