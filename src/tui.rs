@@ -755,6 +755,7 @@ enum PickKind {
     Session,
     Verbosity,
     Dir,
+    Image,
 }
 
 #[derive(Clone)]
@@ -805,6 +806,7 @@ impl Picker {
     fn reload(&mut self) {
         self.items = match self.kind {
             PickKind::Dir => browse_items(&self.current, &self.root, false),
+            PickKind::Image => browse_items(&self.current, &self.root, true),
             _ => Vec::new(),
         };
         self.filter.clear();
@@ -1570,7 +1572,12 @@ impl App {
             other if other == "image" || other.starts_with("image ") => {
                 let raw = other.strip_prefix("image").unwrap_or("").trim();
                 if raw.is_empty() {
-                    self.push(Role::Info, "image <path>");
+                    self.pending = Some(Pending::Pick(Picker::browse(
+                        "image",
+                        PickKind::Image,
+                        &self.root,
+                    )));
+                    self.dirty = true;
                 } else {
                     match crate::images::attach(raw, &self.root) {
                         Ok(image) => {
@@ -1731,7 +1738,7 @@ impl App {
                         self.dirty = true;
                         return;
                     }
-                    Key::Left if picker.kind == PickKind::Dir => {
+                    Key::Left if matches!(picker.kind, PickKind::Dir | PickKind::Image) => {
                         picker.parent();
                     }
                     Key::Enter => {
@@ -1759,6 +1766,26 @@ impl App {
                                         self.pending = Some(Pending::Pick(picker));
                                         self.dirty = true;
                                         return;
+                                    }
+                                }
+                                PickKind::Image => {
+                                    if choice.label.ends_with('/') {
+                                        picker.current =
+                                            std::path::PathBuf::from(&choice.value);
+                                        picker.reload();
+                                        self.pending = Some(Pending::Pick(picker));
+                                        self.dirty = true;
+                                        return;
+                                    }
+                                    match crate::images::attach(&choice.value, &self.root) {
+                                        Ok(image) => {
+                                            self.push(
+                                                Role::Thinking,
+                                                crate::images::marker(&image),
+                                            );
+                                            let _ = tx.send(Cmd::Attach(vec![image]));
+                                        }
+                                        Err(e) => self.push(Role::Error, e),
                                     }
                                 }
                             }
@@ -3404,6 +3431,57 @@ mod tests {
         }
         assert!(a.pending.is_none(), "Tab left the browser open");
         assert_eq!(a.root, root, "the root moved before the worker replied");
+    }
+
+    #[test]
+    fn image_browser_lists_images_and_attaches_on_enter() {
+        let root = scratch("img");
+        std::fs::create_dir_all(root.join("Pictures")).unwrap();
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        let png = b"\x89PNG\r\n\x1a\n1234567890";
+        std::fs::write(root.join("Pictures").join("shot.png"), png).unwrap();
+        std::fs::write(root.join("Pictures").join("notes.txt"), "text").unwrap();
+
+        let mut a = app_at(root.clone());
+        let (tx, rx) = channel();
+        a.run_command("image", &tx);
+        {
+            let picker = open_picker(&a);
+            assert_eq!(picker.kind, PickKind::Image);
+            let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
+            assert!(labels.contains(&"Pictures/"), "{labels:?}");
+            assert!(labels.contains(&"docs/"), "{labels:?}");
+            assert!(!labels.contains(&"notes.txt"), "a text file was listed");
+        }
+
+        highlight(&mut a, &tx, "Pictures/");
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(open_picker(&a).current, root.join("Pictures"));
+        assert!(rx.try_recv().is_err(), "Enter on a directory attached");
+
+        {
+            let picker = open_picker(&a);
+            let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
+            assert!(labels.contains(&"shot.png"), "{labels:?}");
+            assert!(!labels.contains(&"notes.txt"), "a text file was listed");
+        }
+        highlight(&mut a, &tx, "shot.png");
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.pending.is_none(), "the image picker stayed open");
+        match rx.try_recv() {
+            Ok(Cmd::Attach(images)) => {
+                assert_eq!(images.len(), 1);
+                assert_eq!(images[0].name, "shot.png");
+            }
+            _ => panic!("Enter did not attach the image"),
+        }
+        assert!(
+            a.entries
+                .last()
+                .map(|e| e.text.contains("shot.png"))
+                .unwrap_or(false),
+            "no attachment marker"
+        );
     }
 
     #[test]
