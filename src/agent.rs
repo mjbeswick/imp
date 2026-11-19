@@ -328,10 +328,13 @@ impl Session {
                 temperature: Some(0.2),
             };
             let tools = self.active_tools();
-            let body = api::build_request(&opts, &self.history, &tools);
-            let url = format!("{}/chat/completions", self.cfg.base_url);
-            let auth = format!("Authorization: Bearer {}", self.cfg.api_key);
-            let headers = ["Content-Type: application/json", auth.as_str(), "Accept: text/event-stream"];
+            let mut adapter = crate::providers::adapter(
+                self.cfg.provider,
+                &self.cfg.base_url,
+                &self.cfg.api_key,
+            );
+            let wire = adapter.wire(&opts, &self.history, &tools);
+            let headers: Vec<&str> = wire.headers.iter().map(String::as_str).collect();
 
             let mut parser = SseParser::default();
             let mut acc = Accum::default();
@@ -340,14 +343,14 @@ impl Session {
             let mut raw = Vec::new();
 
             let result = self.transport.post(
-                &url,
+                &wire.url,
                 &headers,
-                body.to_string().as_bytes(),
+                wire.body.to_string().as_bytes(),
                 &mut |bytes| {
                     if raw.len() < 4096 {
                         raw.extend_from_slice(bytes);
                     }
-                    for ev in parser.push(bytes) {
+                    for ev in parser.push(bytes, adapter.as_mut()) {
                         match &ev {
                             api::Event::Content(t) => hooks.ui(Ui::Content(t.clone())),
                             api::Event::Reasoning(t) => hooks.ui(Ui::Reasoning(t.clone())),
@@ -554,17 +557,25 @@ impl Session {
             thinking: false,
             temperature: Some(0.0),
         };
-        let body = api::build_request(&opts, messages, &[]);
-        let url = format!("{}/chat/completions", self.cfg.base_url);
-        let auth = format!("Authorization: Bearer {}", self.cfg.api_key);
-        let headers = ["Content-Type: application/json", auth.as_str()];
+        let mut adapter = crate::providers::adapter(
+            self.cfg.provider,
+            &self.cfg.base_url,
+            &self.cfg.api_key,
+        );
+        let wire = adapter.wire(&opts, messages, &[]);
+        let headers: Vec<&str> = wire.headers.iter().map(String::as_str).collect();
         let mut parser = SseParser::default();
         let mut acc = Accum::default();
-        let result = self.transport.post(&url, &headers, body.to_string().as_bytes(), &mut |b| {
-            for ev in parser.push(b) {
-                acc.apply(ev);
-            }
-        });
+        let result = self.transport.post(
+            &wire.url,
+            &headers,
+            wire.body.to_string().as_bytes(),
+            &mut |b| {
+                for ev in parser.push(b, adapter.as_mut()) {
+                    acc.apply(ev);
+                }
+            },
+        );
         match result {
             Ok(200) => Ok(acc.content),
             Ok(code) => Err(format!("summariser failed: HTTP {code}")),
@@ -1538,7 +1549,12 @@ mod tests {
             thinking: true,
             temperature: None,
         };
-        let body = api::build_request(&opts, &history, &[]);
+        let mut adapter = crate::providers::adapter(
+            crate::providers::Provider::DeepSeek,
+            "https://api.deepseek.com",
+            "k",
+        );
+        let body = adapter.wire(&opts, &history, &[]).body;
         assert_eq!(body["messages"][1]["reasoning_content"], "because");
     }
 

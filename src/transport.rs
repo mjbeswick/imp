@@ -152,10 +152,15 @@ mod tests {
     use crate::api::{Accum, SseParser};
 
     fn run(chunks: Vec<String>) -> Accum {
+        let mut adapter = crate::providers::adapter(
+            crate::providers::Provider::DeepSeek,
+            "https://api.deepseek.com",
+            "",
+        );
         let mut parser = SseParser::default();
         let mut acc = Accum::default();
         for c in chunks {
-            for ev in parser.push(c.as_bytes()) {
+            for ev in parser.push(c.as_bytes(), adapter.as_mut()) {
                 acc.apply(ev);
             }
         }

@@ -4,6 +4,30 @@
 //! The wire adapters live beside this module and share one internal event
 //! stream, so the session loop never sees a provider's dialect.
 
+pub mod openai;
+
+use crate::api::{Event, Message, RequestOptions};
+use serde_json::Value;
+
+/// One request, fully prepared: endpoint, headers, and JSON body.
+pub struct Wire {
+    pub url: String,
+    pub headers: Vec<String>,
+    pub body: Value,
+}
+
+/// A provider's request builder and chunk parser. State is per stream.
+pub trait Adapter {
+    fn wire(&mut self, opts: &RequestOptions, history: &[Message], tools: &[Value]) -> Wire;
+    /// Turn one SSE data payload into internal events.
+    fn event(&mut self, payload: &str) -> Vec<Event>;
+}
+
+/// Pick the adapter for a profile. OpenAI, Ollama, and custom hosts share one.
+pub fn adapter(provider: Provider, base_url: &str, key: &str) -> Box<dyn Adapter> {
+    Box::new(openai::OpenAi::new(base_url, key, provider.caps()))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     DeepSeek,

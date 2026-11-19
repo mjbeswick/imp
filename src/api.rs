@@ -263,14 +263,14 @@ pub enum Event {
     Done,
 }
 
-/// Incremental SSE splitter. Feed it bytes, get events back.
+/// Incremental SSE splitter. Feed it bytes and an adapter, get events back.
 #[derive(Default)]
 pub struct SseParser {
     buf: Vec<u8>,
 }
 
 impl SseParser {
-    pub fn push(&mut self, bytes: &[u8]) -> Vec<Event> {
+    pub fn push(&mut self, bytes: &[u8], adapter: &mut dyn crate::providers::Adapter) -> Vec<Event> {
         self.buf.extend_from_slice(bytes);
         let mut out = Vec::new();
         while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
@@ -288,90 +288,10 @@ impl SseParser {
                 out.push(Event::Done);
                 continue;
             }
-            out.extend(parse_chunk(payload));
+            out.extend(adapter.event(payload));
         }
         out
     }
-}
-
-fn parse_chunk(payload: &str) -> Vec<Event> {
-    let mut out = Vec::new();
-    let Ok(v) = serde_json::from_str::<Value>(payload) else {
-        return out;
-    };
-
-    if let Some(model) = v.get("model").and_then(Value::as_str) {
-        if !model.is_empty() {
-            out.push(Event::Model(model.to_string()));
-        }
-    }
-
-    if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
-        out.push(Event::Usage {
-            prompt: usage.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(0),
-            completion: usage
-                .get("completion_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            cache_hit: usage
-                .get("prompt_cache_hit_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            cache_miss: usage
-                .get("prompt_cache_miss_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-        });
-    }
-
-    let Some(choice) = v.get("choices").and_then(Value::as_array).and_then(|a| a.first()) else {
-        return out;
-    };
-
-    if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
-        out.push(Event::Finish(reason.to_string()));
-    }
-
-    let Some(delta) = choice.get("delta") else {
-        return out;
-    };
-    if let Some(text) = delta.get("content").and_then(Value::as_str) {
-        if !text.is_empty() {
-            out.push(Event::Content(text.to_string()));
-        }
-    }
-    if let Some(text) = delta.get("reasoning_content").and_then(Value::as_str) {
-        if !text.is_empty() {
-            out.push(Event::Reasoning(text.to_string()));
-        }
-    }
-    if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
-        for call in calls {
-            let index = call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
-            let id = call
-                .get("id")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-            let func = call.get("function");
-            let name = func
-                .and_then(|f| f.get("name"))
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-            let arguments = func
-                .and_then(|f| f.get("arguments"))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            out.push(Event::ToolCall {
-                index,
-                id,
-                name,
-                arguments,
-            });
-        }
-    }
-    out
 }
 
 /// Assembles one streamed response.
@@ -449,30 +369,6 @@ pub struct RequestOptions {
     pub temperature: Option<f32>,
 }
 
-pub fn build_request(opts: &RequestOptions, history: &[Message], tools: &[Value]) -> Value {
-    let messages: Vec<Value> = history.iter().map(Message::to_json).collect();
-    let mut body = json!({
-        "model": opts.model,
-        "messages": messages,
-        "stream": true,
-        "max_tokens": opts.max_tokens,
-    });
-    let map = body.as_object_mut().unwrap();
-    map.insert(
-        "thinking".into(),
-        json!({ "type": if opts.thinking { "enabled" } else { "disabled" } }),
-    );
-    if opts.thinking {
-        map.insert("reasoning_effort".into(), json!("low"));
-    } else if let Some(t) = opts.temperature {
-        map.insert("temperature".into(), json!(t));
-    }
-    if !tools.is_empty() {
-        map.insert("tools".into(), Value::Array(tools.to_vec()));
-    }
-    body
-}
-
 /// Rough wire-size estimate: four bytes per token plus per-message overhead.
 pub fn estimate_tokens(history: &[Message]) -> u64 {
     let mut bytes = 0usize;
@@ -485,7 +381,7 @@ pub fn estimate_tokens(history: &[Message]) -> u64 {
     (bytes / 4) as u64
 }
 
-fn base64(data: &[u8]) -> String {
+pub(crate) fn base64(data: &[u8]) -> String {
     const TABLE: &[u8; 64] =
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -515,10 +411,15 @@ mod tests {
     use super::*;
 
     fn feed(parts: &[&str]) -> Accum {
+        let mut adapter = crate::providers::adapter(
+            crate::providers::Provider::DeepSeek,
+            "https://api.deepseek.com",
+            "",
+        );
         let mut p = SseParser::default();
         let mut a = Accum::default();
         for part in parts {
-            for ev in p.push(part.as_bytes()) {
+            for ev in p.push(part.as_bytes(), adapter.as_mut()) {
                 a.apply(ev);
             }
         }
@@ -669,10 +570,18 @@ mod tests {
             thinking: true,
             temperature: Some(0.2),
         };
-        let body = build_request(&opts, &[Message::user("hi")], &[]);
+        let mut adapter = crate::providers::adapter(
+            crate::providers::Provider::DeepSeek,
+            "https://api.deepseek.com",
+            "k",
+        );
+        let wire = adapter.wire(&opts, &[Message::user("hi")], &[]);
+        let body = wire.body;
         assert_eq!(body["thinking"]["type"], "enabled");
         assert!(body.get("temperature").is_none());
         assert!(body.get("tools").is_none());
+        assert_eq!(wire.url, "https://api.deepseek.com/chat/completions");
+        assert!(wire.headers.iter().any(|h| h == "Authorization: Bearer k"));
     }
 
     #[test]
