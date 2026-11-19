@@ -37,6 +37,13 @@
 - [x] 5.9 Report unknown commands and values in the error role, confirm settings as `setting: value`, and print line-mode value lists as rows with `current`. Verify: tests for `/nope`, `/think`, and line-mode `/theme`.
 - [x] 5.6 Add `session_row` and use it in `--list`, line-mode `/sessions`, and the picker; cap line mode at twenty. Verify: alignment, newline title, and untitled tests.
 
+## 7. Review follow-ups
+
+- [ ] 7.1 Refuse deny-listed typed `!` commands in both front-ends before they run. Verify: a line-mode test refuses a harmless deny-listed command and a chat test does the same.
+- [ ] 7.2 Narrow the value-command requirement: `/sessions` lists newest first with no current marker, and `/provider` subcommands run only in the chat. Verify: `openspec validate --all --strict` passes.
+- [ ] 7.3 Restore the misplaced `#[test]` on the composer row test. Verify: `composer_draws_one_row_per_line` runs and passes.
+- [ ] 7.4 Place a tool duration after the whole summary when the summary has several lines. Verify: a test with a two-line summary.
+
 ## 6. Finish
 
 - [x] 6.1 Update `README.md` where a sample changed and run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
