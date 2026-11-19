@@ -428,6 +428,8 @@ pub enum Key {
     PageUp,
     PageDown,
     Ctrl(char),
+    WheelUp,
+    WheelDown,
     Unknown,
 }
 
@@ -488,6 +490,9 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
         let b = buf[i];
         if (0x40..=0x7e).contains(&b) {
             let params = &buf[2..i];
+            if let (Some(sgr), b'M' | b'm') = (params.strip_prefix(b"<"), b) {
+                return Some((i + 1, mouse(sgr)));
+            }
             let key = match b {
                 b'A' => Key::Up,
                 b'B' => Key::Down,
@@ -509,6 +514,18 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
         i += 1;
     }
     None
+}
+
+/// An SGR mouse report `b;x;y`. Only the wheel matters; clicks are ignored.
+fn mouse(params: &[u8]) -> Key {
+    let text = std::str::from_utf8(params).unwrap_or("");
+    let button: u32 = text.split(';').next().and_then(|b| b.parse().ok()).unwrap_or(0);
+    // Bits 4, 8, and 16 are shift, alt, and ctrl held during the event.
+    match button & !0b11100 {
+        64 => Key::WheelUp,
+        65 => Key::WheelDown,
+        _ => Key::Unknown,
+    }
 }
 
 /// `CSI <codepoint> ; <modifier> u`, the disambiguated form of a key.
@@ -1330,6 +1347,20 @@ impl App {
         self.top = 0;
     }
 
+    /// Move the view by `rows`; reaching the end resumes following.
+    fn scroll(&mut self, rows: isize) {
+        if rows < 0 {
+            self.follow = false;
+            self.top = self.top.saturating_sub(rows.unsigned_abs());
+        } else {
+            self.top = self.top.saturating_add(rows as usize);
+            if self.top >= self.max_top {
+                self.follow_tail();
+            }
+        }
+        self.dirty = true;
+    }
+
     fn page(&self) -> usize {
         self.body_rows.saturating_sub(1).max(1)
     }
@@ -1540,6 +1571,21 @@ impl App {
     }
 
     fn handle_key_inner(&mut self, key: Key, tx: &Sender<Cmd>) {
+        // Clicks and unknown sequences do nothing, and must not answer a prompt.
+        if matches!(key, Key::Unknown) {
+            return;
+        }
+        if matches!(key, Key::WheelUp | Key::WheelDown) {
+            match &mut self.pending {
+                Some(Pending::Pick(picker)) => {
+                    picker.move_by(if matches!(key, Key::WheelUp) { -1 } else { 1 });
+                    self.dirty = true;
+                }
+                Some(_) => {}
+                None => self.scroll(if matches!(key, Key::WheelUp) { -3 } else { 3 }),
+            }
+            return;
+        }
         // Ctrl+C protects a draft first. Prompts do not use the composer, so
         // they keep the exit; a picker is part of composing, so it closes with
         // the text.
@@ -4076,6 +4122,50 @@ mod tests {
         assert!(cfg.mouse, "mouse should default on");
         cfg.set("mouse", "off").unwrap();
         assert!(!cfg.mouse);
+    }
+
+    #[test]
+    fn decodes_the_mouse_wheel_and_ignores_clicks() {
+        let mut buf = b"\x1b[<64;10;5M\x1b[<65;10;5M\x1b[<0;3;4M\x1b[<0;3;4m\x1b[<68;1;1M".to_vec();
+        let keys = decode(&mut buf);
+        assert!(matches!(keys[0], Key::WheelUp), "{keys:?}");
+        assert!(matches!(keys[1], Key::WheelDown), "{keys:?}");
+        assert!(matches!(keys[2], Key::Unknown) && matches!(keys[3], Key::Unknown), "{keys:?}");
+        assert!(matches!(keys[4], Key::WheelUp), "shift+wheel: {keys:?}");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_transcript_and_moves_a_picker() {
+        let mut a = long_app();
+        let (tx, _rx) = channel();
+        let tail = a.frame(60, 8);
+        a.handle_key(Key::WheelUp, &tx);
+        assert!(!a.follow, "wheel up did not detach");
+        assert_ne!(a.frame(60, 8), tail);
+        for _ in 0..20 {
+            a.handle_key(Key::WheelDown, &tx);
+            a.frame(60, 8);
+        }
+        assert!(a.follow, "scrolling to the end did not resume following");
+
+        let mut b = app();
+        open_many(&mut b, 5);
+        b.handle_key(Key::WheelDown, &tx);
+        assert_eq!(open_picker(&b).index, 1);
+        b.handle_key(Key::WheelUp, &tx);
+        assert_eq!(open_picker(&b).index, 0);
+    }
+
+    #[test]
+    fn a_click_does_not_answer_a_prompt() {
+        let mut a = picker();
+        let (tx, rx) = channel();
+        a.handle_key(Key::Char('d'), &tx);
+        a.handle_key(Key::Unknown, &tx);
+        a.handle_key(Key::WheelDown, &tx);
+        assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })), "the question closed");
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
