@@ -42,7 +42,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 
 ```
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear
-Up/Down history · Tab complete
+Up/Down history · Tab complete · PgUp/PgDn scroll
 ```
 
 ### Commands
