@@ -58,11 +58,13 @@ Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab 
 /verbosity level: low or high    /cwd       show the session directory
 /cd        browse or change cwd  /image     browse or attach an image
 /fork      copy the session      /theme     set the colour theme
-/quit      leave
+/shell     open a shell          /model     set or pick the session model
+/provider  manage providers      /stash     park a message for this session
+/rename    rename this session   /quit      leave
 ```
 
-A bare `/agent`, `/sessions`, or `/verbosity` opens a centred picker over the
-transcript. Type to filter, move with Up/Down or PgUp/PgDn, choose with Enter,
+A bare `/agent`, `/sessions`, `/verbosity`, or `/model` opens a centred picker
+over the transcript. Type to filter, move with Up/Down or PgUp/PgDn, choose with Enter,
 and cancel with Esc. A typed value still applies directly. Bare `/cd` browses
 directories from the session root, with Enter to open one, Tab to select it,
 and Left to go up. Bare `/image` browses directories and PNG, JPEG, GIF, and
@@ -70,6 +72,20 @@ WebP files, and Enter attaches the highlighted image.
 
 `/image <path>` or pasting an image path attaches PNG, JPEG, GIF, or WebP up to
 10 MB to the next message.
+
+`/shell` hands the terminal to `$SHELL` and redraws the chat when it exits.
+`/model <name>` sets the session model; bare `/model` offers the current model,
+the provider default, and recent choices. Nothing is written to the config.
+
+`/provider` lists built-in and custom profiles. `add <name>`, `edit <name>`,
+`delete <name>`, and `use <name>` manage custom profiles in a managed
+`# >>> providers` block in the config file; comments and other keys survive,
+and the active profile cannot be deleted.
+
+`/stash <text>` parks a message, bare `/stash` lists them, `pop [n]` loads one
+into the composer, `delete n` removes one, and `pop all` loads every entry.
+Stashes belong to the session and never reach the model until you send them.
+`/rename <title>` retitles the current session.
 
 A line starting with `!` runs as a shell command, unchecked by the model, with
 the same limits as the `bash` tool.

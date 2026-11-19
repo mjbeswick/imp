@@ -87,9 +87,25 @@ impl ColorMode {
     }
 }
 
+/// A custom provider whose fields live in the config's managed block.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NamedProvider {
+    pub name: String,
+    pub base: String,
+    pub model: String,
+    pub key_env: String,
+    pub dialect: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub provider: Provider,
+    /// The profile named in `provider=`: a built-in name or a custom one.
+    pub active_name: String,
+    /// Custom profiles parsed from the managed block.
+    pub named: Vec<NamedProvider>,
+    /// Environment variable named by the active custom profile.
+    pub key_env: Option<String>,
     pub api_key: String,
     pub model: String,
     pub base_url: String,
@@ -110,6 +126,9 @@ impl Default for Config {
         let profile = Provider::DeepSeek.profile();
         Self {
             provider: Provider::DeepSeek,
+            active_name: "deepseek".into(),
+            named: Vec::new(),
+            key_env: None,
             api_key: String::new(),
             model: profile.model.into(),
             base_url: profile.base_url.into(),
@@ -141,6 +160,22 @@ impl Config {
 
     pub fn from_str(text: &str) -> Result<Self, String> {
         let mut cfg = Self::default();
+        for raw in text.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
+            let Some(rest) = k.trim().strip_prefix("provider.") else {
+                continue;
+            };
+            let Some((name, field)) = rest.rsplit_once('.') else {
+                continue;
+            };
+            set_named_field(&mut cfg.named, name, field, v.trim());
+        }
         for (n, raw) in text.lines().enumerate() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -156,7 +191,7 @@ impl Config {
 
     fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
-            "provider" => self.set_provider(Provider::parse(value)?),
+            "provider" => self.set_active(value)?,
             "api_key" => self.api_key = value.to_string(),
             "model" => self.model = value.to_string(),
             "base_url" => self.base_url = value.trim_end_matches('/').to_string(),
@@ -170,9 +205,51 @@ impl Config {
             "links" => self.links = Links::parse(value)?,
             "color" => self.color = ColorMode::parse(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
+            // Managed profile lines were read before this pass.
+            key if key.starts_with("provider.") => {}
             // Unknown keys are ignored so newer configs do not break older runs.
             _ => {}
         }
+        Ok(())
+    }
+
+    /// Select the profile named in `provider=`: a built-in or a custom one.
+    pub fn set_active(&mut self, name: &str) -> Result<(), String> {
+        if let Ok(provider) = Provider::parse(name) {
+            self.key_env = None;
+            self.set_provider(provider);
+            self.active_name = name.trim().to_ascii_lowercase();
+            return Ok(());
+        }
+        let Some(profile) = self.named.iter().find(|n| n.name == name).cloned() else {
+            return Err(format!(
+                "unknown provider {name:?}; add it with /provider add {name}"
+            ));
+        };
+        self.apply_named(&profile)
+    }
+
+    /// Apply a custom profile's endpoint, model, and dialect.
+    pub fn apply_named(&mut self, profile: &NamedProvider) -> Result<(), String> {
+        let dialect = Provider::parse(&profile.dialect).map_err(|_| {
+            format!(
+                "{}: dialect must be deepseek, openai, anthropic, gemini, ollama, or custom",
+                profile.name
+            )
+        })?;
+        self.provider = dialect;
+        if !profile.base.is_empty() {
+            self.base_url = profile.base.trim_end_matches('/').to_string();
+        }
+        if !profile.model.is_empty() {
+            self.model = profile.model.clone();
+        }
+        self.key_env = if profile.key_env.is_empty() {
+            None
+        } else {
+            Some(profile.key_env.clone())
+        };
+        self.active_name = profile.name.clone();
         Ok(())
     }
 
@@ -203,8 +280,12 @@ impl Config {
             self.api_key = v;
             return Ok(());
         }
-        match self.provider.profile().key_var {
-            Some(var) => match lookup(var).filter(|v| filled(v.clone())) {
+        let var = self
+            .key_env
+            .clone()
+            .or_else(|| self.provider.profile().key_var.map(str::to_string));
+        match var {
+            Some(var) => match lookup(&var).filter(|v| filled(v.clone())) {
                 Some(v) => {
                     self.api_key = v;
                     Ok(())
@@ -218,7 +299,7 @@ impl Config {
     pub fn apply_env(&mut self, lookup: impl Fn(&str) -> Option<String>) -> Result<(), String> {
         let set = |k: &str| lookup(k);
         if let Some(v) = set("IMP_PROVIDER") {
-            self.set_provider(Provider::parse(&v)?);
+            self.set_active(&v)?;
         }
         if let Some(v) = set("IMP_MAX_STEPS") {
             self.max_steps = parse_max_steps(&v)?;
@@ -258,6 +339,97 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// Start of the managed provider block in the config file.
+pub const PROVIDERS_START: &str = "# >>> providers";
+/// End of the managed provider block in the config file.
+pub const PROVIDERS_END: &str = "# <<< providers";
+
+fn set_named_field(named: &mut Vec<NamedProvider>, name: &str, field: &str, value: &str) {
+    let at = match named.iter().position(|n| n.name == name) {
+        Some(at) => at,
+        None => {
+            named.push(NamedProvider {
+                name: name.to_string(),
+                ..NamedProvider::default()
+            });
+            named.len() - 1
+        }
+    };
+    let profile = &mut named[at];
+    match field {
+        "base" => profile.base = value.to_string(),
+        "model" => profile.model = value.to_string(),
+        "key_env" => profile.key_env = value.to_string(),
+        "dialect" => profile.dialect = value.to_string(),
+        _ => {}
+    }
+}
+
+/// A valid custom profile name.
+pub fn valid_profile_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 40
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The managed block, markers included, with one group per profile.
+pub fn providers_block(named: &[NamedProvider]) -> String {
+    let mut out = String::new();
+    out.push_str(PROVIDERS_START);
+    out.push('\n');
+    for profile in named {
+        out.push_str(&format!("provider.{}.base = {}\n", profile.name, profile.base));
+        out.push_str(&format!(
+            "provider.{}.model = {}\n",
+            profile.name, profile.model
+        ));
+        out.push_str(&format!(
+            "provider.{}.key_env = {}\n",
+            profile.name, profile.key_env
+        ));
+        out.push_str(&format!(
+            "provider.{}.dialect = {}\n\n",
+            profile.name, profile.dialect
+        ));
+    }
+    out.push_str(PROVIDERS_END);
+    out.push('\n');
+    out
+}
+
+/// Replace the managed block and leave every other byte of the file alone.
+pub fn save_named(path: &Path, named: &[NamedProvider]) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let block = providers_block(named);
+    let updated = match (text.find(PROVIDERS_START), text.find(PROVIDERS_END)) {
+        (Some(start), Some(end)) if end > start => {
+            let after = end + PROVIDERS_END.len();
+            let after = text[after..]
+                .strip_prefix('\n')
+                .map(|_| after + 1)
+                .unwrap_or(after);
+            format!("{}{}{}", &text[..start], block, &text[after..])
+        }
+        _ => {
+            let mut out = text;
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
+            }
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&block);
+            out
+        }
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
 /// State and config directories without pulling in a crate.
@@ -516,6 +688,56 @@ mod tests {
             cfg.resolve_key_env(env(&[])).unwrap();
             assert!(cfg.api_key.is_empty());
         }
+    }
+
+    #[test]
+    fn a_custom_profile_resolves_before_the_builtins() {
+        let text = "provider=work\n\n# >>> providers\nprovider.work.base = http://box:8080/v1\nprovider.work.model = local-coder\nprovider.work.key_env = WORK_KEY\nprovider.work.dialect = openai\n# <<< providers\n";
+        let mut cfg = Config::from_str(text).unwrap();
+        assert_eq!(cfg.active_name, "work");
+        assert_eq!(cfg.provider, Provider::OpenAi);
+        assert_eq!(cfg.base_url, "http://box:8080/v1");
+        assert_eq!(cfg.model, "local-coder");
+        assert_eq!(cfg.key_env.as_deref(), Some("WORK_KEY"));
+        let err = cfg.resolve_key_env(env(&[])).unwrap_err();
+        assert!(err.contains("WORK_KEY"), "{err}");
+        cfg.resolve_key_env(env(&[("WORK_KEY", "secret")])).unwrap();
+        assert_eq!(cfg.api_key, "secret");
+    }
+
+    #[test]
+    fn saving_profiles_keeps_comments_and_other_keys() {
+        let dir = std::env::temp_dir().join(format!("imp-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config");
+        std::fs::write(
+            &path,
+            "# keep me\nmodel = old\n\n# >>> providers\nprovider.gone.base = x\n# <<< providers\n\nthinking = true\n",
+        )
+        .unwrap();
+        let named = vec![NamedProvider {
+            name: "work".into(),
+            base: "http://box/v1".into(),
+            model: "m".into(),
+            key_env: "K".into(),
+            dialect: "openai".into(),
+        }];
+        save_named(&path, &named).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# keep me\nmodel = old\n"), "{text}");
+        assert!(text.contains("provider.work.base = http://box/v1"), "{text}");
+        assert!(!text.contains("provider.gone"), "{text}");
+        assert!(text.ends_with("thinking = true\n"), "{text}");
+        let cfg = Config::from_str(&text).unwrap();
+        assert_eq!(cfg.named, named);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unknown_active_name_is_an_error() {
+        let err = Config::from_str("provider=work\n").unwrap_err();
+        assert!(err.contains("unknown provider"), "{err}");
     }
 
     #[test]

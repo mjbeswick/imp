@@ -543,6 +543,19 @@ impl Log {
         out
     }
 
+    /// Give this open log a new title.
+    pub fn retitle(&self, title: &str) -> Result<(), String> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err("the title is empty".into());
+        }
+        let mut meta = self.meta();
+        meta.title = title.chars().take(120).collect();
+        meta.updated = now();
+        self.write_meta(&meta);
+        Ok(())
+    }
+
     pub fn rename(dir: &Path, id: &str, title: &str) -> Result<(), String> {
         let Some(log) = Log::open(dir, id) else {
             return Err(format!("no session {id}"));
@@ -911,6 +924,15 @@ mod session_tests {
         assert!(copy.meta().title.starts_with("fork of"), "{:?}", copy.meta().title);
         assert_eq!(copy.meta().cwd, log.meta().cwd);
         assert!(log.path.exists());
+    }
+
+    #[test]
+    fn retitle_changes_the_meta_title() {
+        let dir = tmp();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.retitle("fix the parser").unwrap();
+        assert_eq!(log.meta().title, "fix the parser");
+        assert!(log.retitle("   ").is_err());
     }
 
     #[test]

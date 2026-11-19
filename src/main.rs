@@ -308,6 +308,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
     let mut out = std::io::stdout();
     let tty = unsafe { isatty(0) } != 0;
     let _line_mode = if tty { Some(tui::LineMode::enter()) } else { None };
+    let mut stash: Vec<String> = Vec::new();
     loop {
         if tty {
             print!("{}", cli.palette.paint(tui::Role::User, "> "));
@@ -473,6 +474,74 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         }
                         level => println!("unknown verbosity {level:?}; use low or high"),
                     }
+                }
+                "shell" => {
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                    match std::process::Command::new(shell).status() {
+                        Ok(status) => {
+                            println!("shell exited {}", status.code().unwrap_or(-1));
+                        }
+                        Err(e) => eprintln!("imp: {e}"),
+                    }
+                }
+                other if other == "rename" || other.starts_with("rename ") => {
+                    let title = other.strip_prefix("rename").unwrap_or("").trim();
+                    if title.is_empty() {
+                        println!("rename <title>");
+                    } else {
+                        match session.log.as_ref().map(|log| log.retitle(title)) {
+                            Some(Ok(())) => println!("renamed to {title:?}"),
+                            Some(Err(e)) => println!("{e}"),
+                            None => println!("nothing to rename yet"),
+                        }
+                    }
+                }
+                other if other == "model" || other.starts_with("model ") => {
+                    let name = other.strip_prefix("model").unwrap_or("").trim();
+                    if name.is_empty() {
+                        println!("model: {}", session.cfg.model);
+                        println!("default: {}", session.cfg.provider.profile().model);
+                    } else {
+                        session.cfg.model = name.to_string();
+                        println!("model: {name}");
+                    }
+                }
+                other if other == "stash" || other.starts_with("stash ") => {
+                    let rest = other.strip_prefix("stash").unwrap_or("").trim();
+                    if rest.is_empty() {
+                        if stash.is_empty() {
+                            println!("stash is empty");
+                        } else {
+                            for (i, text) in stash.iter().enumerate() {
+                                println!("{}. {text}", i + 1);
+                            }
+                        }
+                    } else if rest == "pop all" {
+                        println!("{}", stash.join("\n\n"));
+                        stash.clear();
+                    } else if let Some(n) = rest.strip_prefix("pop").map(str::trim) {
+                        let index = n.parse::<usize>().unwrap_or(1);
+                        if index >= 1 && index <= stash.len() {
+                            println!("{}", stash.remove(index - 1));
+                        } else {
+                            println!("stash: no entry {index}");
+                        }
+                    } else if let Some(n) = rest.strip_prefix("delete").map(str::trim) {
+                        let index = n.parse::<usize>().unwrap_or(0);
+                        if index >= 1 && index <= stash.len() {
+                            stash.remove(index - 1);
+                            println!("stash: deleted {index}");
+                        } else {
+                            println!("stash: no entry {index}");
+                        }
+                    } else {
+                        stash.push(rest.to_string());
+                        println!("stash: added ({})", stash.len());
+                    }
+                }
+                other if other == "provider" || other.starts_with("provider ") => {
+                    println!("provider: a named profile is stored by the chat interface");
+                    println!("active: {}", session.cfg.active_name);
                 }
                 other => println!("{}", help::unknown(other)),
             }

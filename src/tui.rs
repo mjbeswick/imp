@@ -478,8 +478,18 @@ pub enum Cmd {
     Attach(Vec<crate::api::Image>),
     SetThinking(bool),
     SetAgent(String),
+    SetModel(String),
     ShowAgent,
     Fork,
+    Shell,
+    RenameCurrent(String),
+    UseProvider {
+        name: String,
+        dialect: String,
+        base: String,
+        model: String,
+        key_env: String,
+    },
     SetRoot(std::path::PathBuf),
     Compact,
     Resume(String),
@@ -735,6 +745,12 @@ pub struct App {
     unseen: usize,
     pending: Option<Pending>,
     pending_since: Option<Instant>,
+    /// Where managed provider profiles are written.
+    config_path: std::path::PathBuf,
+    /// Where recently chosen models are remembered.
+    models_path: std::path::PathBuf,
+    /// Messages parked for this session, never persisted.
+    stash: Vec<String>,
     bell_pending: bool,
     status: Status,
     verbose: bool,
@@ -761,6 +777,14 @@ enum Pending {
         value: String,
         rename_id: String,
     },
+    RenameCurrent {
+        value: String,
+    },
+    ProviderForm {
+        name: String,
+        fields: Vec<(String, String)>,
+        at: usize,
+    },
     ConfirmDelete {
         id: String,
     },
@@ -786,6 +810,7 @@ enum PickKind {
     Dir,
     Image,
     Command,
+    Model,
 }
 
 #[derive(Clone)]
@@ -807,6 +832,32 @@ struct Picker {
     kind: PickKind,
     current: std::path::PathBuf,
     root: std::path::PathBuf,
+}
+
+/// Recently chosen models, newest first.
+fn load_models(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(8)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Move a model to the front of the recents file.
+fn record_model(path: &std::path::Path, name: &str) {
+    let mut names: Vec<String> = load_models(path)
+        .into_iter()
+        .filter(|old| old != name)
+        .collect();
+    names.insert(0, name.to_string());
+    names.truncate(8);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, names.join("\n"));
 }
 
 /// Every slash command as a picker row.
@@ -1071,6 +1122,9 @@ impl App {
             unseen: 0,
             pending: None,
             pending_since: None,
+            config_path: Config::config_path(),
+            models_path: crate::config::dirs_state().join("imp").join("models"),
+            stash: Vec::new(),
             bell_pending: false,
             status: Status {
                 tokens: 0,
@@ -1486,6 +1540,301 @@ impl App {
         self.push(role, format!("$ {command}\n{}", out.text));
     }
 
+    /// Apply a model to this session and remember it for the picker.
+    fn set_model(&mut self, name: &str, tx: &Sender<Cmd>) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        self.cfg.model = name.to_string();
+        self.status.served.clear();
+        let _ = tx.send(Cmd::SetModel(name.to_string()));
+        record_model(&self.models_path, name);
+        self.push(Role::Info, format!("model: {name}"));
+    }
+
+    /// Add, list, pop, or delete parked messages.
+    fn stash_command(&mut self, rest: &str) {
+        if rest.is_empty() {
+            if self.stash.is_empty() {
+                self.push(Role::Info, "stash is empty");
+            } else {
+                let lines: Vec<String> = self
+                    .stash
+                    .iter()
+                    .enumerate()
+                    .map(|(i, text)| format!("{}. {text}", i + 1))
+                    .collect();
+                self.push(Role::Info, lines.join("\n"));
+            }
+            return;
+        }
+        if rest == "pop all" {
+            if self.stash.is_empty() {
+                self.push(Role::Info, "stash is empty");
+                return;
+            }
+            let all = std::mem::take(&mut self.stash).join("\n\n");
+            self.load_stash(&all);
+            self.push(Role::Info, "stash: loaded all");
+            return;
+        }
+        if let Some(n) = rest.strip_prefix("pop").map(str::trim) {
+            let index = if n.is_empty() {
+                1
+            } else {
+                match n.parse::<usize>() {
+                    Ok(n) if n >= 1 => n,
+                    _ => {
+                        self.push(Role::Error, format!("stash: no entry {n:?}"));
+                        return;
+                    }
+                }
+            };
+            if index > self.stash.len() {
+                self.push(Role::Error, self.stash_range());
+                return;
+            }
+            let text = self.stash.remove(index - 1);
+            self.load_stash(&text);
+            self.push(Role::Info, format!("stash: popped {index}"));
+            return;
+        }
+        if let Some(n) = rest.strip_prefix("delete").map(str::trim) {
+            let index = match n.parse::<usize>() {
+                Ok(n) if n >= 1 => n,
+                _ => {
+                    self.push(Role::Error, format!("stash: no entry {n:?}"));
+                    return;
+                }
+            };
+            if index > self.stash.len() {
+                self.push(Role::Error, self.stash_range());
+                return;
+            }
+            self.stash.remove(index - 1);
+            self.push(Role::Info, format!("stash: deleted {index}"));
+            return;
+        }
+        self.stash.push(rest.to_string());
+        self.push(Role::Info, format!("stash: added ({})", self.stash.len()));
+    }
+
+    fn stash_range(&self) -> String {
+        if self.stash.is_empty() {
+            "stash is empty".into()
+        } else {
+            format!("stash: pick 1 to {}", self.stash.len())
+        }
+    }
+
+    /// Put stashed text in the composer, after any draft already there.
+    fn load_stash(&mut self, text: &str) {
+        if self.input.trim().is_empty() {
+            self.input = text.to_string();
+        } else {
+            self.input.push_str("\n\n");
+            self.input.push_str(text);
+        }
+        self.cursor = self.input.len();
+        self.follow_tail();
+        self.dirty = true;
+    }
+
+    /// List, add, edit, delete, or switch provider profiles.
+    fn provider_command(&mut self, rest: &str, tx: &Sender<Cmd>) {
+        let mut parts = rest.split_whitespace();
+        let verb = parts.next().unwrap_or("");
+        let name = parts.next().unwrap_or("");
+        match verb {
+            "" => {
+                let mut lines = Vec::new();
+                for provider in [
+                    crate::providers::Provider::DeepSeek,
+                    crate::providers::Provider::OpenAi,
+                    crate::providers::Provider::Anthropic,
+                    crate::providers::Provider::Gemini,
+                    crate::providers::Provider::Ollama,
+                    crate::providers::Provider::Custom,
+                ] {
+                    let profile = provider.profile();
+                    let mark = if self.cfg.active_name == format!("{provider:?}").to_lowercase() {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    lines.push(format!(
+                        "{mark}{}  {}  {}",
+                        format!("{provider:?}").to_lowercase(),
+                        profile.base_url,
+                        profile.model
+                    ));
+                }
+                for profile in &self.cfg.named {
+                    let mark = if self.cfg.active_name == profile.name {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    lines.push(format!(
+                        "{mark}{}  {}  {}  ({})",
+                        profile.name, profile.base, profile.model, profile.dialect
+                    ));
+                }
+                lines.push("add <name> · edit <name> · delete <name> · use <name>".into());
+                self.push(Role::Info, lines.join("\n"));
+            }
+            "add" => {
+                if !crate::config::valid_profile_name(name) {
+                    self.push(Role::Error, "provider: name must be letters, digits, - or _");
+                    return;
+                }
+                if self.cfg.named.iter().any(|n| n.name == name) {
+                    self.push(Role::Error, format!("provider {name} already exists"));
+                    return;
+                }
+                let fields = ["base".to_string(), "model".to_string(), "dialect".to_string(), "key_env".to_string()]
+                    .into_iter()
+                    .map(|label| (label, String::new()))
+                    .collect();
+                self.pending = Some(Pending::ProviderForm {
+                    name: name.to_string(),
+                    fields,
+                    at: 0,
+                });
+                self.dirty = true;
+            }
+            "edit" => {
+                let Some(profile) = self.cfg.named.iter().find(|n| n.name == name).cloned() else {
+                    self.push(Role::Error, format!("no provider {name:?}"));
+                    return;
+                };
+                let fields = vec![
+                    ("base".to_string(), profile.base),
+                    ("model".to_string(), profile.model),
+                    ("dialect".to_string(), profile.dialect),
+                    ("key_env".to_string(), profile.key_env),
+                ];
+                self.pending = Some(Pending::ProviderForm {
+                    name: name.to_string(),
+                    fields,
+                    at: 0,
+                });
+                self.dirty = true;
+            }
+            "delete" => {
+                if name == self.cfg.active_name {
+                    self.push(
+                        Role::Error,
+                        format!("provider {name} is active; use another provider first"),
+                    );
+                    return;
+                }
+                let before = self.cfg.named.len();
+                self.cfg.named.retain(|n| n.name != name);
+                if self.cfg.named.len() == before {
+                    self.push(Role::Error, format!("no provider {name:?}"));
+                    return;
+                }
+                match crate::config::save_named(&self.config_path, &self.cfg.named) {
+                    Ok(()) => self.push(Role::Info, format!("provider {name} deleted")),
+                    Err(e) => self.push(Role::Error, e),
+                }
+            }
+            "use" => match self.set_provider(name, tx) {
+                Ok(()) => self.push(Role::Info, format!("provider: {name}")),
+                Err(e) => self.push(Role::Error, e),
+            },
+            other => self.push(
+                Role::Error,
+                format!("provider: unknown {other:?}; use add, edit, delete, or use"),
+            ),
+        }
+    }
+
+    /// Point the session at a built-in or custom profile.
+    fn set_provider(&mut self, name: &str, tx: &Sender<Cmd>) -> Result<(), String> {
+        let (dialect, base, model, key_env) = if let Ok(provider) =
+            crate::providers::Provider::parse(name)
+        {
+            let profile = provider.profile();
+            (
+                name.to_ascii_lowercase(),
+                profile.base_url.to_string(),
+                profile.model.to_string(),
+                String::new(),
+            )
+        } else {
+            let profile = self
+                .cfg
+                .named
+                .iter()
+                .find(|n| n.name == name)
+                .cloned()
+                .ok_or_else(|| format!("no provider {name:?}"))?;
+            (
+                profile.dialect.clone(),
+                profile.base.clone(),
+                profile.model.clone(),
+                profile.key_env.clone(),
+            )
+        };
+        self.cfg.set_active(name)?;
+        let _ = tx.send(Cmd::UseProvider {
+            name: name.to_string(),
+            dialect,
+            base,
+            model,
+            key_env,
+        });
+        Ok(())
+    }
+
+    /// Save a completed provider form, replacing any profile of that name.
+    fn finish_provider_form(&mut self, name: String, fields: Vec<(String, String)>) {
+        let value = |at: usize| fields.get(at).map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+        let (base, model, dialect, key_env) = (value(0), value(1), value(2), value(3));
+        if base.is_empty() || model.is_empty() || dialect.is_empty() {
+            self.push(Role::Error, "provider: base, model, and dialect are required");
+            self.pending = Some(Pending::ProviderForm {
+                name,
+                fields,
+                at: 0,
+            });
+            self.dirty = true;
+            return;
+        }
+        if crate::providers::Provider::parse(&dialect).is_err() {
+            self.push(
+                Role::Error,
+                "provider: dialect must be deepseek, openai, anthropic, gemini, ollama, or custom",
+            );
+            self.pending = Some(Pending::ProviderForm {
+                name,
+                fields,
+                at: 2,
+            });
+            self.dirty = true;
+            return;
+        }
+        let profile = crate::config::NamedProvider {
+            name: name.clone(),
+            base,
+            model,
+            dialect,
+            key_env,
+        };
+        match self.cfg.named.iter_mut().find(|n| n.name == name) {
+            Some(existing) => *existing = profile,
+            None => self.cfg.named.push(profile),
+        }
+        match crate::config::save_named(&self.config_path, &self.cfg.named) {
+            Ok(()) => self.push(Role::Info, format!("provider {name} saved")),
+            Err(e) => self.push(Role::Error, e),
+        }
+        self.dirty = true;
+    }
+
     fn run_command(&mut self, cmd: &str, tx: &Sender<Cmd>) {
         match cmd {
             "help" => self.push(Role::Info, crate::help::commands()),
@@ -1670,12 +2019,145 @@ impl App {
                     ),
                 }
             }
+            "shell" => {
+                let _ = tx.send(Cmd::Shell);
+            }
+            other if other == "model" || other.starts_with("model ") => {
+                let rest = other.strip_prefix("model").unwrap_or("").trim();
+                if rest.is_empty() {
+                    let current = self.cfg.model.clone();
+                    let default = self.cfg.provider.profile().model.to_string();
+                    let mut names = vec![current.clone(), default.clone()];
+                    for recent in load_models(&self.models_path) {
+                        names.push(recent);
+                    }
+                    let mut seen: Vec<String> = Vec::new();
+                    let mut items = Vec::new();
+                    for name in names {
+                        if name.is_empty() || seen.contains(&name) {
+                            continue;
+                        }
+                        seen.push(name.clone());
+                        let mut label = name.clone();
+                        if name == current {
+                            label.push_str("  (current)");
+                        } else if name == default {
+                            label.push_str("  (default)");
+                        }
+                        items.push(PickItem {
+                            label,
+                            value: name,
+                            actions: Vec::new(),
+                        });
+                    }
+                    self.pending = Some(Pending::Pick(Picker::new(
+                        "model",
+                        items,
+                        PickKind::Model,
+                    )));
+                    self.dirty = true;
+                } else {
+                    self.set_model(rest, tx);
+                }
+            }
+            other if other == "rename" || other.starts_with("rename ") => {
+                let rest = other.strip_prefix("rename").unwrap_or("").trim();
+                if rest.is_empty() {
+                    self.pending = Some(Pending::RenameCurrent {
+                        value: String::new(),
+                    });
+                    self.dirty = true;
+                } else {
+                    let _ = tx.send(Cmd::RenameCurrent(rest.to_string()));
+                    self.push(Role::Info, format!("renamed to {rest:?}"));
+                }
+            }
+            other if other == "stash" || other.starts_with("stash ") => {
+                let rest = other.strip_prefix("stash").unwrap_or("").trim();
+                self.stash_command(rest);
+            }
+            other if other == "provider" || other.starts_with("provider ") => {
+                let rest = other.strip_prefix("provider").unwrap_or("").trim();
+                self.provider_command(rest, tx);
+            }
             other => self.push(Role::Info, crate::help::unknown(other)),
         }
     }
 
     fn answer(&mut self, pending: Pending, key: Key, tx: &Sender<Cmd>) {
         match pending {
+            Pending::RenameCurrent { mut value } => {
+                match key {
+                    Key::Esc => {
+                        self.push(Role::Info, "rename cancelled");
+                        self.dirty = true;
+                    }
+                    Key::Enter => {
+                        let title = value.trim().to_string();
+                        if title.is_empty() {
+                            self.push(Role::Error, "the title is empty");
+                            self.pending = Some(Pending::RenameCurrent { value });
+                        } else {
+                            let _ = tx.send(Cmd::RenameCurrent(title.clone()));
+                            self.push(Role::Info, format!("renamed to {title:?}"));
+                        }
+                        self.dirty = true;
+                    }
+                    Key::Char(c) => {
+                        value.push(c);
+                        self.pending = Some(Pending::RenameCurrent { value });
+                        self.dirty = true;
+                    }
+                    Key::Backspace => {
+                        value.pop();
+                        self.pending = Some(Pending::RenameCurrent { value });
+                        self.dirty = true;
+                    }
+                    _ => {
+                        self.pending = Some(Pending::RenameCurrent { value });
+                    }
+                }
+                return;
+            }
+            Pending::ProviderForm {
+                name,
+                mut fields,
+                mut at,
+            } => {
+                match key {
+                    Key::Esc => {
+                        self.push(Role::Info, "provider cancelled");
+                        self.dirty = true;
+                    }
+                    Key::Enter => {
+                        if at + 1 < fields.len() {
+                            at += 1;
+                            self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        } else {
+                            self.finish_provider_form(name, fields);
+                        }
+                        self.dirty = true;
+                    }
+                    Key::Char(c) => {
+                        if let Some(field) = fields.get_mut(at) {
+                            field.1.push(c);
+                        }
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        self.dirty = true;
+                    }
+                    Key::Backspace => {
+                        if let Some(field) = fields.get_mut(at) {
+                            field.1.pop();
+                        }
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        self.dirty = true;
+                    }
+                    _ => {
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                    }
+                }
+                return;
+            }
             Pending::Prompt {
                 label,
                 mut value,
@@ -1845,6 +2327,9 @@ impl App {
                                 self.entries.clear();
                                 self.push(Role::Info, format!("resuming {}", choice.value));
                                 let _ = tx.send(Cmd::Resume(choice.value));
+                            }
+                            PickKind::Model => {
+                                self.set_model(&choice.value, tx);
                             }
                             PickKind::Verbosity => {
                                 self.verbose = choice.value == "high";
@@ -2149,6 +2634,14 @@ impl App {
                 }
                 Pending::ConfirmDelete { id } => format!("delete {id}? y/N"),
                 Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
+                Pending::RenameCurrent { value } => format!("new title: {value}_"),
+                Pending::ProviderForm { name, fields, at } => {
+                    let (label, value) = fields
+                        .get(*at)
+                        .cloned()
+                        .unwrap_or_else(|| ("field".into(), String::new()));
+                    format!("provider {name} · {label}: {value}_  (Enter next · Esc cancel)")
+                }
                 Pending::Question {
                     q,
                     opts,
@@ -2742,6 +3235,65 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         worker_session.history.push(m);
                     }
                 }
+                Ok(Cmd::SetModel(name)) => worker_session.cfg.model = name,
+                Ok(Cmd::Shell) => {
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                    let mut hooks = WorkerHooks {
+                        tx: ev_tx.clone(),
+                        cancel: worker_session.cancel.clone(),
+                        waited: Duration::ZERO,
+                    };
+                    let code = hooks.run_attached(&shell);
+                    let message = match code {
+                        Some(0) | None => "shell closed".to_string(),
+                        Some(code) => format!("shell exited {code}"),
+                    };
+                    let _ = ev_tx.send(Ev::Info(message));
+                }
+                Ok(Cmd::RenameCurrent(title)) => {
+                    let result = match &worker_session.log {
+                        Some(log) => log.retitle(&title),
+                        None => Err("nothing to rename yet".into()),
+                    };
+                    match result {
+                        Ok(()) => {
+                            let _ = ev_tx.send(Ev::Info(format!("renamed to {title:?}")));
+                        }
+                        Err(e) => {
+                            let _ = ev_tx.send(Ev::Error(e));
+                        }
+                    }
+                }
+                Ok(Cmd::UseProvider {
+                    name,
+                    dialect,
+                    base,
+                    model,
+                    key_env,
+                }) => match crate::providers::Provider::parse(&dialect) {
+                    Ok(provider) => {
+                        worker_session.cfg.provider = provider;
+                        worker_session.cfg.base_url = base;
+                        worker_session.cfg.model = model;
+                        worker_session.cfg.active_name = name.clone();
+                        worker_session.cfg.key_env = if key_env.is_empty() {
+                            None
+                        } else {
+                            Some(key_env)
+                        };
+                        worker_session.cfg.api_key.clear();
+                        if let Err(e) = worker_session
+                            .cfg
+                            .resolve_key_env(|k| std::env::var(k).ok())
+                        {
+                            let _ = ev_tx.send(Ev::Error(e));
+                        }
+                        let _ = ev_tx.send(Ev::Info(format!("provider: {name}")));
+                    }
+                    Err(e) => {
+                        let _ = ev_tx.send(Ev::Error(e));
+                    }
+                },
                 Ok(Cmd::Quit) | Err(_) => break,
             }
         }
@@ -3432,6 +3984,178 @@ mod tests {
         assert!(!a.resized(80, 24));
         assert!(a.resized(81, 24));
         assert!(a.resized(80, 25));
+    }
+
+    #[test]
+    fn shell_command_sends_the_attached_runner() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("shell", &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Shell)));
+    }
+
+    #[test]
+    fn model_command_sets_the_session_and_records_recents() {
+        let dir = scratch("models");
+        let config = dir.join("config");
+        let mut a = app();
+        a.config_path = config.clone();
+        a.models_path = config.with_file_name("models");
+        let (tx, rx) = channel();
+        a.run_command("model deepseek-v4-pro", &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::SetModel(name)) if name == "deepseek-v4-pro"));
+        assert_eq!(a.cfg.model, "deepseek-v4-pro");
+
+        a.run_command("model other", &tx);
+        assert_eq!(
+            load_models(&config.with_file_name("models")),
+            vec!["other", "deepseek-v4-pro"]
+        );
+
+        a.run_command("model", &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Model);
+        let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels[0], "other  (current)");
+        assert_eq!(labels[1], "deepseek-flash  (default)");
+        assert!(labels.contains(&"deepseek-v4-pro"), "{labels:?}");
+    }
+
+    #[test]
+    fn stash_adds_lists_pops_deletes_and_pops_all() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.run_command("stash check the tests", &tx);
+        a.run_command("stash write the docs", &tx);
+        a.run_command("stash", &tx);
+        let listed = &a.entries.last().unwrap().text;
+        assert!(listed.contains("1. check the tests"), "{listed}");
+        assert!(listed.contains("2. write the docs"), "{listed}");
+
+        a.run_command("stash pop 1", &tx);
+        assert_eq!(a.input, "check the tests");
+        assert_eq!(a.stash.len(), 1);
+
+        a.run_command("stash delete 1", &tx);
+        assert!(a.stash.is_empty());
+        assert_eq!(a.input, "check the tests", "delete touched the composer");
+
+        a.run_command("stash first", &tx);
+        a.run_command("stash second", &tx);
+        a.run_command("stash pop all", &tx);
+        assert_eq!(a.input, "check the tests\n\nfirst\n\nsecond");
+        assert!(a.stash.is_empty());
+
+        a.run_command("stash pop 9", &tx);
+        assert_eq!(a.entries.last().unwrap().role, Role::Error);
+    }
+
+    #[test]
+    fn rename_command_prompts_or_sends_the_title() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("rename fix the parser", &tx);
+        assert!(
+            matches!(rx.try_recv(), Ok(Cmd::RenameCurrent(title)) if title == "fix the parser")
+        );
+
+        a.run_command("rename", &tx);
+        assert!(matches!(a.pending, Some(Pending::RenameCurrent { .. })));
+        for c in "new title".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::RenameCurrent(title)) if title == "new title"));
+    }
+
+    fn provider_app() -> (App, std::path::PathBuf) {
+        let dir = scratch("providers");
+        let config = dir.join("config");
+        std::fs::write(&config, "# keep me\nmodel = old\n").unwrap();
+        let mut a = app();
+        a.config_path = config.clone();
+        (a, config)
+    }
+
+    #[test]
+    fn provider_add_edits_the_managed_block() {
+        let (mut a, config) = provider_app();
+        let (tx, _rx) = channel();
+        a.run_command("provider add work", &tx);
+        assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })));
+        for key in [
+            "http://box:8080/v1",
+            "local-coder",
+            "openai",
+            "WORK_KEY",
+        ] {
+            for c in key.chars() {
+                a.handle_key(Key::Char(c), &tx);
+            }
+            a.handle_key(Key::Enter, &tx);
+        }
+        assert!(a.pending.is_none(), "the form stayed open");
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(text.starts_with("# keep me\nmodel = old\n"), "{text}");
+        assert!(text.contains("provider.work.base = http://box:8080/v1"), "{text}");
+        assert!(text.contains("provider.work.dialect = openai"), "{text}");
+        assert_eq!(a.cfg.named.len(), 1);
+
+        a.run_command("provider edit work", &tx);
+        for _ in 0..2 {
+            a.handle_key(Key::Enter, &tx);
+        }
+        for _ in 0.."openai".len() {
+            a.handle_key(Key::Backspace, &tx);
+        }
+        for c in "ollama".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Enter, &tx);
+        a.handle_key(Key::Enter, &tx);
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(text.contains("provider.work.dialect = ollama"), "{text}");
+
+        a.run_command("provider delete work", &tx);
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(!text.contains("provider.work"), "{text}");
+        assert!(text.contains("# keep me"), "{text}");
+    }
+
+    #[test]
+    fn provider_use_reaches_the_worker_and_delete_refuses_the_active_one() {
+        let (mut a, _config) = provider_app();
+        let (tx, rx) = channel();
+        a.run_command("provider add work", &tx);
+        for key in ["http://box/v1", "m", "openai", "K"] {
+            for c in key.chars() {
+                a.handle_key(Key::Char(c), &tx);
+            }
+            a.handle_key(Key::Enter, &tx);
+        }
+
+        a.run_command("provider use work", &tx);
+        match rx.try_recv() {
+            Ok(Cmd::UseProvider {
+                name,
+                dialect,
+                base,
+                model,
+                key_env,
+            }) => {
+                assert_eq!(name, "work");
+                assert_eq!(dialect, "openai");
+                assert_eq!(base, "http://box/v1");
+                assert_eq!(model, "m");
+                assert_eq!(key_env, "K");
+            }
+            other => panic!("no use command: {}", other.is_ok()),
+        }
+        assert_eq!(a.cfg.active_name, "work");
+
+        a.run_command("provider delete work", &tx);
+        assert_eq!(a.entries.last().unwrap().role, Role::Error);
+        assert_eq!(a.cfg.named.len(), 1, "the active profile was deleted");
     }
 
     #[test]

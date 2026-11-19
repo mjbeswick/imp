@@ -17,6 +17,11 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/image", "browse or attach an image"),
     ("/fork", "copy the session and continue there"),
     ("/theme", "set the colour theme"),
+    ("/shell", "open a shell"),
+    ("/model", "set or pick the session model"),
+    ("/provider", "list, add, edit, delete, or use providers"),
+    ("/stash", "park messages for this session"),
+    ("/rename", "rename the current session"),
     ("/quit", "leave"),
 ];
 
@@ -253,7 +258,7 @@ mod tests {
     #[test]
     fn commands_lists_every_command() {
         let text = commands();
-        assert_eq!(COMMANDS.len(), 15);
+        assert_eq!(COMMANDS.len(), 20);
         for (name, _) in COMMANDS {
             assert!(text.contains(name), "missing {name}");
         }
