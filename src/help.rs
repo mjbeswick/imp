@@ -228,6 +228,7 @@ mod tests {
     #[test]
     fn commands_lists_every_command() {
         let text = commands();
+        assert_eq!(COMMANDS.len(), 12);
         for (name, _) in COMMANDS {
             assert!(text.contains(name), "missing {name}");
         }

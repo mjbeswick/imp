@@ -53,7 +53,8 @@ Up/Down history · Tab complete · PgUp/PgDn scroll
 /new       fresh conversation    /reload    re-read instructions and skills
 /sessions  list and pick         /compact   compact now
 /think     thinking toggle       /yolo      prompt-free for this session
-/verbosity tool detail: low|high /quit      leave
+/verbosity tool detail: low|high /cwd       show the session directory
+/cd        change the directory  /quit      leave
 ```
 
 A line starting with `!` runs as a shell command, unchecked by the model, with
