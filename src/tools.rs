@@ -1,8 +1,8 @@
 //! The file and shell tools. Every one has a hard cap.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_int;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const INLINE_CAP: usize = 4 * 1024;
+const MEM_CAP: usize = 16 * 1024 * 1024;
+const SPILL_CAP: usize = 64 * 1024 * 1024;
 const CAPTURE_CAP: usize = 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_WRITE: u64 = 5 * 1024 * 1024;
@@ -44,13 +46,283 @@ impl Outcome {
     }
 }
 
+enum Buffer {
+    Memory(String),
+    File { file: std::fs::File, len: usize },
+}
+
+impl Buffer {
+    fn len(&self) -> usize {
+        match self {
+            Buffer::Memory(text) => text.len(),
+            Buffer::File { len, .. } => *len,
+        }
+    }
+}
+
+/// Full tool output, memory first. When the memory budget is full the least
+/// recently used buffer moves to a temporary file that is unlinked while still
+/// open, so the id keeps working and nothing appears on disk.
+struct Buffers {
+    map: HashMap<u64, Buffer>,
+    order: VecDeque<u64>,
+    mem: usize,
+    spill: usize,
+    next: u64,
+    mem_cap: usize,
+    spill_cap: usize,
+}
+
+impl Buffers {
+    fn new() -> Self {
+        Self::with_caps(MEM_CAP, SPILL_CAP)
+    }
+
+    fn with_caps(mem_cap: usize, spill_cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            mem: 0,
+            spill: 0,
+            next: 0,
+            mem_cap,
+            spill_cap,
+        }
+    }
+
+    fn store(&mut self, text: String) -> u64 {
+        let id = self.next;
+        self.next += 1;
+        if text.len() <= self.mem_cap {
+            while self.mem + text.len() > self.mem_cap {
+                if !self.demote() {
+                    break;
+                }
+            }
+        }
+        if text.len() <= self.mem_cap && self.mem + text.len() <= self.mem_cap {
+            self.mem += text.len();
+            self.map.insert(id, Buffer::Memory(text));
+            self.order.push_back(id);
+        } else {
+            self.put_file(id, text);
+        }
+        id
+    }
+
+    fn demote(&mut self) -> bool {
+        let id = self
+            .order
+            .iter()
+            .copied()
+            .find(|id| matches!(self.map.get(id), Some(Buffer::Memory(_))));
+        let Some(id) = id else {
+            return false;
+        };
+        let Some(Buffer::Memory(text)) = self.map.remove(&id) else {
+            return false;
+        };
+        self.mem -= text.len();
+        let Some(file) = temp_file(id, &text) else {
+            return true;
+        };
+        self.spill += text.len();
+        self.map.insert(
+            id,
+            Buffer::File {
+                file,
+                len: text.len(),
+            },
+        );
+        while self.spill > self.spill_cap {
+            if !self.drop_oldest_file() {
+                break;
+            }
+        }
+        true
+    }
+
+    fn put_file(&mut self, id: u64, text: String) {
+        let Some(file) = temp_file(id, &text) else {
+            return;
+        };
+        self.spill += text.len();
+        self.map.insert(
+            id,
+            Buffer::File {
+                file,
+                len: text.len(),
+            },
+        );
+        self.order.push_back(id);
+        while self.spill > self.spill_cap {
+            if !self.drop_oldest_file() {
+                break;
+            }
+        }
+    }
+
+    fn drop_oldest_file(&mut self) -> bool {
+        let id = self
+            .order
+            .iter()
+            .copied()
+            .find(|id| matches!(self.map.get(id), Some(Buffer::File { .. })));
+        let Some(id) = id else {
+            return false;
+        };
+        if let Some(pos) = self.order.iter().position(|x| *x == id) {
+            self.order.remove(pos);
+        }
+        if let Some(buffer) = self.map.remove(&id) {
+            self.spill = self.spill.saturating_sub(buffer.len());
+            true
+        } else {
+            false
+        }
+    }
+
+    fn read(&mut self, id: u64, offset: usize, limit: usize) -> Option<String> {
+        if !self.map.contains_key(&id) {
+            return None;
+        }
+        if let Some(pos) = self.order.iter().position(|x| *x == id) {
+            self.order.remove(pos);
+            self.order.push_back(id);
+        }
+        match self.map.get(&id)? {
+            Buffer::Memory(text) => Some(slice_text(text, offset, limit)),
+            Buffer::File { file, .. } => Some(slice_file(file, offset, limit)),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+        self.mem = 0;
+        self.spill = 0;
+    }
+}
+
+fn temp_file(id: u64, text: &str) -> Option<std::fs::File> {
+    let dir = std::env::temp_dir();
+    for attempt in 0..8 {
+        let path = dir.join(format!(
+            "imp-buf-{}-{id}-{attempt}",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if file.write_all(text.as_bytes()).is_err() || file.seek(SeekFrom::Start(0)).is_err()
+                {
+                    let _ = std::fs::remove_file(&path);
+                    return None;
+                }
+                let _ = std::fs::remove_file(&path);
+                return Some(file);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+fn slice_text(text: &str, offset: usize, limit: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    let mut shown = 0usize;
+    for (n, line) in text.lines().enumerate().skip(offset) {
+        if shown >= limit || used > READ_BYTES {
+            out.push_str(&format!(
+                "... [stopped at line {}; {} lines total]\n",
+                n,
+                text.lines().count()
+            ));
+            break;
+        }
+        let numbered = format!("{:>6}: {line}\n", n + 1);
+        used += numbered.len();
+        shown += 1;
+        out.push_str(&numbered);
+    }
+    out
+}
+
+fn slice_file(file: &std::fs::File, offset: usize, limit: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    let mut shown = 0usize;
+    for (n, line) in BufReader::new(file).lines().enumerate().skip(offset) {
+        let Ok(line) = line else {
+            break;
+        };
+        if shown >= limit || used > READ_BYTES {
+            out.push_str(&format!("... [stopped at line {n}]\n"));
+            break;
+        }
+        let numbered = format!("{:>6}: {line}\n", n + 1);
+        used += numbered.len();
+        shown += 1;
+        out.push_str(&numbered);
+    }
+    out
+}
+
+fn head_tail(text: &str) -> (String, String) {
+    let head: String = text.chars().take(INLINE_CAP / 2).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(INLINE_CAP / 4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    (head, tail)
+}
+
+/// Delete job logs older than `max_age` under the output directory.
+pub fn prune_out(dir: &std::path::Path, max_age: Duration) {
+    let now = std::time::SystemTime::now();
+    for sub in [dir.to_path_buf(), dir.join("jobs")] {
+        let Ok(entries) = std::fs::read_dir(&sub) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
+            let stale = now
+                .duration_since(modified)
+                .map(|age| age > max_age)
+                .unwrap_or(false);
+            if stale {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
 pub struct Tools {
     pub root: PathBuf,
     pub out_dir: PathBuf,
     pub jail: bool,
     pub timeout: Duration,
     read_paths: HashSet<PathBuf>,
-    seq: u64,
+    buffers: Buffers,
 }
 
 impl Tools {
@@ -61,7 +333,7 @@ impl Tools {
             jail: true,
             timeout: TIMEOUT,
             read_paths: HashSet::new(),
-            seq: 0,
+            buffers: Buffers::new(),
         }
     }
 
@@ -130,42 +402,44 @@ impl Tools {
         }
         let config = crate::config::dirs_config().join("imp");
         let config = config.canonicalize().unwrap_or(config);
-        full.starts_with(&config)
+        if full.starts_with(&config) {
+            return true;
+        }
+        let out = self
+            .out_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.out_dir.clone());
+        full.starts_with(&out)
     }
 
-    fn spill(&mut self, full: &str) -> Option<PathBuf> {
-        self.seq += 1;
-        let _ = std::fs::create_dir_all(&self.out_dir);
-        let path = self.out_dir.join(format!("out-{}-{}", std::process::id(), self.seq));
-        std::fs::write(&path, full).ok().map(|_| path)
-    }
-
-    /// Cap a result, spilling the rest to disk and pointing at it.
+    /// Cap a result, storing the rest in memory and pointing at its buffer.
     pub fn cap(&mut self, text: &str) -> String {
         if text.len() <= INLINE_CAP {
             return text.to_string();
         }
-        let head: String = text.chars().take(INLINE_CAP / 2).collect();
-        let tail: String = text
-            .chars()
-            .rev()
-            .take(INLINE_CAP / 4)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        let path = self.spill(text);
-        match path {
-            Some(p) => format!(
-                "{head}\n... [{} bytes total, elided; full output: {}]\n{tail}",
-                text.len(),
-                p.display()
-            ),
-            None => format!(
-                "{head}\n... [{} bytes total, elided; spill failed]\n{tail}",
-                text.len()
-            ),
+        let (head, tail) = head_tail(text);
+        let id = self.buffers.store(text.to_string());
+        format!(
+            "{head}\n... [{} bytes total; read: imp://out/{id}]\n{tail}",
+            text.len()
+        )
+    }
+
+    /// Cap a read result without storing it: the source file can be reopened
+    /// with offset and limit.
+    pub fn trim(&self, text: &str) -> String {
+        if text.len() <= INLINE_CAP {
+            return text.to_string();
         }
+        let (head, tail) = head_tail(text);
+        format!(
+            "{head}\n... [{} bytes total; use offset and limit to read more]\n{tail}",
+            text.len()
+        )
+    }
+
+    pub fn clear_buffers(&mut self) {
+        self.buffers.clear();
     }
 
     pub fn bash(&mut self, command: &str, cancel: &AtomicBool) -> Outcome {
@@ -281,6 +555,20 @@ impl Tools {
         let mut ok = true;
 
         for raw in paths {
+            if let Some(rest) = raw.strip_prefix("imp://out/") {
+                if let Ok(id) = rest.parse::<u64>() {
+                    match self.buffers.read(id, offset, limit) {
+                        Some(text) => {
+                            out.push_str(&format!("== {raw} ==\n{text}"));
+                        }
+                        None => {
+                            ok = false;
+                            out.push_str(&format!("== {raw} ==\nbuffer {raw} expired\n"));
+                        }
+                    }
+                    continue;
+                }
+            }
             let path = match self.resolve(raw) {
                 Ok(p) => p,
                 Err(e) => {
@@ -332,7 +620,7 @@ impl Tools {
 
         Outcome {
             ok,
-            text: self.cap(&out),
+            text: self.trim(&out),
             code: None,
         }
     }
@@ -529,7 +817,102 @@ mod tests {
         let (mut t, _d) = tools();
         let o = t.bash("yes x | head -c 20000", &AtomicBool::new(false));
         assert!(o.text.len() < 6000, "len {}", o.text.len());
-        assert!(o.text.contains("full output:"), "{}", o.text);
+        assert!(o.text.contains("imp://out/"), "{}", o.text);
+    }
+
+    #[test]
+    fn buffers_demote_and_expire() {
+        let mut b = Buffers::with_caps(8, 8);
+        let a = b.store("aaaa".into());
+        let second = b.store("bbbb".into());
+        let _c = b.store("cccc".into());
+        assert!(b.read(a, 0, 10).unwrap().contains("aaaa"));
+        let _d = b.store("dddd".into());
+        let f = b.store("eeee".into());
+        assert!(b.read(second, 0, 10).is_none(), "spill cap kept the oldest");
+        assert!(b.read(a, 0, 10).is_some(), "recently read buffer was dropped");
+        assert!(b.read(f, 0, 10).unwrap().contains("eeee"));
+    }
+
+    #[test]
+    fn reads_a_buffer_by_line_range() {
+        let mut t = tools().0;
+        let big = "line\n".repeat(2000);
+        let capped = t.cap(&big);
+        let address = capped
+            .split("read: ")
+            .nth(1)
+            .unwrap()
+            .split(']')
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(address.starts_with("imp://out/"), "{address}");
+        let o = t.read(&[address], Some(100), Some(2), None);
+        assert!(o.ok, "{}", o.text);
+        assert!(o.text.contains("101: line"), "{}", o.text);
+        assert!(o.text.contains("102: line"), "{}", o.text);
+        let missing = t.read(&["imp://out/9999".into()], None, None, None);
+        assert!(!missing.ok);
+        assert!(missing.text.contains("expired"), "{}", missing.text);
+    }
+
+    #[test]
+    fn reads_are_not_buffered() {
+        let (mut t, d) = tools();
+        let text = "x".repeat(10_000);
+        std::fs::write(d.join("big.txt"), &text).unwrap();
+        let o = t.read(&["big.txt".into()], None, None, None);
+        assert!(o.ok);
+        assert!(o.text.contains("use offset and limit"), "{}", o.text);
+        assert!(!o.text.contains("imp://out/"), "{}", o.text);
+    }
+
+    #[test]
+    fn job_logs_are_readable() {
+        let (mut t, _d) = tools();
+        std::fs::create_dir_all(t.out_dir.join("jobs")).unwrap();
+        let log = t.out_dir.join("jobs/job-1.log");
+        std::fs::write(&log, "job output\n").unwrap();
+        let o = t.read(&[log.display().to_string()], None, None, None);
+        assert!(o.ok, "{}", o.text);
+        assert!(o.text.contains("job output"), "{}", o.text);
+    }
+
+    #[test]
+    fn prune_removes_only_old_output() {
+        let (_t, d) = tools();
+        let out = d.join("out");
+        std::fs::create_dir_all(out.join("jobs")).unwrap();
+        let old = out.join("jobs/old.log");
+        let fresh = out.join("jobs/fresh.log");
+        std::fs::write(&old, "old").unwrap();
+        std::fs::write(&fresh, "fresh").unwrap();
+        let file = std::fs::File::options().write(true).open(&old).unwrap();
+        let when = std::time::SystemTime::now() - Duration::from_secs(8 * 86_400);
+        file.set_times(std::fs::FileTimes::new().set_modified(when))
+            .unwrap();
+        prune_out(&out, Duration::from_secs(7 * 86_400));
+        assert!(!old.exists(), "old log kept");
+        assert!(fresh.exists(), "fresh log removed");
+    }
+
+    #[test]
+    fn clearing_buffers_expires_addresses() {
+        let mut t = tools().0;
+        let capped = t.cap(&"y".repeat(10_000));
+        let address = capped
+            .split("read: ")
+            .nth(1)
+            .unwrap()
+            .split(']')
+            .next()
+            .unwrap()
+            .to_string();
+        t.clear_buffers();
+        let o = t.read(&[address], None, None, None);
+        assert!(!o.ok);
+        assert!(o.text.contains("expired"), "{}", o.text);
     }
 
     #[test]
