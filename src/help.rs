@@ -14,6 +14,9 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Picker", "type to filter, Enter choose, Esc cancel"),
 ];
 
+/// Keys in line mode, which reads whole lines.
+const LINE_KEYS: &[(&str, &str)] = &[("Enter", "send"), ("Ctrl+D", "leave")];
+
 /// Commands by area, named from `COMMANDS`.
 const GROUPS: &[(&str, &[&str])] = &[
     ("Conversation", &["/new", "/compact", "/think", "/stash"]),
@@ -193,15 +196,15 @@ pub fn usage(width: usize) -> String {
     out
 }
 
-/// `/help`, wrapped to `width`.
-pub fn commands(width: usize) -> String {
+/// `/help`, wrapped to `width`, with the keys of the chat or of line mode.
+pub fn commands(width: usize, chat: bool) -> String {
     let desc = |name: &str| {
         COMMANDS
             .iter()
             .find(|(n, _)| *n == name)
             .map_or("", |(_, d)| *d)
     };
-    let mut sections = vec![("Keys", KEYS.to_vec())];
+    let mut sections = vec![("Keys", if chat { KEYS } else { LINE_KEYS }.to_vec())];
     for (title, names) in GROUPS {
         sections.push((title, names.iter().map(|n| (*n, desc(n))).collect()));
     }
@@ -333,10 +336,20 @@ mod tests {
 
     #[test]
     fn keys_are_rows() {
-        let text = commands(80);
+        let text = commands(80, true);
         assert!(text.contains("Ctrl+C"), "{text}");
         assert!(text.contains("Shift+Enter"), "{text}");
         assert!(text.contains("PgUp, PgDn"), "{text}");
+    }
+
+    #[test]
+    fn line_mode_lists_only_its_own_keys() {
+        let text = commands(80, false);
+        for key in ["Picker", "PgUp", "Tab", "Ctrl+O", "Esc"] {
+            assert!(!text.contains(key), "{key} in line mode:\n{text}");
+        }
+        assert!(text.contains("Ctrl+D"), "{text}");
+        assert!(text.contains("/compact"), "{text}");
     }
 
     #[test]
@@ -346,7 +359,7 @@ mod tests {
             let n = GROUPS.iter().filter(|(_, g)| g.contains(name)).count();
             assert_eq!(n, 1, "{name} is in {n} groups");
         }
-        let text = commands(60);
+        let text = commands(60, true);
         for line in text.lines() {
             assert!(line.chars().count() <= 60, "too wide: {line:?}");
         }
@@ -358,7 +371,7 @@ mod tests {
 
     #[test]
     fn commands_describe_the_picker_forms() {
-        let text = commands(80);
+        let text = commands(80, true);
         for phrase in [
             "pick a session",
             "low, high, or pick",

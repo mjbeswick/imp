@@ -2130,7 +2130,7 @@ impl App {
         match cmd {
             "help" => {
                 let width = self.cols.load(Ordering::Relaxed) as usize;
-                self.push(Role::Info, crate::help::commands(width.saturating_sub(2).max(40)))
+                self.push(Role::Info, crate::help::commands(width.saturating_sub(2).max(40), true))
             }
             "quit" | "exit" => self.quit = true,
             other if other == "agent" || other.starts_with("agent ") => {
