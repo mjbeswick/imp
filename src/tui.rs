@@ -822,9 +822,9 @@ impl App {
                 output,
             } => {
                 self.status.tokens = tokens;
-                self.status.hit = hit;
-                self.status.miss = miss;
-                self.status.output = output;
+                self.status.hit += hit;
+                self.status.miss += miss;
+                self.status.output += output;
                 self.dirty = true;
             }
             Ev::Confirm { what, reply } => {
@@ -2486,6 +2486,36 @@ mod tests {
         assert!(a.status_line(120).contains("1.2M tok"));
         assert_eq!(compact_tokens(12_345), "12.3K");
         assert_eq!(compact_tokens(1_000), "1K");
+    }
+
+    #[test]
+    fn status_sums_cost_across_turns() {
+        let mut a = app();
+        a.apply(Ev::Usage {
+            tokens: 100,
+            hit: 900,
+            miss: 100,
+            output: 50,
+        });
+        a.apply(Ev::Usage {
+            tokens: 200,
+            hit: 400,
+            miss: 200,
+            output: 25,
+        });
+        assert_eq!(a.status.hit, 1300);
+        assert_eq!(a.status.miss, 300);
+        assert_eq!(a.status.output, 75);
+        let total = crate::pricing::cost(
+            "deepseek-flash",
+            crate::pricing::now(),
+            1300,
+            300,
+            75,
+        )
+        .unwrap();
+        let line = a.status_line(120);
+        assert!(line.contains(&format!("${total:.2}")), "{line}");
     }
 
     #[test]
