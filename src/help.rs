@@ -64,7 +64,7 @@ fn section(out: &mut String, title: &str, rows: &[(&str, &str)], width: usize) {
 /// `--help`. Width comes from the terminal so long descriptions wrap.
 pub fn usage(width: usize) -> String {
     let width = width.clamp(60, 110);
-    let mut out = String::from("imp — a small terminal agent for DeepSeek\n");
+    let mut out = String::from("imp — a small terminal agent for your model provider\n");
 
     out.push_str("\nUSAGE\n");
     out.push_str("  imp [OPTIONS] [PROMPT]\n  imp init\n  imp prompt\n");
@@ -87,6 +87,7 @@ pub fn usage(width: usize) -> String {
         "RUNNING",
         &[
             ("--agent <NAME>", "agent profile to start with [default]"),
+            ("--provider <NAME>", "deepseek · openai · anthropic · gemini · ollama · custom [deepseek]"),
             ("--model <NAME>", "model to use [deepseek-flash]"),
             ("--max-steps <N>", "tool steps per turn [24]"),
             ("--permissions <MODE>", "normal · strict · yolo [normal]"),
@@ -123,7 +124,12 @@ pub fn usage(width: usize) -> String {
         &mut out,
         "ENVIRONMENT",
         &[
-            ("DEEPSEEK_API_KEY", "required"),
+            ("IMP_PROVIDER", "provider profile [deepseek]"),
+            ("DEEPSEEK_API_KEY", "deepseek key"),
+            ("OPENAI_API_KEY", "openai key"),
+            ("ANTHROPIC_API_KEY", "anthropic key"),
+            ("GEMINI_API_KEY", "gemini key"),
+            ("IMP_API_KEY", "key for any provider"),
             ("IMP_MODEL", "overrides the model"),
             ("IMP_PERMISSIONS", "overrides the permission mode"),
             ("IMP_COMPACT_AT", "token budget for compaction"),
@@ -191,6 +197,7 @@ mod tests {
             "--rename",
             "--delete",
             "--agent",
+            "--provider",
             "--model",
             "--max-steps",
             "--permissions",
@@ -211,6 +218,21 @@ mod tests {
         assert!(text.contains("EXAMPLES"));
         assert!(text.contains("imp -c"));
         assert!(!text.contains("mote"));
+    }
+
+    #[test]
+    fn usage_names_every_provider_key() {
+        let text = usage(100);
+        for key in [
+            "DEEPSEEK_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "IMP_API_KEY",
+            "IMP_PROVIDER",
+        ] {
+            assert!(text.contains(key), "missing {key}");
+        }
     }
 
     #[test]

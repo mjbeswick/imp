@@ -1,7 +1,7 @@
 # imp
 
-A small terminal agent for DeepSeek. One binary, a chat interface, and a
-deliberately short list of tools.
+A small terminal agent for DeepSeek, OpenAI, Anthropic, Gemini, and local
+models. One binary, a chat interface, and a deliberately short list of tools.
 
 ```
 572 KB binary · 6 ms cold start · 6.2 MB idle RSS · 0 runtime dependencies
@@ -76,15 +76,18 @@ skills that teach `bash`.
 - `read` takes several paths; a directory path lists names to three levels, skipping build and VCS noise.
 - `edit` replaces exact strings, several per call, all or nothing.
 - Long commands run with `background`, then `job wait` (55 s at a time).
-- `search` returns summaries; `fetch` returns one page with its outline.
+- `search` returns summaries; `fetch` returns one page with its outline. Both
+  exist only on DeepSeek.
 
 ## Configuration
 
-`~/.config/imp/config`, `key=value`; environment overrides everything.
+`~/.config/imp/config`, `key=value`; environment wins, except `api_key`, which
+wins when set.
 
 ```
+# provider=deepseek
 # model=deepseek-flash
-# max_steps=24
+# base_url=https://api.deepseek.com
 # permissions=normal        # normal | strict | yolo
 # allow_sudo=false
 # thinking=false
@@ -92,7 +95,36 @@ skills that teach `bash`.
 # color=auto
 ```
 
-`DEEPSEEK_API_KEY` is required and never written to the config by the agent.
+Keys come from the provider's variable and are never written to the config by
+the agent.
+
+### Providers
+
+`provider` chooses a profile. `base_url`, `model`, and `api_key` override it.
+
+| provider | endpoint | default model | key |
+|---|---|---|---|
+| `deepseek` | `https://api.deepseek.com` | `deepseek-flash` | `DEEPSEEK_API_KEY` |
+| `openai` | `https://api.openai.com/v1` | `gpt-4.1-mini` | `OPENAI_API_KEY` |
+| `anthropic` | `https://api.anthropic.com` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
+| `gemini` | `https://generativelanguage.googleapis.com` | `gemini-2.5-pro` | `GEMINI_API_KEY` |
+| `ollama` | `http://localhost:11434/v1` | `llama3.2` | none |
+| `custom` | `http://localhost:8000/v1` | `local-model` | none |
+
+```sh
+export OPENAI_API_KEY=...
+imp --provider openai
+imp --provider ollama --model llama3.2
+```
+
+Or put `provider=openai` in the config. `IMP_PROVIDER` does the same.
+
+Key order is config `api_key`, then `IMP_API_KEY`, then the profile's variable.
+A missing key names the variable it looked for.
+
+Only DeepSeek implements the `search` and `fetch` endpoints, so other providers
+get no search tool and no search line in the prompt. Prices are DeepSeek-only:
+other providers show tokens and no cost.
 
 ### Permissions
 

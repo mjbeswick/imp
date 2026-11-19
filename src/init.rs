@@ -4,8 +4,10 @@ use std::path::Path;
 
 const CONFIG_TEMPLATE: &str = "\
 # imp configuration. Environment variables override every key.
-# DEEPSEEK_API_KEY holds the key; do not put it here.
+# Keys: DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY.
+# Ollama and custom hosts need none. Do not put a key in this file.
 
+# provider=deepseek           # deepseek | openai | anthropic | gemini | ollama | custom
 # model=deepseek-flash
 # base_url=https://api.deepseek.com
 # permissions=normal          # normal | strict | yolo
@@ -125,7 +127,7 @@ pub fn print(report: &Report) {
         println!("  kept     {p}");
     }
     println!();
-    println!("  next: set DEEPSEEK_API_KEY, then run imp");
+    println!("  next: set your provider API key, then run imp");
 }
 
 #[cfg(test)]
