@@ -17,7 +17,7 @@
 
 ## 3. Rows
 
-- [ ] 3.1 Move tool durations to a dim right-aligned column with `ms` and `s` units. Verify: tests for 5 ms, 1400 ms, and a summary that fills the row.
+- [x] 3.1 Move tool durations to a dim right-aligned column with `ms` and `s` units. Verify: tests for 5 ms, 1400 ms, and a summary that fills the row.
 - [ ] 3.2 Paint pending prompts and their rule in the accent role behind `▌`. Verify: a colour frame test and a no-colour test.
 
 ## 4. Picker

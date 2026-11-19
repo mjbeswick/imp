@@ -672,8 +672,13 @@ struct Entry {
 /// One drawn row: plain text, or styled spans from the markdown renderer.
 enum Line {
     Text(String),
+    /// A tool row's last summary line, with its duration for the right edge.
+    Timed(String, String),
     Spans(Vec<crate::render::Span>),
 }
+
+/// Separates a tool summary from its duration in the stored row text.
+const TIME: char = '\u{1}';
 
 /// Animated frames for a running tool row.
 const SPINNER: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
@@ -709,7 +714,7 @@ fn preview_detail(text: &str) -> Vec<String> {
 
 fn tool_row_text(row: &ToolRow, verbose: bool) -> String {
     let mark = if row.ok { "✓" } else { "✗" };
-    let mut text = format!("{mark} {} · {} ms", row.summary, row.ms);
+    let mut text = format!("{mark} {}{TIME}{}", row.summary, duration(row.ms));
     if row.expanded || verbose {
         text.push_str("\n  args: ");
         text.push_str(&row.args);
@@ -1346,7 +1351,7 @@ impl App {
                     }
                     None => self.push(
                         role,
-                        format!("  {} {preview}  · {ms} ms", if ok { "✓" } else { "✗" }),
+                        format!("{} {preview}{TIME}{}", if ok { "✓" } else { "✗" }, duration(ms)),
                     ),
                 }
             }
@@ -2914,7 +2919,17 @@ impl App {
                 }
                 continue;
             }
-            for (i, part) in wrap(&entry.text, cols.saturating_sub(2))
+            // A finished tool row: wrap the summary, then set its duration
+            // at the right edge of the last summary line, or under it.
+            let mut timed: Option<String> = None;
+            let mut text = entry.text.clone();
+            if let Some(at) = text.find(TIME) {
+                let end = text[at..].find('\n').map_or(text.len(), |n| at + n);
+                timed = Some(text[at + TIME.len_utf8()..end].to_string());
+                text.replace_range(at..end, "");
+            }
+            let head_rows = wrap(text.split('\n').next().unwrap_or(""), cols.saturating_sub(2)).len();
+            for (i, part) in wrap(&text, cols.saturating_sub(2))
                 .into_iter()
                 .enumerate()
             {
@@ -2930,7 +2945,18 @@ impl App {
                 } else {
                     "  "
                 };
-                lines.push((entry.role, Line::Text(format!("{prefix}{part}"))));
+                let row = format!("{prefix}{part}");
+                match &timed {
+                    Some(time) if i + 1 == head_rows => {
+                        if row.chars().count() + 2 + time.chars().count() <= cols {
+                            lines.push((entry.role, Line::Timed(row, time.clone())));
+                        } else {
+                            lines.push((entry.role, Line::Text(row)));
+                            lines.push((entry.role, Line::Timed(String::new(), time.clone())));
+                        }
+                    }
+                    _ => lines.push((entry.role, Line::Text(row))),
+                }
             }
         }
 
@@ -2971,6 +2997,17 @@ impl App {
                     }
                 }
                 Line::Spans(spans) => screen.push_str(&self.paint_spans(*role, spans)),
+                Line::Timed(text, time) => {
+                    let painted = self.palette.paint(*role, text);
+                    if self.palette.on {
+                        screen.push_str(&bold_mark(painted));
+                    } else {
+                        screen.push_str(&painted);
+                    }
+                    let gap = cols.saturating_sub(text.chars().count() + time.chars().count());
+                    screen.push_str(&" ".repeat(gap));
+                    screen.push_str(&self.palette.paint(Role::Thinking, time));
+                }
             }
             screen.push_str("\r\n");
         }
@@ -5467,8 +5504,42 @@ mod tests {
             .filter(|row| row.contains("aaaa"))
             .collect();
         assert!(rows.len() > 1, "the summary did not wrap: {painted:?}");
-        assert!(painted.contains("· 12 ms"), "the duration was lost");
+        let last = rows.last().unwrap();
+        assert!(last.ends_with("12ms"), "the duration left the row end: {painted:?}");
+        assert_eq!(last.chars().count(), 80, "{last:?}");
         assert!(!painted.contains('…'), "the summary was cut: {painted:?}");
+    }
+
+    #[test]
+    fn durations_sit_at_the_right_edge() {
+        let finish = |summary: &str, ms: u128| {
+            let mut a = app();
+            a.apply(Ev::ToolStart {
+                name: "bash".into(),
+                summary: summary.into(),
+                args: "{}".into(),
+            });
+            a.apply(Ev::ToolEnd {
+                ok: true,
+                preview: String::new(),
+                output: String::new(),
+                detail: String::new(),
+                ms,
+            });
+            strip(&a.frame(40, 12))
+        };
+        let fast = finish("run `ls`", 5);
+        let row = fast.split("\r\n").find(|r| r.contains("run `ls`")).unwrap();
+        assert!(row.starts_with("✓ run `ls`") && row.ends_with("5ms"), "{row:?}");
+        assert_eq!(row.chars().count(), 40);
+        let slow = finish("run `ls`", 1400);
+        assert!(slow.contains("1.4s"), "{slow:?}");
+        // 38 columns of summary leave no room: the time takes the next row.
+        let full = finish(&"x".repeat(36), 7);
+        let rows: Vec<&str> = full.split("\r\n").collect();
+        let at = rows.iter().position(|r| r.contains("xxxx")).unwrap();
+        assert!(!rows[at].contains("7ms"), "{rows:?}");
+        assert!(rows[at + 1].trim() == "7ms" && rows[at + 1].ends_with("7ms"), "{rows:?}");
     }
 
     #[test]
