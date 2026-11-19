@@ -127,7 +127,7 @@ The system SHALL show reasoning content as a single dim line with its token coun
 
 ### Requirement: Tool activity is one line each
 
-The system SHALL render each tool call as one row with what it is doing, an argument summary, and the elapsed time, SHALL bold the leading `✓` or `✗` in the row's colour, SHALL put a failure preview on its own indented line and wrap continuations to that indent, SHALL update the row in place when the call finishes, SHALL charge only the tool's own work and not a confirmation wait, SHALL show a failure with its reason in the error colour, and SHALL expand the most recent call on request.
+The system SHALL render each tool call as one row with what it does, its arguments, and elapsed time, SHALL animate the leading spinner at least every 100 ms while it runs, SHALL replace it with a bold `✓` or `✗` when it finishes, SHALL put a failure preview on an indented line and wrap to that indent, SHALL update the row in place, SHALL charge only the tool's work, SHALL show failures with their reason in the error colour, and SHALL expand the most recent call on request.
 
 #### Scenario: Failed tool
 - **WHEN** a tool returns a non-zero exit code
@@ -147,7 +147,11 @@ The system SHALL render each tool call as one row with what it is doing, an argu
 
 #### Scenario: While it runs
 - **WHEN** a tool call is running
-- **THEN** one row shows the call with a spinner, and the transcript has no second row for it
+- **THEN** one row shows the call with an animated spinner, the status line shows no spinner, and the transcript has no second row for it
+
+#### Scenario: Spinner advances
+- **WHEN** a call runs for 300 ms
+- **THEN** its leading glyph has advanced through at least two frames
 
 #### Scenario: When it finishes
 - **WHEN** the call returns
@@ -828,3 +832,25 @@ The system SHALL keep a session-bound stash of messages, SHALL add text with `/s
 #### Scenario: Delete
 - **WHEN** the user runs `/stash delete 1`
 - **THEN** entry 1 is removed and the composer is unchanged
+
+### Requirement: The status line has no spinner
+
+The system SHALL start the status line with the model name and SHALL NOT draw a
+spinner, animation frame, or activity glyph there, whether the turn is idle,
+streaming text, or running a tool.
+
+#### Scenario: Idle
+- **WHEN** no turn is running
+- **THEN** the status line begins with the model name
+
+#### Scenario: Streaming text
+- **WHEN** the model is streaming an answer
+- **THEN** the status line is unchanged apart from its token and cost figures
+
+#### Scenario: Tool running
+- **WHEN** a tool row is animating
+- **THEN** the status line shows no matching glyph
+
+#### Scenario: After the turn
+- **WHEN** the turn ends
+- **THEN** the status line keeps the same leading model name
