@@ -30,6 +30,7 @@ Needs libcurl at runtime: present on macOS and on any Linux with curl installed.
 ```sh
 imp                                  # full-screen chat
 imp "why is the build failing?"      # one request, then exit
+imp find the biggest file             # unquoted words join into one prompt
 imp -c                               # continue the last session
 imp -r 3k9a0aa                       # resume a specific session
 imp --cwd ~/Projects/imp             # run the session in another directory
