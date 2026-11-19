@@ -44,7 +44,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 
 ```
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
-Up/Down history · Tab complete · PgUp/PgDn scroll
+Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
 Ctrl+O expand the last tool call · Ctrl+D leaves line mode
 ```
@@ -134,10 +134,18 @@ wins when set.
 # thinking=false
 # compact_at=60000
 # color=auto
+# mouse=on
 ```
 
 Keys come from the provider's variable and are never written to the config by
 the agent.
+
+### Mouse
+
+The chat captures the mouse wheel, so it scrolls the conversation rather than
+the terminal's scrollback. Clicks are ignored; select text with your terminal's
+modifier, Option-drag in iTerm. `mouse=off` gives the mouse back to the
+terminal.
 
 ### Themes
 
