@@ -3014,7 +3014,10 @@ impl App {
 
         if rule == 1 {
             screen.push_str("\x1b[2K");
-            screen.push_str(&self.palette.paint(Role::Thinking, &"─".repeat(cols)));
+            // The rule takes the accent while a question waits below it.
+            let asking = self.pending.is_some() && !matches!(self.pending, Some(Pending::Pick(_)));
+            let tone = if asking { Role::Info } else { Role::Thinking };
+            screen.push_str(&self.palette.paint(tone, &"─".repeat(cols)));
             screen.push_str("\r\n");
         }
         for row in &composer {
@@ -3111,10 +3114,11 @@ impl App {
                     text
                 }
             };
+            // A bar marks the row that is waiting on the user.
             let text = if self.bell_pending {
-                format!("\u{7}{text}")
+                format!("\u{7}▌ {text}")
             } else {
-                text
+                format!("▌ {text}")
             };
             // The caret is the composer's block, and keeps the row's colour.
             let painted = self.palette.paint(Role::Info, &fit(&text, cols));
@@ -4226,6 +4230,26 @@ mod tests {
         let narrow = a.status_line(40);
         assert!(!narrow.contains(&root), "{narrow}");
         assert!(narrow.starts_with("deepseek-flash"), "{narrow}");
+    }
+
+    #[test]
+    fn a_waiting_prompt_has_an_accent_bar_and_rule() {
+        let mut a = colour_app();
+        let (tx, _rx) = channel();
+        let idle = a.frame(80, 20);
+        a.run_command("rename", &tx);
+        let asking = a.frame(80, 20);
+        let accent = a.palette.paint(Role::Info, "─");
+        let accent = &accent[..accent.find('─').unwrap()];
+        assert!(asking.contains(&format!("{accent}{}", "─".repeat(80))), "{asking:?}");
+        assert!(!idle.contains(&format!("{accent}{}", "─".repeat(80))), "{idle:?}");
+        assert!(strip(&asking).contains("▌ new title: "), "{asking:?}");
+
+        let mut plain = app();
+        plain.run_command("rename", &tx);
+        let frame = plain.frame(80, 20);
+        assert!(frame.contains("▌ new title: "), "{frame:?}");
+        assert!(!frame.contains("\x1b[38"), "colour with colour off: {frame:?}");
     }
 
     #[test]
