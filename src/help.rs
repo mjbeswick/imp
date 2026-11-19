@@ -86,6 +86,7 @@ pub fn usage(width: usize) -> String {
         &[
             ("--agent <NAME>", "agent profile to start with [default]"),
             ("--model <NAME>", "model to use [deepseek-flash]"),
+            ("--max-steps <N>", "tool steps per turn [24]"),
             ("--permissions <MODE>", "normal · strict · yolo [normal]"),
             ("--skills-dir <PATH>", "extra skills directory"),
             ("-C, --cwd <PATH>", "session directory [launch directory]"),
@@ -190,6 +191,7 @@ mod tests {
             "--delete",
             "--agent",
             "--model",
+            "--max-steps",
             "--permissions",
             "--skills-dir",
             "--cwd",

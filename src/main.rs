@@ -67,6 +67,9 @@ fn run() -> Result<(), String> {
     while i < args.len() {
         match args[i].as_str() {
             "--model" => cfg.model = next(&args, &mut i, "--model")?,
+            "--max-steps" => {
+                cfg.max_steps = config::parse_max_steps(&next(&args, &mut i, "--max-steps")?)?
+            }
             "--permissions" => {
                 cfg.permissions = config::Permissions::parse(&next(&args, &mut i, "--permissions")?)?
             }

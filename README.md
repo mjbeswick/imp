@@ -82,6 +82,7 @@ skills that teach `bash`.
 
 ```
 # model=deepseek-flash
+# max_steps=24
 # permissions=normal        # normal | strict | yolo
 # allow_sudo=false
 # thinking=false
