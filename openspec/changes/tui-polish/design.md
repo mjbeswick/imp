@@ -64,11 +64,48 @@
 - Height becomes `visible + 4`, one row less than now.
 - The selected row keeps the `▸` marker and paints across the full inner width.
 - Rows with a description fit the right column first and cut the label with
-  `…`. `PickItem` for sessions puts the title in `label` and
-  `{id}  {age}  {n} msgs` in `desc`; `store::format_session` stays for
-  `--list`.
+  `…`. `PickItem` for sessions puts `{id}  {age}  {title}` in `label` and
+  `{n} msgs` in `desc`.
+
+### Modals
+
+- Bare `/theme` and `/provider` open the picker in the chat. Line mode keeps
+  printing the list, now through the same two-column table.
+- A space typed into a value picker's filter closes it and restores
+  `/{word} {filter}` to the composer. This fixes `/provider add work`, which
+  today filters for `add work`, matches nothing, and cannot be sent.
+- One current marker: `desc = "current"`. Drop `(current)` from model labels
+  and `*` from line-mode lists. Agent items carry their description.
+- `/cd` and `/image` titles carry the browsed directory, `~`-shortened.
+- `Pending::ConfirmDelete` keeps the picker behind it: the overlay still draws
+  while the confirm row is open, and the row names title and id.
+- Text prompts (`/rename`, provider form, custom answers) draw `CARET`
+  through `paint_composer_row` instead of a trailing `_`.
+
+### Session tables
+
+- One `store::session_row(meta, now, width)` returns `(left, right)`:
+  `{id}  {age:>3}  {title}` and `{n} msgs`. The title has newlines replaced
+  by spaces and becomes `(untitled)` when empty. `--list`, line-mode
+  `/sessions`, and the picker all use it; `format_session` goes.
+- Line-mode `/sessions` takes the newest twenty, as the picker does.
+
+### Line mode bugs
+
+These break existing requirements, so they need no spec change.
+
+- `!cmd` in line mode reaches the model as a user message, and the model then
+  runs it through `bash`. "Shell commands run from the input line" forbids
+  that. Line mode routes `!` to the same local runner the chat uses.
+- A failed tool row prints its preview after the exit code on the same line,
+  with a trailing space. "Line-mode tool rows are aligned" puts the preview on
+  its own indented line.
 
 ## Risks
+
+- Opening pickers for bare `/theme` and `/provider` changes muscle memory;
+  a typed value still applies directly.
+
 
 - Tests that match exact frames will need updates. Each task updates only the
   tests its requirement touches.

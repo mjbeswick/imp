@@ -21,3 +21,23 @@ The system SHALL draw a resumed session's user messages, assistant replies, and 
 #### Scenario: Cost starts fresh
 - **WHEN** a session is resumed and nothing is sent
 - **THEN** the cost shown is zero
+
+### Requirement: Session tables share one layout
+
+The system SHALL print sessions in `--list`, line-mode `/sessions`, and the session picker with the same fields in the same order: id, age, title, and message count, SHALL show the title on one line by turning newlines into spaces, SHALL show `(untitled)` for an empty title, SHALL cut a title that does not fit and keep the count whole and aligned, and SHALL show the newest twenty in line-mode `/sessions` as the picker does.
+
+#### Scenario: Line mode list
+- **WHEN** the user runs `/sessions` in line mode with sixty sessions stored
+- **THEN** twenty rows print with ages, and every count ends in one column
+
+#### Scenario: Multi-line title
+- **WHEN** a session title holds a newline
+- **THEN** its row stays on one line
+
+### Requirement: Session delete confirmation names the session
+
+The system SHALL ask to delete a session by its title and id, and SHALL keep the session picker on screen behind the question.
+
+#### Scenario: Delete from the picker
+- **WHEN** the user presses `d` on `Rate my machine.`
+- **THEN** the prompt reads `delete "Rate my machine." (51280befc)? y/N` and the list stays visible

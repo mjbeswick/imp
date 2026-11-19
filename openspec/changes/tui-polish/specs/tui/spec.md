@@ -74,7 +74,7 @@ The system SHALL draw a finished tool row's duration in the thinking role, right
 
 ### Requirement: Pending prompts stand out
 
-The system SHALL paint an open confirmation, question, or input prompt in the accent role behind a `▌` prefix, SHALL paint the rule above it in the accent role while it is open, and SHALL keep the prompt to one row.
+The system SHALL paint an open confirmation, question, or input prompt in the accent role behind a `▌` prefix, SHALL paint the rule above it in the accent role while it is open, SHALL draw a text prompt's caret the same way as the composer's, and SHALL keep the prompt to one row.
 
 #### Scenario: Confirmation
 - **WHEN** a confirmation opens in a colour terminal
@@ -83,3 +83,7 @@ The system SHALL paint an open confirmation, question, or input prompt in the ac
 #### Scenario: No colour
 - **WHEN** colour is off and a confirmation opens
 - **THEN** the row starts with `▌` and no escape sequence is emitted for colour
+
+#### Scenario: Text prompt caret
+- **WHEN** `/rename` asks for a title
+- **THEN** the caret is the composer's block caret, not an underscore

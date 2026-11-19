@@ -26,7 +26,16 @@ one row, and the session list loses its columns when a title is long.
   key hints in the bottom edge, and the filter on its own row. Width caps at 72
   columns.
 - Picker rows with a right column keep it whole and cut the label instead.
-  Sessions show the title on the left and age and message count on the right.
+  Sessions keep id, age, and title on the left and the count on the right.
+- Modals: bare `/theme` and `/provider` open the picker. A space in a value
+  filter hands the line back to the composer, so `/provider add work` works.
+  One `current` marker everywhere, agent descriptions, the browsed directory
+  in `/cd` and `/image` titles, the delete confirm keeps the list visible, and
+  text prompts use the real caret.
+- One session table for `--list`, line-mode `/sessions`, and the picker:
+  aligned counts, one-line titles, `(untitled)`, newest twenty.
+- Line mode fixes: `!cmd` runs locally instead of reaching the model, and a
+  failure preview sits on its own line.
 
 ## Out of Scope
 
@@ -48,5 +57,6 @@ one row, and the session list loses its columns when a title is long.
 - `src/tui.rs`: frame, composer, status line, overlay, picker rows, resume
   event.
 - `src/agent.rs`: build display entries from restored history.
-- `src/store.rs`: split the session row into title and detail.
+- `src/store.rs`: one shared session row.
+- `src/main.rs`: line-mode shell input and tool rows.
 - `README.md` if the picker sample changes.
