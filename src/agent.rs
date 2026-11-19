@@ -144,6 +144,20 @@ impl Session {
         self.log = Some(log);
     }
 
+    /// Copy the current session into a new file and continue there.
+    pub fn fork(&mut self) -> Result<(String, String), String> {
+        let Some(source) = self.log.clone() else {
+            return Err("nothing to fork yet".into());
+        };
+        let copy = source.fork()?;
+        let new_id = copy.id.clone();
+        self.attach_log(copy);
+        if let Some(log) = &self.log {
+            log.event("fork", &source.id);
+        }
+        Ok((new_id, source.id))
+    }
+
     /// Clear the conversation, keeping the system prompt.
     pub fn reset(&mut self) {
         let system: Vec<Message> = self
@@ -1175,6 +1189,18 @@ mod tests {
             .count();
         assert_eq!(calls, 2);
         assert_eq!(results, 2, "every call needs a result");
+    }
+
+    #[test]
+    fn fork_switches_to_the_copy() {
+        let mut s = session(crate::config::Config::default());
+        let log = crate::store::Log::create(&tmp(), &s.tools.root, "deepseek-flash");
+        s.attach_log(log);
+        let before = s.log.as_ref().unwrap().id.clone();
+        let (new_id, old_id) = s.fork().unwrap();
+        assert_eq!(old_id, before);
+        assert_eq!(s.log.as_ref().unwrap().id, new_id);
+        assert_ne!(new_id, old_id);
     }
 
     #[test]

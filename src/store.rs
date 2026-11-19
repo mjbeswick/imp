@@ -386,6 +386,41 @@ impl Log {
             })
     }
 
+    /// Copy the transcript and sidecar into a new session.
+    pub fn fork(&self) -> Result<Log, String> {
+        let base = timestamp_id();
+        let mut id = base.clone();
+        let mut attempt = 0;
+        loop {
+            let path = self.path.with_file_name(format!("{id}.jsonl"));
+            let meta_path = self.meta_path.with_file_name(format!("{id}.json"));
+            if id != self.id && !path.exists() && !meta_path.exists() {
+                break;
+            }
+            attempt += 1;
+            id = format!("{base}-{attempt}");
+        }
+        let path = self.path.with_file_name(format!("{id}.jsonl"));
+        let meta_path = self.meta_path.with_file_name(format!("{id}.json"));
+        if self.path.exists() {
+            std::fs::copy(&self.path, &path)
+                .map_err(|e| format!("could not fork transcript: {e}"))?;
+        } else if let Err(e) = std::fs::File::create(&path) {
+            return Err(format!("could not fork transcript: {e}"));
+        }
+        let mut meta = self.meta();
+        meta.id = id.clone();
+        meta.title = if meta.title.is_empty() {
+            "fork".into()
+        } else {
+            format!("fork of {}", meta.title).chars().take(60).collect()
+        };
+        meta.updated = now();
+        let log = Log { id, path, meta_path };
+        log.write_meta(&meta);
+        Ok(log)
+    }
+
     pub fn meta_cwd(&self) -> Option<PathBuf> {
         let cwd = self.meta().cwd;
         if cwd.is_empty() {
@@ -862,6 +897,20 @@ mod session_tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn fork_copies_the_transcript() {
+        let dir = tmp();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.append(&Message::user("hello"));
+        let bytes = std::fs::read(&log.path).unwrap();
+        let copy = log.fork().unwrap();
+        assert_ne!(copy.id, log.id);
+        assert_eq!(std::fs::read(&copy.path).unwrap(), bytes);
+        assert!(copy.meta().title.starts_with("fork of"), "{:?}", copy.meta().title);
+        assert_eq!(copy.meta().cwd, log.meta().cwd);
+        assert!(log.path.exists());
     }
 
     #[test]
