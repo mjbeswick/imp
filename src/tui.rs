@@ -3180,6 +3180,15 @@ impl App {
     }
 }
 
+/// Tool time: `12ms` under a second, `1.4s` from there.
+pub fn duration(ms: u128) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    }
+}
+
 /// 1234 draws as `1.2K`, 1_200_000 as `1.2M`. Below a thousand stays exact.
 fn compact_tokens(n: u64) -> String {
     fn scaled(value: f64, unit: &str) -> String {

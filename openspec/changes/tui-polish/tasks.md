@@ -3,7 +3,7 @@
 ## 0. Line mode bugs
 
 - [x] 0.1 Run `!cmd` locally in line mode. Verify: a line-mode test with a fake provider sends no request for `!echo hi` and prints its output.
-- [ ] 0.2 Put a line-mode failure preview on its own indented line with no trailing space. Verify: a test for `!false`-style tool failure output.
+- [x] 0.2 Put a line-mode failure preview on its own indented line with no trailing space. Verify: a test for `!false`-style tool failure output.
 
 ## 1. Resume
 

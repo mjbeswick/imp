@@ -663,11 +663,20 @@ fn print_ui_to<W: Write>(
             }
             let _ = name;
         }
-        Ui::ToolEnd { ok, preview, output, .. } => {
+        Ui::ToolEnd { ok, preview, output, ms, .. } => {
             let role = if ok { tui::Role::Tool } else { tui::Role::Error };
-            let mark = if ok { "✓" } else { "✗" };
-            let line = format!("{mark} {}", preview_lines(&preview));
-            writeln!(out, "  {}", palette.paint(role, &line))?;
+            let time = tui::duration(ms);
+            let preview = preview_lines(&preview);
+            if ok {
+                let line = format!("✓ {} · {time}", preview.trim_end());
+                writeln!(out, "  {}", palette.paint(role, &line))?;
+            } else {
+                // The failure reason starts on its own indented line.
+                writeln!(out, "  {}", palette.paint(role, &format!("✗ {time}")))?;
+                for line in preview.lines() {
+                    writeln!(out, "    {}", palette.paint(role, line.trim_end()))?;
+                }
+            }
             if verbose && !output.is_empty() {
                 for line in preview_lines(&output).lines() {
                     writeln!(out, "  {}", palette.paint(tui::Role::Thinking, line))?;
@@ -809,7 +818,7 @@ mod tests {
         .unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("{\"command\":\"ls\"}"), "{text}");
-        assert!(text.contains("✓ total 8") && text.contains("  foo"), "{text}");
+        assert!(text.contains("✓ total 8 · 4ms") && text.contains("  foo"), "{text}");
 
         let mut low = Vec::new();
         print_ui_to(
@@ -825,6 +834,29 @@ mod tests {
         .unwrap();
         let low = String::from_utf8(low).unwrap();
         assert!(!low.contains("command"), "{low}");
+    }
+
+    #[test]
+    fn line_mode_failure_preview_sits_on_its_own_line() {
+        let palette = tui::Palette::detect(&config::Config::default());
+        let mut out = Vec::new();
+        print_ui_to(
+            &mut out,
+            Ui::ToolEnd {
+                ok: false,
+                preview: "exit 1 hi ".into(),
+                output: String::new(),
+                detail: String::new(),
+                ms: 1400,
+            },
+            false,
+            &palette,
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let plain: String = text.split('\x1b').map(|p| p.split_once('m').map_or(p, |(_, r)| r)).collect();
+        assert!(plain.contains("  ✗ 1.4s\n    exit 1 hi\n"), "{plain:?}");
+        assert!(!plain.lines().any(|l| l.ends_with(' ')), "{plain:?}");
     }
 
     #[test]
