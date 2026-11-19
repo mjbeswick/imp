@@ -27,6 +27,13 @@
   remainder is empty.
 - Free-text arguments stay in the composer: `/stash`, `/rename`, `/provider
   add`, and a non-empty `/cd` or `/image` path.
+- `PickItem` gains an optional description. The command list fills it from
+  `COMMANDS`. The overlay pads the label to the longest visible name plus two
+  spaces, never narrower than twelve columns, then writes the description and
+  clips the combined row to the interior width. Other pickers leave the field
+  empty and render as they do now.
+- Filtering stays on the label so a description word cannot pull in an
+  unrelated command.
 - The overlay draws the real cursor on the filter row with absolute addressing
   and `\x1b[?25h`; every frame starts hidden, and closing the overlay leaves
   the composer cursor alone. If the box does not fit, no overlay and no cursor
@@ -41,3 +48,5 @@
   composer reads `/theme gru`.
 - `/stash note` sends no picker.
 - The overlay frame contains the cursor placement and visibility sequence.
+- Command rows align their descriptions and keep the name whole in a narrow
+  box.

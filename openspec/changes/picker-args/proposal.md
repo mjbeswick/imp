@@ -18,6 +18,8 @@ the line shown in the box.
   `/provider`, `/cd`, and `/image`.
 - The picker filter takes the keyboard and draws a visible cursor in the filter
   line; typed characters append to the command line after the prefix.
+- Command rows become two columns: the command name on the left and its
+  one-line description on the right.
 - Commands with free text (`/stash`, `/rename`, and a typed `/cd` or `/image`
   path) keep the composer.
 
@@ -31,6 +33,7 @@ the line shown in the box.
 
 ## Impact
 
-- `src/tui.rs`: browser bounds, argument detection, picker prefix and cursor.
+- `src/tui.rs`: browser bounds, argument detection, picker prefix and cursor,
+  and two-column command rows.
 - `openspec/specs/picker/spec.md` and `openspec/specs/tui/spec.md`.
 - `README.md`.

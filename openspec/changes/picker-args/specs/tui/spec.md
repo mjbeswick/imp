@@ -29,3 +29,25 @@ The system SHALL open the picker overlay when the input begins with `/`, SHALL s
 #### Scenario: Free text
 - **WHEN** the user types `/stash remember the tests`
 - **THEN** no picker opens and the whole text is stashed on Enter
+
+## ADDED Requirements
+
+### Requirement: Autocomplete rows show a description
+
+The system SHALL render every command row as two columns, SHALL put the command name in the left column and its one-line description in the right column, SHALL align the right column across rows, SHALL never truncate the command name, SHALL clip a description that does not fit, SHALL apply the selection highlight across both columns, and SHALL match the filter against the command name only.
+
+#### Scenario: Two columns
+- **WHEN** the user types `/`
+- **THEN** `/compact` sits on the left and `compact the conversation now` on the right
+
+#### Scenario: Alignment
+- **WHEN** rows of different name lengths are listed
+- **THEN** every description starts at the same column
+
+#### Scenario: Narrow terminal
+- **WHEN** the box is too narrow for a description
+- **THEN** the description is cut and the command name stays whole
+
+#### Scenario: Filter
+- **WHEN** the user types `/co`
+- **THEN** matching uses the command name, not words in its description
