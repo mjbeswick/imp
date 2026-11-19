@@ -219,7 +219,7 @@ The system SHALL retry a search or fetch once on 429, 408, or 5xx, SHALL report 
 
 ### Requirement: Shell commands run in the session root
 
-The system SHALL start every `bash` command in the session root, SHALL take that root from `-C, --cwd <PATH>` when given and from the launch directory otherwise, SHALL resolve a relative `--cwd` against the launch directory, SHALL refuse a missing or non-directory value before any request is sent, and SHALL root the path jail and typed `!` commands at the same directory.
+The system SHALL start every `bash` command in the session root, SHALL take that root from `-C, --cwd <PATH>` when given, from `/cd` when entered, and from the launch directory otherwise, SHALL resolve a relative `--cwd` against the launch directory and a relative `/cd` against the current root, SHALL refuse a missing or non-directory value before any request is sent, and SHALL move the path jail and typed `!` commands to the same directory.
 
 #### Scenario: Default root
 - **WHEN** the user runs `imp` from a project directory and the model runs `pwd`
@@ -228,6 +228,10 @@ The system SHALL start every `bash` command in the session root, SHALL take that
 #### Scenario: Chosen root
 - **WHEN** the user runs `imp --cwd ~/Projects/imp` and the model runs `ls`
 - **THEN** the listing is of `~/Projects/imp`, not the launch directory
+
+#### Scenario: Changed root
+- **WHEN** the user runs `/cd /tmp` and the model then runs `pwd`
+- **THEN** the command prints `/tmp`
 
 #### Scenario: Relative root
 - **WHEN** the user runs `imp -C ..` from `~/Projects/imp`

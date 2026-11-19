@@ -553,13 +553,13 @@ The system SHALL draw `[text](url)` as the link text wrapped in an OSC 8 hyperli
 - **WHEN** `links=never`
 - **THEN** no OSC 8 sequence is emitted and links render as text with the URL
 
-### Requirement: Ten slash commands, no more
+### Requirement: Twelve slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all ten commands appear with a one-line description
+- **THEN** all twelve commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -588,6 +588,46 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reloa
 #### Scenario: Line mode
 - **WHEN** the user runs `/help` in line mode
 - **THEN** it prints the same list as a plain block
+
+### Requirement: The session root can be inspected and changed
+
+The system SHALL print the session root for `/cwd`, SHALL change it for `/cd <path>`, SHALL expand a leading `~`, SHALL resolve a relative path against the current root, SHALL refuse a missing path or a file without changing anything, SHALL keep the conversation, SHALL reload instructions, skills, memory, and the system prompt, and SHALL report the new root and the cache reset.
+
+#### Scenario: Show the root
+- **WHEN** the user runs `/cwd`
+- **THEN** the transcript shows the absolute path the session is rooted at
+
+#### Scenario: Change the root
+- **WHEN** the user runs `/cd /Users/michael/Projects/imp`
+- **THEN** the transcript names the new root and says the prompt cache was reset
+
+#### Scenario: Tilde
+- **WHEN** the user runs `/cd ~/Projects`
+- **THEN** the root becomes the home directory joined with `Projects`
+
+#### Scenario: Relative path
+- **WHEN** the user runs `/cd ..` from `~/Projects/imp`
+- **THEN** the root becomes `~/Projects`
+
+#### Scenario: Missing path
+- **WHEN** the user runs `/cd /nope`
+- **THEN** the transcript reports that the directory does not exist and the root is unchanged
+
+#### Scenario: A file
+- **WHEN** the user runs `/cd Cargo.toml`
+- **THEN** the transcript reports that the path is not a directory and the root is unchanged
+
+#### Scenario: Bare command
+- **WHEN** the user runs `/cd` with no path
+- **THEN** the transcript shows the usage `cd <path>` and nothing changes
+
+#### Scenario: History kept
+- **WHEN** the root changes after several turns
+- **THEN** the conversation is still present and the next request carries the new instructions
+
+#### Scenario: No model request
+- **WHEN** either command runs
+- **THEN** nothing is sent to the model
 
 ### Requirement: Verbosity controls tool detail
 
