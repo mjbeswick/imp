@@ -23,7 +23,7 @@
 ## 4. Picker
 
 - [x] 4.1 Redraw the overlay with rounded corners, edge title and footer, a filter row, and the 72-column cap. Verify: overlay tests for corners, edges, widths at 50 and 200 columns, and cursor position.
-- [ ] 4.2 Keep the right column whole and cut labels. Verify: a long session title is cut and its message count is whole.
+- [x] 4.2 Keep the right column whole and cut labels. Verify: a long session title is cut and its message count is whole.
 
 ## 5. Modals
 

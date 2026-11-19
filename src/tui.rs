@@ -898,11 +898,11 @@ fn command_items() -> Vec<PickItem> {
 
 /// One list row: mark, label, and an aligned description when the picker has
 /// any.
-fn picker_row(picker: &Picker, at: usize, index: usize) -> String {
+fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize) -> String {
     let item = &picker.items[index];
     let marker = if at == picker.index { "▸" } else { " " };
     if picker.items.iter().any(|item| !item.desc.is_empty()) {
-        let left = picker
+        let mut left = picker
             .items
             .iter()
             .map(|item| item.label.chars().count())
@@ -910,7 +910,14 @@ fn picker_row(picker: &Picker, at: usize, index: usize) -> String {
             .unwrap_or(0)
             .max(10)
             + 2;
-        format!("{marker} {:<left$}  {}", item.label, item.desc)
+        let mut label = item.label.clone();
+        if picker.kind != PickKind::Command {
+            // The right column stays whole; the label gives way.
+            let desc = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+            left = left.min(inner.saturating_sub(2 + 2 + desc)).max(4);
+            label = fit(&label, left);
+        }
+        format!("{marker} {label:<left$}  {}", item.desc)
     } else {
         format!("{marker} {}", item.label)
     }
@@ -3039,7 +3046,7 @@ impl App {
                 "  no matches".to_string()
             } else {
                 match matches.get(at) {
-                    Some(&item) => picker_row(picker, at, item),
+                    Some(&item) => picker_row(picker, at, item, inner),
                     None => String::new(),
                 }
             };
@@ -4718,6 +4725,26 @@ mod tests {
     }
 
     #[test]
+    fn a_long_label_gives_way_to_the_right_column() {
+        let items = ["short", &"a very long session title ".repeat(4)]
+            .iter()
+            .enumerate()
+            .map(|(i, t)| PickItem {
+                label: t.to_string(),
+                value: i.to_string(),
+                actions: Vec::new(),
+                desc: format!("{} msgs", 10 + i * 50),
+            })
+            .collect();
+        let picker = Picker::new("sessions", items, PickKind::Session);
+        let short = picker_row(&picker, 0, 0, 50);
+        let long = picker_row(&picker, 1, 1, 50);
+        assert!(long.contains('…') && long.ends_with("60 msgs"), "{long}");
+        assert!(long.chars().count() <= 50, "{long}");
+        assert_eq!(short.find("10 msgs"), long.find("60 msgs"), "{short}\n{long}");
+    }
+
+    #[test]
     fn command_rows_show_aligned_descriptions() {
         let picker = Picker::new("commands", command_items(), PickKind::Command);
         let row = |label: &str| {
@@ -4726,7 +4753,7 @@ mod tests {
                 .iter()
                 .position(|item| item.label == label)
                 .unwrap_or_else(|| panic!("no row {label}"));
-            picker_row(&picker, at, at)
+            picker_row(&picker, at, at, 70)
         };
         let compact = row("/compact");
         let help = row("/help");

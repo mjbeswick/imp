@@ -78,11 +78,15 @@ The system SHALL draw the picker as a centred block with rounded corners over th
 
 ### Requirement: Picker columns stay aligned
 
-The system SHALL align a picker's right column across its rows, SHALL keep the right column whole and cut the left label with `…` when a row does not fit, and SHALL list sessions with id, age, and title on the left and the message count on the right.
+The system SHALL align a picker's right column across its rows, SHALL keep the right column whole and cut the left label with `…` when a row does not fit, except in the command picker, where the command name stays whole and its description is cut, and SHALL list sessions with id, age, and title on the left and the message count on the right.
 
 #### Scenario: Long session title
 - **WHEN** a session title is wider than the picker allows
 - **THEN** the title ends in `…` and its message count is whole
+
+#### Scenario: Command names stay whole
+- **WHEN** the command picker is too narrow for a description
+- **THEN** the command name is whole and the description is cut
 
 #### Scenario: Aligned counts
 - **WHEN** sessions with titles of different lengths are listed
