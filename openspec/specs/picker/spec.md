@@ -7,11 +7,15 @@ Lets the user choose command values and paths in a centred overlay instead of ty
 
 ### Requirement: One picker serves command values
 
-The system SHALL provide a single picker with a title, a filter line, a scrolling list, a highlighted row, and a cancel action, SHALL open it for `/agent`, `/sessions`, and `/verbosity` when no value is given, SHALL apply a typed value directly without opening it, SHALL filter case-insensitively as the user types, SHALL move with Up/Down and page with PgUp/PgDn, SHALL choose with Enter, and SHALL cancel with Esc without changing anything.
+The system SHALL provide a single picker with a title, a filter, a scrolling list, a highlighted row, and cancel, SHALL open it for `/agent`, `/sessions`, `/verbosity`, and `/model` with no value, and after a command word and space when that command has values, SHALL apply a typed value directly, SHALL filter case-insensitively, SHALL move with Up/Down and page with PgUp/PgDn, SHALL choose with Enter, and SHALL cancel with Esc unchanged.
 
 #### Scenario: Agent picker
 - **WHEN** the user runs `/agent`
 - **THEN** the profile list opens with the current profile highlighted
+
+#### Scenario: Value after the word
+- **WHEN** the user types `/agent ` and then `rev`
+- **THEN** the agent picker opens, the filter holds `rev`, and the profiles narrow
 
 #### Scenario: Typed value
 - **WHEN** the user runs `/agent reviewer`
@@ -29,33 +33,13 @@ The system SHALL provide a single picker with a title, a filter line, a scrollin
 - **WHEN** the user presses Esc
 - **THEN** the picker closes and the session is unchanged
 
+#### Scenario: Free text stays in the composer
+- **WHEN** the user types `/stash ` or `/rename `
+- **THEN** no picker opens and the composer keeps the text
+
 #### Scenario: Empty result
 - **WHEN** the filter matches nothing
 - **THEN** the list shows a no-match row and Enter does nothing
-
-### Requirement: Directory picker stays inside the session root
-
-The system SHALL open a directory browser for `/cd` with no argument, SHALL show directories under the current session root with parent navigation, SHALL enter the highlighted directory on Enter, SHALL select it on Tab and close, SHALL go to the parent on Left, SHALL refuse to go above the session root, and SHALL change the root only after the selection succeeds.
-
-#### Scenario: Enter navigates
-- **WHEN** the highlight is on `src/` and the user presses Enter
-- **THEN** the browser lists `src/` and the session root is unchanged
-
-#### Scenario: Tab selects
-- **WHEN** the highlight is on `src/` and the user presses Tab
-- **THEN** the picker closes and the session root becomes the absolute path of `src/`
-
-#### Scenario: Parent
-- **WHEN** the user presses Left inside `src/`
-- **THEN** the browser returns to the directory above while staying at or below the session root
-
-#### Scenario: Root boundary
-- **WHEN** the browser is at the session root and the user presses Left
-- **THEN** nothing moves
-
-#### Scenario: Typed path
-- **WHEN** the user runs `/cd ~/Projects/imp`
-- **THEN** the root changes directly and no browser opens
 
 ### Requirement: Image picker attaches a file
 
@@ -108,3 +92,51 @@ The system SHALL allow a picker row to declare single-key actions, SHALL show th
 #### Scenario: Footer
 - **WHEN** a picker has row actions
 - **THEN** the footer lists each key and its action next to Enter and Esc
+
+### Requirement: Directory picker can climb above the session root
+
+The system SHALL open a directory browser for `/cd` with no argument, SHALL start it at the current session root, SHALL show directories under the browsed directory, SHALL enter the highlighted directory on Enter, SHALL select it on Tab and close, SHALL go to the parent on Left, SHALL allow Left above the session root up to the filesystem root, and SHALL change the root only after the selection succeeds.
+
+#### Scenario: Enter navigates
+- **WHEN** the highlight is on `src/` and the user presses Enter
+- **THEN** the browser lists `src/` and the session root is unchanged
+
+#### Scenario: Tab selects
+- **WHEN** the highlight is on `src/` and the user presses Tab
+- **THEN** the picker closes and the session root becomes the absolute path of `src/`
+
+#### Scenario: Parent
+- **WHEN** the user presses Left inside `src/`
+- **THEN** the browser returns to the directory above it
+
+#### Scenario: Above the root
+- **WHEN** the browser is at the session root and the user presses Left
+- **THEN** it lists the parent directory, and Tab there makes that parent the session root
+
+#### Scenario: Filesystem root
+- **WHEN** the browser is at `/` and the user presses Left
+- **THEN** nothing moves
+
+#### Scenario: Typed path
+- **WHEN** the user runs `/cd ~/Projects/imp`
+- **THEN** the root changes directly and no browser opens
+
+### Requirement: The picker filter takes focus and shows a cursor
+
+The system SHALL put the keyboard focus in the picker filter while the overlay is open, SHALL draw a visible cursor at the end of the filter text, SHALL append typed characters and remove them with Backspace, SHALL hide the cursor again when the overlay closes, and SHALL leave the terminal unchanged when the overlay does not fit.
+
+#### Scenario: Cursor
+- **WHEN** the picker opens with an empty filter
+- **THEN** a cursor is visible in the filter line
+
+#### Scenario: Typing
+- **WHEN** the user types `rev`
+- **THEN** the filter reads `rev` with the cursor after it and the list narrows
+
+#### Scenario: Backspace
+- **WHEN** the filter is `rev` and the user presses Backspace
+- **THEN** the filter reads `re` and the cursor sits after `e`
+
+#### Scenario: Close
+- **WHEN** the picker closes
+- **THEN** the cursor returns to the composer and no cursor remains in the overlay region
