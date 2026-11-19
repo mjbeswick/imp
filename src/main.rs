@@ -399,6 +399,13 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         }
                     }
                 }
+                other if other.starts_with("sessions ") => {
+                    let id = other["sessions".len()..].trim();
+                    match session.resume_id(sessions_dir, id) {
+                        Ok(()) => println!("resumed {id} ({} messages)", session.history.len()),
+                        Err(e) => eprintln!("imp: {e}"),
+                    }
+                }
                 "sessions" => {
                     for m in store::Log::list(&sessions_dir) {
                         println!("{:<12} {:<40} {:>5} msgs", m.id, m.title, m.messages);

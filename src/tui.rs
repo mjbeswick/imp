@@ -2230,6 +2230,11 @@ impl App {
                 self.pending = Some(Pending::Pick(self.session_picker()));
                 self.dirty = true;
             }
+            other if other.starts_with("sessions ") => {
+                let id = other["sessions".len()..].trim().to_string();
+                self.entries.clear();
+                let _ = tx.send(Cmd::Resume(id));
+            }
             "compact" => {
                 let _ = tx.send(Cmd::Compact);
                 self.push(Role::Info, "compacting…");
@@ -5682,6 +5687,17 @@ mod tests {
         assert!(user < tool && tool < reply, "{frame}");
         assert!(!frame.contains("prompt"), "{frame}");
         assert!(!frame.contains(" 0 tok"), "{frame}");
+    }
+
+    #[test]
+    fn a_typed_session_id_resumes() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("sessions 51280befc", &tx);
+        match rx.try_recv() {
+            Ok(Cmd::Resume(id)) => assert_eq!(id, "51280befc"),
+            _ => panic!("expected a resume command"),
+        }
     }
 
     #[test]
