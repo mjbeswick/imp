@@ -37,6 +37,11 @@ one row, and the session list loses its columns when a title is long.
 - Line mode fixes: `!cmd` runs locally instead of reaching the model, and a
   failure preview sits on its own line.
 
+- One pattern for every slash command: value commands open a picker bare and
+  apply a typed value, Tab completes and opens values, `/sessions <id>`
+  resumes, errors use the error role, and settings confirm as
+  `setting: value` in both front-ends.
+
 ## Out of Scope
 
 - `/help` layout: the open `help-format` change covers it.

@@ -87,3 +87,43 @@ The system SHALL paint an open confirmation, question, or input prompt in the ac
 #### Scenario: Text prompt caret
 - **WHEN** `/rename` asks for a title
 - **THEN** the caret is the composer's block caret, not an underscore
+
+### Requirement: Value commands share one form
+
+The system SHALL treat `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` as value commands: bare, the chat SHALL open the picker on the current entry and line mode SHALL print aligned rows with `current` beside the active one; a typed value SHALL apply directly in both front-ends, and `/sessions <id>` SHALL resume that session.
+
+#### Scenario: Line-mode values
+- **WHEN** the user runs `/theme` in line mode
+- **THEN** each theme prints on its own row and the active one has `current` beside it
+
+#### Scenario: Resume by id
+- **WHEN** the user runs `/sessions 51280befc`
+- **THEN** that session is resumed as if picked
+
+### Requirement: Tab completes slash commands
+
+The system SHALL complete the highlighted command on Tab in the command picker, SHALL then open its picker when it is a value command, SHALL leave `/{name} ` in the composer when it takes free text, and SHALL leave `/{name}` unrun when it takes no argument.
+
+#### Scenario: Tab opens values
+- **WHEN** the user types `/th` and presses Tab
+- **THEN** the composer holds `/theme ` and the theme picker is open with the current theme highlighted
+
+#### Scenario: Tab on free text
+- **WHEN** the user types `/ren` and presses Tab
+- **THEN** the composer holds `/rename ` and no picker is open
+
+#### Scenario: Tab on a bare command
+- **WHEN** the user types `/comp` and presses Tab
+- **THEN** the composer holds `/compact` and nothing runs until Enter
+
+### Requirement: Command replies are consistent
+
+The system SHALL report an unknown command or value in the error role with the nearest command or the valid values, and SHALL confirm a setting change as `{setting}: {value}` in both front-ends.
+
+#### Scenario: Unknown value
+- **WHEN** the user runs `/verbosity loud` or `/nope`
+- **THEN** the reply is in the error role and names the valid values or the nearest command
+
+#### Scenario: Toggle feedback
+- **WHEN** the user runs `/think`
+- **THEN** both front-ends reply `thinking: on` or `thinking: off`
