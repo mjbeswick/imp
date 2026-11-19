@@ -520,6 +520,21 @@ impl Session {
         Ok(())
     }
 
+    /// Switch the session to another root, reloading everything that depends
+    /// on it and recording the change for a later resume.
+    pub fn set_root(&mut self, root: std::path::PathBuf) -> Result<(), String> {
+        if !root.is_dir() {
+            return Err(format!("{}: not a directory", root.display()));
+        }
+        self.tools.root = root;
+        self.reload()?;
+        if let Some(log) = &self.log {
+            log.set_cwd(&self.tools.root)?;
+            log.event("cwd", &self.tools.root.display().to_string());
+        }
+        Ok(())
+    }
+
     /// Switch between the launch mode and `yolo` for this session only.
     pub fn toggle_yolo(&mut self) -> &'static str {
         let next = if self.cfg.permissions == Permissions::Yolo {

@@ -340,6 +340,23 @@ impl Log {
             })
     }
 
+    pub fn meta_cwd(&self) -> Option<PathBuf> {
+        let cwd = self.meta().cwd;
+        if cwd.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(cwd))
+        }
+    }
+
+    pub fn set_cwd(&self, path: &Path) -> Result<(), String> {
+        let mut meta = self.meta();
+        meta.cwd = path.display().to_string();
+        meta.updated = now();
+        self.write_meta(&meta);
+        Ok(())
+    }
+
     fn write_meta(&self, meta: &Meta) {
         let v = serde_json::json!({
             "id": meta.id,

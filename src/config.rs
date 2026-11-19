@@ -227,6 +227,38 @@ fn env_dir(var: &str, fallback: &str) -> PathBuf {
     PathBuf::from(home).join(fallback)
 }
 
+/// Resolve a session root. `None` keeps the base. A leading `~` or `~/`
+/// expands to HOME, a relative path joins the base, and the result must be an
+/// existing directory.
+pub fn resolve_root(raw: Option<&str>, base: &Path) -> Result<PathBuf, String> {
+    let Some(raw) = raw else {
+        return Ok(base.to_path_buf());
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("empty path".into());
+    }
+    let expanded = if raw == "~" || raw.starts_with("~/") {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| "HOME is not set".to_string())?;
+        PathBuf::from(home).join(raw.trim_start_matches('~').trim_start_matches('/'))
+    } else {
+        PathBuf::from(raw)
+    };
+    let path = if expanded.is_absolute() {
+        expanded
+    } else {
+        base.join(expanded)
+    };
+    let resolved = path
+        .canonicalize()
+        .map_err(|_| format!("{}: not a directory", path.display()))?;
+    if !resolved.is_dir() {
+        return Err(format!("{}: not a directory", path.display()));
+    }
+    Ok(resolved)
+}
+
 fn parse_bool(s: &str) -> Result<bool, String> {
     match s.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
@@ -316,5 +348,26 @@ mod tests {
     fn base_url_trailing_slash_is_trimmed() {
         let cfg = Config::from_str("base_url=https://example.test/\n").unwrap();
         assert_eq!(cfg.base_url, "https://example.test");
+    }
+
+    #[test]
+    fn root_resolver_handles_tilde_relative_and_missing() {
+        let base = std::env::temp_dir();
+        assert_eq!(resolve_root(None, &base).unwrap(), base);
+        assert_eq!(
+            resolve_root(Some("."), &base).unwrap(),
+            base.canonicalize().unwrap()
+        );
+        let home = std::env::var_os("HOME").expect("HOME");
+        assert_eq!(
+            resolve_root(Some("~"), &base).unwrap(),
+            PathBuf::from(home).canonicalize().unwrap()
+        );
+        assert!(resolve_root(Some("/nope/imp-missing"), &base).is_err());
+
+        let file = base.join(format!("imp-root-file-{}", std::process::id()));
+        std::fs::write(&file, "x").unwrap();
+        assert!(resolve_root(Some(file.to_str().unwrap()), &base).is_err());
+        let _ = std::fs::remove_file(file);
     }
 }
