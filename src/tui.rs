@@ -936,6 +936,9 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize) -> String 
     }
 }
 
+/// Commands whose argument is typed rather than picked.
+const FREE_TEXT: &[&str] = &["stash", "rename"];
+
 /// Rows the picker shows at once. Paging moves by the same amount.
 const PICK_ROWS: usize = 8;
 
@@ -1706,6 +1709,25 @@ impl App {
 
     /// The picker for a command argument, the composer prefix it mirrors, and
     /// the text that starts as its filter.
+    /// The newest twenty sessions, with their row actions.
+    fn session_picker(&self) -> Picker {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut options: Vec<PickItem> = crate::store::Log::list(&self.sessions_dir)
+            .into_iter()
+            .map(|m| PickItem {
+                label: crate::store::format_session(&m, now),
+                value: m.id,
+                actions: Vec::new(),
+                desc: String::new(),
+            })
+            .collect();
+        options.truncate(20);
+        Picker::new("sessions", options, PickKind::Session)
+    }
+
     /// The value a picker of this kind should open on.
     fn current_value(&self, kind: PickKind) -> String {
         match kind {
@@ -1763,6 +1785,7 @@ impl App {
                     _ => None,
                 }
             }
+            "sessions" => Some((self.session_picker(), "/sessions ".into(), rest.to_string())),
             "cd" if rest.is_empty() => Some((
                 Picker::browse("cd", PickKind::Dir, &self.root),
                 String::new(),
@@ -2204,25 +2227,7 @@ impl App {
                 self.push(Role::Info, "reloading instructions and skills…");
             }
             "sessions" => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let mut options: Vec<PickItem> = crate::store::Log::list(&self.sessions_dir)
-                    .into_iter()
-                    .map(|m| PickItem {
-                        label: crate::store::format_session(&m, now),
-                        value: m.id,
-                        actions: Vec::new(),
-                desc: String::new(),
-            })
-                    .collect();
-                options.truncate(20);
-                self.pending = Some(Pending::Pick(Picker::new(
-                    "sessions",
-                    options,
-                    PickKind::Session,
-                )));
+                self.pending = Some(Pending::Pick(self.session_picker()));
                 self.dirty = true;
             }
             "compact" => {
@@ -2598,8 +2603,19 @@ impl App {
                     Key::Char(c) => picker.filter_push(c),
                     Key::Tab if picker.kind == PickKind::Command => {
                         if let Some(choice) = picker.selected() {
-                            self.input = choice.value.clone();
+                            let word = choice.value.trim_start_matches('/').to_string();
+                            let values = self.argument_picker(&word, "").is_some();
+                            // Values open their picker, free text gets its
+                            // space, and a bare command waits for Enter.
+                            self.input = if values || FREE_TEXT.contains(&word.as_str()) {
+                                format!("/{word} ")
+                            } else {
+                                format!("/{word}")
+                            };
                             self.cursor = self.input.len();
+                            if values {
+                                self.sync_menu();
+                            }
                         }
                         self.dirty = true;
                         return;
@@ -4773,7 +4789,8 @@ mod tests {
 
     #[test]
     fn a_space_in_a_value_filter_hands_the_line_back() {
-        let (mut a, _path) = provider_app();
+        let mut a = app();
+        a.config_path = scratch("providers-space").join("config");
         let (tx, _rx) = channel();
         for c in "/provider add work".chars() {
             a.handle_key(Key::Char(c), &tx);
@@ -5579,6 +5596,37 @@ mod tests {
         a.handle_key(Key::Enter, &tx);
         assert!(matches!(rx.try_recv(), Ok(Cmd::Compact)));
         assert!(a.input.is_empty(), "the input did not clear");
+    }
+
+    #[test]
+    fn tab_completes_and_opens_values() {
+        let type_tab = |text: &str| {
+            let mut a = app();
+            let (tx, _rx) = channel();
+            for c in text.chars() {
+                a.handle_key(Key::Char(c), &tx);
+            }
+            a.handle_key(Key::Tab, &tx);
+            a
+        };
+        let a = type_tab("/the");
+        assert_eq!(a.input, "/theme ");
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Theme);
+        assert_eq!(picker.items[picker.index].value, a.palette.theme_name());
+
+        let a = type_tab("/ren");
+        assert_eq!(a.input, "/rename ");
+        assert!(a.pending.is_none());
+
+        let a = type_tab("/comp");
+        assert_eq!(a.input, "/compact");
+        assert!(a.pending.is_none());
+        assert!(!a.entries.iter().any(|e| e.text.contains("compacting")));
+
+        let a = type_tab("/sess");
+        assert_eq!(a.input, "/sessions ");
+        assert_eq!(open_picker(&a).kind, PickKind::Session);
     }
 
     #[test]

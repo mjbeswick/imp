@@ -105,7 +105,7 @@ The system SHALL treat `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, 
 The system SHALL complete the highlighted command on Tab in the command picker, SHALL then open its picker when it is a value command, SHALL leave `/{name} ` in the composer when it takes free text, and SHALL leave `/{name}` unrun when it takes no argument.
 
 #### Scenario: Tab opens values
-- **WHEN** the user types `/th` and presses Tab
+- **WHEN** the user types `/the` and presses Tab
 - **THEN** the composer holds `/theme ` and the theme picker is open with the current theme highlighted
 
 #### Scenario: Tab on free text
