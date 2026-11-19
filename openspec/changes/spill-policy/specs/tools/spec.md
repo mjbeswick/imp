@@ -12,7 +12,7 @@
 
 ### Requirement: Large results are buffered
 
-The system SHALL return at most 4 KB inline from a command, job wait, or fetch result, SHALL keep the full command and fetch output in a memory buffer addressed as `imp://out/<n>`, SHALL include that address, the byte count, and a hint to read a range, SHALL cap the buffers at 16 MB and evict the least recently used, SHALL report an expired buffer by name, and SHALL NOT buffer a `read` result: a long read returns a head and tail with a hint to use offset and limit.
+The system SHALL return at most 4 KB inline from a command, job wait, or fetch result, SHALL keep the full output in a buffer addressed as `imp://out/<n>`, SHALL hold buffers in memory up to 16 MB, SHALL demote the least-recently-used buffer to an unlinked temporary file when memory is full, SHALL cap unlinked spill at 64 MB and drop the oldest file-backed buffer past it, SHALL include the address, the byte count, and a hint to read a range, and SHALL report an expired buffer by name.
 
 #### Scenario: Big command output
 - **WHEN** a command writes 1 MB to stdout
@@ -22,21 +22,29 @@ The system SHALL return at most 4 KB inline from a command, job wait, or fetch r
 - **WHEN** the model reads `imp://out/3` with offset and limit
 - **THEN** it receives that slice with line numbers and no filesystem access
 
+#### Scenario: Demotion keeps the id
+- **WHEN** memory is full and the oldest buffer is demoted to a temporary file
+- **THEN** reading its address still returns the text and no file appears in any directory
+
+#### Scenario: Spill cap
+- **WHEN** file-backed buffers exceed 64 MB
+- **THEN** the oldest is dropped and its address reports expiry
+
 #### Scenario: Expired buffer
-- **WHEN** an address was evicted
+- **WHEN** an address was dropped
 - **THEN** the result says the buffer expired and names the address
-
-#### Scenario: Read does not buffer
-- **WHEN** a `read` result exceeds 4 KB
-- **THEN** the result holds a head and tail with a hint to use offset and limit, and no buffer is created
-
-#### Scenario: Eviction
-- **WHEN** buffers total more than 16 MB
-- **THEN** the oldest used buffer is dropped first
 
 #### Scenario: New session
 - **WHEN** the user runs `/new`
 - **THEN** all buffers are cleared and old addresses report expiry
+
+### Requirement: Long reads are trimmed
+
+The system SHALL NOT buffer a `read` result: a read longer than 4 KB SHALL return a head and a tail with a hint to use offset and limit, and SHALL create no buffer.
+
+#### Scenario: Read does not buffer
+- **WHEN** a `read` result exceeds 4 KB
+- **THEN** the result holds a head and tail with a hint to use offset and limit, and no buffer is created
 
 ### Requirement: Job logs stay readable
 

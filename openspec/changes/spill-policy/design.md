@@ -11,17 +11,26 @@
 
 ## Decisions
 
-- `Tools` owns `buffers: HashMap<u64, String>`, an order list, a byte total, a
-  next id, and a 16 MB cap. Storing an output evicts least-recently-used ids
-  until it fits; a single output is already capped at 1 MB at capture.
+- `Tools` owns a buffer map, an order list, a memory byte total, a spill byte
+  total, a next id, and two caps: 16 MB of memory and 64 MB of unlinked spill.
+- A buffer is either `Memory(String)` or `File(File)`. Storing an output puts
+  it in memory when it fits. Otherwise the least-recently-used memory buffers
+  are demoted to temporary files until it fits.
+- Demotion creates a temp file, writes the text, seeks to zero, then unlinks it
+  while the handle stays open. The id keeps working, nothing appears in a
+  directory, no jail exception is needed, and the storage is freed when the
+  handle closes or the process exits. A crash leaves nothing because the file
+  was unlinked at creation.
+- Past the 64 MB spill cap, the oldest file-backed buffer is closed and dropped;
+  its id reports expiry.
+- `read` checks for the `imp://out/` prefix before path resolution. A memory
+  buffer is sliced directly. A file buffer is read through `&File` with
+  `BufReader`, skipping to the offset and taking the limit, with the same line
+  numbers and 200 KB ceiling. Neither touches the jail or `read_paths`.
 - `cap` keeps its name for command, job-wait, and fetch results. On overflow it
   stores the text and returns the 2 KB head, 1 KB tail, byte count, and
   `imp://out/<n>` with a hint to read a range. `trim` is the same head and tail
   without storing, and says to use offset and limit.
-- `read` checks for the `imp://out/` prefix before path resolution. A virtual
-  read applies the same offset, limit, line numbers, and 200 KB ceiling as a
-  file, and reports `buffer imp://out/3 expired` when the id is gone. It never
-  touches the jail or `read_paths`.
 - The model cannot grep a virtual buffer with `bash`; the hint says to read a
   range, or re-run the command narrowed. This is honest and avoids promising a
   search path that does not exist.
@@ -34,6 +43,7 @@
 - Prompt lines:
   `- Results over 4 KB go to a buffer: you get a head, a tail, and imp://out/<n>. Read that address with offset and limit when you need more.`
   `- read, edit, and write reach only the session directory. bash is not jailed, so keep commands inside the project unless the user asks otherwise.`
-- Tests cover: storing and slicing, offset and limit, expiry after eviction,
-  the 16 MB cap order, read never buffering, job logs readable, pruning an aged
-  and a fresh file, buffers cleared on new, and the two prompt lines.
+- Tests cover: storing and slicing, offset and limit, demotion keeping an id
+  readable, no file becoming visible, the spill cap expiring the oldest,
+  read never buffering, job logs readable, pruning an aged and a fresh file,
+  buffers cleared on new, and the two prompt lines.

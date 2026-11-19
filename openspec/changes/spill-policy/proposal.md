@@ -13,8 +13,10 @@ Writing command output to disk also creates litter with no cleanup, and a large
 
 ## What Changes
 
-- Keep command and fetch output over 4 KB in a memory buffer addressed as
-  `imp://out/<n>`, capped at 16 MB with least-recently-used eviction.
+- Keep command and fetch output over 4 KB in a buffer addressed as
+  `imp://out/<n>`, held in memory up to 16 MB. When memory is full, demote the
+  least-recently-used buffer to an unlinked temporary file; cap that spill at
+  64 MB and drop the oldest file-backed buffer past it.
 - Let `read` accept that address with offset and limit, and report an expired
   buffer when the id is gone.
 - Stop buffering `read` results: a long read returns a head and tail with a
