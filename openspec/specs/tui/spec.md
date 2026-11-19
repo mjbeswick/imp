@@ -383,7 +383,7 @@ The system SHALL render `--help` with titled sections (usage, sessions, running,
 
 ### Requirement: Slash commands autocomplete
 
-The system SHALL show a menu of matching commands as soon as the input begins with `/`, SHALL rank by prefix before substring, SHALL show at most eight rows with descriptions, and SHALL accept the highlighted entry with Tab or Enter.
+The system SHALL open the picker overlay when the input begins with `/`, SHALL show matching commands filtered by the typed text, SHALL rank prefix matches before substring matches, SHALL show a title and a footer naming Enter and Esc, and SHALL accept the highlighted entry with Tab or Enter.
 
 #### Scenario: Narrowing
 - **WHEN** the user types `/co`
@@ -391,7 +391,7 @@ The system SHALL show a menu of matching commands as soon as the input begins wi
 
 #### Scenario: Accept
 - **WHEN** the user presses Tab
-- **THEN** the highlighted command is completed in the input line and the menu closes
+- **THEN** the highlighted command is completed in the input line and the overlay closes
 
 #### Scenario: Run immediately
 - **WHEN** the user presses Enter on the highlighted command
@@ -399,7 +399,7 @@ The system SHALL show a menu of matching commands as soon as the input begins wi
 
 #### Scenario: Dismiss
 - **WHEN** the user presses Esc
-- **THEN** the menu closes and the typed text stays
+- **THEN** the overlay closes and the typed text stays
 
 ### Requirement: The interface uses colour with meaning
 
