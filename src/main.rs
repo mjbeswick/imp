@@ -163,7 +163,7 @@ fn run() -> Result<(), String> {
     let (result, id) = match prompt {
         Some(text) => {
             let mut session = session;
-            let result = session.turn(&text, &mut Cli);
+            let result = session.turn(&text, &mut Cli { verbose: false });
             let id = session.log.as_ref().map(|l| l.id.clone());
             (result, id)
         }
@@ -177,7 +177,8 @@ fn run() -> Result<(), String> {
                 }
             } else {
                 let mut session = session;
-                let result = repl(&mut session, &mut Cli, &sessions_dir);
+                let mut cli = Cli { verbose: false };
+                let result = repl(&mut session, &mut cli, &sessions_dir);
                 let id = session.log.as_ref().map(|l| l.id.clone());
                 (result, id)
             }
@@ -331,6 +332,20 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         println!("{:<12} {:<40} {:>5} msgs", m.id, m.title, m.messages);
                     }
                 }
+                other if other == "verbosity" || other.starts_with("verbosity ") => {
+                    match other.strip_prefix("verbosity").unwrap_or("").trim() {
+                        "" => println!("verbosity: {}", if cli.verbose { "high" } else { "low" }),
+                        "high" => {
+                            cli.verbose = true;
+                            println!("verbosity: high");
+                        }
+                        "low" => {
+                            cli.verbose = false;
+                            println!("verbosity: low");
+                        }
+                        level => println!("unknown verbosity {level:?}; use low or high"),
+                    }
+                }
                 other => println!("{}", help::unknown(other)),
             }
             continue;
@@ -342,11 +357,13 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
     }
 }
 
-struct Cli;
+struct Cli {
+    verbose: bool,
+}
 
 impl Hooks for Cli {
     fn ui(&mut self, event: Ui) {
-        print_ui(event)
+        print_ui(event, self.verbose)
     }
 
     fn confirm(&mut self, what: &str) -> bool {
@@ -380,28 +397,41 @@ impl Hooks for Cli {
     }
 }
 
-fn print_ui(event: Ui) {
+fn print_ui(event: Ui, verbose: bool) {
     let mut out = std::io::stdout();
+    print_ui_to(&mut out, event, verbose).ok();
+}
+
+fn print_ui_to<W: Write>(out: &mut W, event: Ui, verbose: bool) -> std::io::Result<()> {
     match event {
         Ui::Content(t) => {
-            print!("{t}");
+            write!(out, "{t}")?;
             out.flush().ok();
         }
         Ui::Reasoning(t) => {
             // Reasoning is collapsed unless asked for; a single marker is enough.
             let _ = t;
         }
-        Ui::ToolStart { name, summary, .. } => {
-            println!("\n\u{25b8} {summary}");
+        Ui::ToolStart { name, summary, args } => {
+            writeln!(out, "\n\u{25b8} {summary}")?;
+            if verbose && !args.is_empty() {
+                writeln!(out, "  {args}")?;
+            }
             let _ = name;
         }
-        Ui::ToolEnd { ok, preview, .. } => {
+        Ui::ToolEnd { ok, preview, output, .. } => {
             let mark = if ok { "" } else { "!" };
-            println!("  {mark}{preview}");
+            writeln!(out, "  {mark}{preview}")?;
+            if verbose && !output.is_empty() {
+                for line in output.lines() {
+                    writeln!(out, "  {line}")?;
+                }
+            }
         }
-        Ui::Info(t) => println!("\n\u{25e6} {t}"),
-        Ui::Error(t) => println!("\n! {t}"),
+        Ui::Info(t) => writeln!(out, "\n\u{25e6} {t}")?,
+        Ui::Error(t) => writeln!(out, "\n! {t}")?,
     }
+    Ok(())
 }
 
 fn confirm(prompt: &str) -> bool {
@@ -453,6 +483,49 @@ mod tests {
             resume_line("3k9a0aa"),
             "imp: resume with imp -r 3k9a0aa"
         );
+    }
+
+    #[test]
+    fn line_mode_high_shows_args_and_output() {
+        let mut out = Vec::new();
+        print_ui_to(
+            &mut out,
+            Ui::ToolStart {
+                name: "bash".into(),
+                summary: "run `ls`".into(),
+                args: "{\"command\":\"ls\"}".into(),
+            },
+            true,
+        )
+        .unwrap();
+        print_ui_to(
+            &mut out,
+            Ui::ToolEnd {
+                ok: true,
+                preview: "total 8".into(),
+                output: "total 8\nfoo".into(),
+                ms: 4,
+            },
+            true,
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("{\"command\":\"ls\"}"), "{text}");
+        assert!(text.contains("  total 8\n  foo"), "{text}");
+
+        let mut low = Vec::new();
+        print_ui_to(
+            &mut low,
+            Ui::ToolStart {
+                name: "bash".into(),
+                summary: "run `ls`".into(),
+                args: "{\"command\":\"ls\"}".into(),
+            },
+            false,
+        )
+        .unwrap();
+        let low = String::from_utf8(low).unwrap();
+        assert!(!low.contains("command"), "{low}");
     }
 
     #[test]

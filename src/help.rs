@@ -11,6 +11,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/compact", "compact the conversation now"),
     ("/think", "toggle thinking for the next turn"),
     ("/yolo", "prompt-free for this session"),
+    ("/verbosity", "tool detail: low or high"),
     ("/quit", "leave"),
 ];
 

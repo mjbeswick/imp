@@ -1240,6 +1240,30 @@ impl App {
                 self.entries.clear();
                 self.push(Role::Info, "new conversation");
             }
+            other if other == "verbosity" || other.starts_with("verbosity ") => {
+                let level = other.strip_prefix("verbosity").unwrap_or("").trim();
+                match level {
+                    "" => self.push(
+                        Role::Info,
+                        format!(
+                            "verbosity: {}",
+                            if self.verbose { "high" } else { "low" }
+                        ),
+                    ),
+                    "high" => {
+                        self.verbose = true;
+                        self.push(Role::Info, "verbosity: high");
+                    }
+                    "low" => {
+                        self.verbose = false;
+                        self.push(Role::Info, "verbosity: low");
+                    }
+                    _ => self.push(
+                        Role::Error,
+                        format!("unknown verbosity {level:?}; use low or high"),
+                    ),
+                }
+            }
             other => self.push(Role::Info, crate::help::unknown(other)),
         }
     }
@@ -2697,6 +2721,37 @@ mod tests {
         assert!(!a.resized(80, 24));
         assert!(a.resized(81, 24));
         assert!(a.resized(80, 25));
+    }
+
+    #[test]
+    fn verbosity_command_controls_tool_detail() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        assert!(!a.verbose, "default is not low");
+        a.run_command("verbosity high", &tx);
+        assert!(a.verbose);
+
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `ls`".into(),
+            args: "{\"command\":\"ls\"}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: "total 8".into(),
+            output: "total 8\nfoo".into(),
+            ms: 4,
+        });
+        let text = &a.entries[1].text;
+        assert!(text.contains("args:"), "{text:?}");
+        assert!(text.contains("foo"), "{text:?}");
+
+        a.run_command("verbosity low", &tx);
+        assert!(!a.verbose);
+        a.run_command("verbosity", &tx);
+        assert!(a.entries.last().unwrap().text.contains("verbosity: low"));
+        a.run_command("verbosity loud", &tx);
+        assert!(a.entries.last().unwrap().text.contains("use low or high"));
     }
 
     #[test]
