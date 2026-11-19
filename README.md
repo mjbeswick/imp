@@ -64,11 +64,18 @@ Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab 
 ```
 
 A bare `/agent`, `/sessions`, `/verbosity`, or `/model` opens a centred picker
-over the transcript. Type to filter, move with Up/Down or PgUp/PgDn, choose with Enter,
-and cancel with Esc. A typed value still applies directly. Bare `/cd` browses
-directories from the session root, with Enter to open one, Tab to select it,
-and Left to go up. Bare `/image` browses directories and PNG, JPEG, GIF, and
-WebP files, and Enter attaches the highlighted image.
+over the transcript, and typing `/agent `, `/model `, `/theme `,
+`/verbosity `, `/provider `, `/cd `, or `/image ` opens the same picker with
+that command's values. The filter has the cursor: type to narrow, move with
+Up/Down or PgUp/PgDn, choose with Enter, and cancel with Esc. A typed value
+still applies directly, and `/stash`, `/rename`, and a typed path keep the
+composer.
+
+Command rows show the command on the left and its description on the right.
+Bare `/cd` browses directories from the session root, with Enter to open one,
+Tab to select it, and Left to go up, including above the root. Bare `/image`
+browses directories and PNG, JPEG, GIF, and WebP files, and Enter attaches the
+highlighted image.
 
 `/image <path>` or pasting an image path attaches PNG, JPEG, GIF, or WebP up to
 10 MB to the next message.

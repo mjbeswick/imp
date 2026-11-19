@@ -819,12 +819,16 @@ enum PickKind {
     Image,
     Command,
     Model,
+    Theme,
+    Provider,
 }
 
 #[derive(Clone)]
 struct PickItem {
     label: String,
     value: String,
+    /// A one-line description drawn in the right column.
+    desc: String,
     /// Single-key actions for this row, shown in the footer and run while the
     /// filter is empty.
     actions: Vec<(char, &'static str)>,
@@ -838,6 +842,9 @@ struct Picker {
     index: usize,
     offset: usize,
     kind: PickKind,
+    /// Text before the filter that the composer should show, when typed
+    /// characters belong to a command line.
+    prefix: Option<String>,
     current: std::path::PathBuf,
     root: std::path::PathBuf,
 }
@@ -872,12 +879,33 @@ fn record_model(path: &std::path::Path, name: &str) {
 fn command_items() -> Vec<PickItem> {
     COMMANDS
         .iter()
-        .map(|(name, _)| PickItem {
+        .map(|(name, desc)| PickItem {
             label: name.to_string(),
             value: name.to_string(),
+            desc: desc.to_string(),
             actions: Vec::new(),
         })
         .collect()
+}
+
+/// One list row: mark, label, and an aligned description when the picker has
+/// any.
+fn picker_row(picker: &Picker, at: usize, index: usize) -> String {
+    let item = &picker.items[index];
+    let marker = if at == picker.index { "▸" } else { " " };
+    if picker.items.iter().any(|item| !item.desc.is_empty()) {
+        let left = picker
+            .items
+            .iter()
+            .map(|item| item.label.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(10)
+            + 2;
+        format!("{marker} {:<left$}  {}", item.label, item.desc)
+    } else {
+        format!("{marker} {}", item.label)
+    }
 }
 
 /// Rows the picker shows at once. Paging moves by the same amount.
@@ -898,6 +926,7 @@ impl Picker {
             index: 0,
             offset: 0,
             kind,
+            prefix: None,
             current: std::path::PathBuf::new(),
             root: std::path::PathBuf::new(),
         }
@@ -915,7 +944,7 @@ impl Picker {
 
     fn reload(&mut self) {
         self.items = match self.kind {
-            PickKind::Dir => browse_items(&self.current, &self.root, false),
+            PickKind::Dir => browse_items(&self.current, &self.current, false),
             PickKind::Image => browse_items(&self.current, &self.root, true),
             _ => Vec::new(),
         };
@@ -923,20 +952,19 @@ impl Picker {
         self.reset();
     }
 
-    /// Move one directory up, stopping at the session root.
+    /// Move one directory up. A directory browser may climb above the session
+    /// root; the image browser stays inside it.
     fn parent(&mut self) -> bool {
-        if self.current == self.root {
+        if self.current == self.root && self.kind != PickKind::Dir {
             return false;
         }
         let Some(parent) = self.current.parent() else {
-            self.current = self.root.clone();
-            self.reload();
-            return true;
+            return false;
         };
         let parent = parent
             .canonicalize()
             .unwrap_or_else(|_| parent.to_path_buf());
-        self.current = if parent.starts_with(&self.root) {
+        self.current = if self.kind == PickKind::Dir || parent.starts_with(&self.root) {
             parent
         } else {
             self.root.clone()
@@ -1067,12 +1095,14 @@ fn browse_items(dir: &std::path::Path, root: &std::path::Path, images: bool) -> 
                 label: format!("{name}/"),
                 value: path.display().to_string(),
                 actions: Vec::new(),
+                desc: String::new(),
             });
         } else if images && is_image_name(&name) {
             out.push(PickItem {
                 label: name,
                 value: path.display().to_string(),
                 actions: Vec::new(),
+                desc: String::new(),
             });
         }
     }
@@ -1506,15 +1536,193 @@ impl App {
         self.tool = Some(row);
     }
 
-    fn sync_menu(&mut self) {
-        // A bare command word gets the overlay. Once a space appears the user
-        // is typing a value, so the overlay stays closed.
-        if self.input.starts_with('/') && !self.input.contains(' ') {
-            let mut picker = Picker::new("commands", command_items(), PickKind::Command);
-            picker.filter = self.input.trim_start_matches('/').to_string();
-            self.pending = Some(Pending::Pick(picker));
+    fn agent_items(&self) -> Vec<PickItem> {
+        self.agents
+            .iter()
+            .map(|name| PickItem {
+                label: name.clone(),
+                value: name.clone(),
+                desc: String::new(),
+                actions: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn model_items(&self) -> Vec<PickItem> {
+        let current = self.cfg.model.clone();
+        let default = self.cfg.provider.profile().model.to_string();
+        let mut names = vec![current.clone(), default.clone()];
+        names.extend(load_models(&self.models_path));
+        let mut seen: Vec<String> = Vec::new();
+        let mut items = Vec::new();
+        for name in names {
+            if name.is_empty() || seen.contains(&name) {
+                continue;
+            }
+            seen.push(name.clone());
+            let mut label = name.clone();
+            if name == current {
+                label.push_str("  (current)");
+            } else if name == default {
+                label.push_str("  (default)");
+            }
+            items.push(PickItem {
+                label,
+                value: name,
+                desc: String::new(),
+                actions: Vec::new(),
+            });
         }
+        items
+    }
+
+    fn theme_items(&self) -> Vec<PickItem> {
+        let current = self.palette.theme_name();
+        crate::theme::names()
+            .into_iter()
+            .map(|name| PickItem {
+                label: name.to_string(),
+                value: name.to_string(),
+                desc: if name == current {
+                    "current".into()
+                } else {
+                    String::new()
+                },
+                actions: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn verbosity_items(&self) -> Vec<PickItem> {
+        vec![
+            PickItem {
+                label: "low".into(),
+                value: "low".into(),
+                desc: "one summary line".into(),
+                actions: Vec::new(),
+            },
+            PickItem {
+                label: "high".into(),
+                value: "high".into(),
+                desc: "arguments and output".into(),
+                actions: Vec::new(),
+            },
+        ]
+    }
+
+    fn provider_items(&self) -> Vec<PickItem> {
+        let mut items = Vec::new();
+        for provider in [
+            crate::providers::Provider::DeepSeek,
+            crate::providers::Provider::OpenAi,
+            crate::providers::Provider::Anthropic,
+            crate::providers::Provider::Gemini,
+            crate::providers::Provider::Ollama,
+            crate::providers::Provider::Custom,
+        ] {
+            let name = format!("{provider:?}").to_lowercase();
+            let profile = provider.profile();
+            items.push(PickItem {
+                label: name.clone(),
+                value: name.clone(),
+                desc: format!("{}  {}", profile.base_url, profile.model),
+                actions: Vec::new(),
+            });
+        }
+        for profile in &self.cfg.named {
+            items.push(PickItem {
+                label: profile.name.clone(),
+                value: profile.name.clone(),
+                desc: format!("{}  {}  ({})", profile.base, profile.model, profile.dialect),
+                actions: Vec::new(),
+            });
+        }
+        items
+    }
+
+    /// The picker for a command argument, the composer prefix it mirrors, and
+    /// the text that starts as its filter.
+    fn argument_picker(&self, word: &str, rest: &str) -> Option<(Picker, String, String)> {
+        let simple = |title: &str, items: Vec<PickItem>, kind: PickKind| {
+            (
+                Picker::new(title, items, kind),
+                format!("/{word} "),
+                rest.to_string(),
+            )
+        };
+        match word {
+            "agent" => Some(simple("agent", self.agent_items(), PickKind::Agent)),
+            "model" => Some(simple("model", self.model_items(), PickKind::Model)),
+            "theme" => Some(simple("theme", self.theme_items(), PickKind::Theme)),
+            "verbosity" => Some(simple(
+                "verbosity",
+                self.verbosity_items(),
+                PickKind::Verbosity,
+            )),
+            "provider" => {
+                let verb = rest.split_whitespace().next().unwrap_or("");
+                match verb {
+                    "" => Some((
+                        Picker::new("provider", self.provider_items(), PickKind::Provider),
+                        "/provider ".into(),
+                        String::new(),
+                    )),
+                    "use" | "edit" | "delete" => Some((
+                        Picker::new(
+                            format!("provider {verb}"),
+                            self.provider_items(),
+                            PickKind::Provider,
+                        ),
+                        format!("/provider {verb} "),
+                        rest.strip_prefix(verb).unwrap_or("").trim_start().to_string(),
+                    )),
+                    _ => None,
+                }
+            }
+            "cd" if rest.is_empty() => Some((
+                Picker::browse("cd", PickKind::Dir, &self.root),
+                String::new(),
+                String::new(),
+            )),
+            "image" if rest.is_empty() => Some((
+                Picker::browse("image", PickKind::Image, &self.root),
+                String::new(),
+                String::new(),
+            )),
+            _ => None,
+        }
+    }
+
+    fn sync_menu(&mut self) {
+        if !self.input.starts_with('/') {
+            return;
+        }
+        let sans = self.input[1..].to_string();
+        if let Some((word, rest)) = sans.split_once(' ') {
+            // A value list opens after a command that has one. Free-text
+            // arguments stay in the composer.
+            if let Some((mut picker, prefix, filter)) = self.argument_picker(word, rest) {
+                picker.filter = filter;
+                if !prefix.is_empty() {
+                    picker.prefix = Some(prefix);
+                }
+                self.pending = Some(Pending::Pick(picker));
+            }
+            self.dirty = true;
+            return;
+        }
+        let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+        picker.filter = sans;
+        picker.prefix = Some("/".into());
+        self.pending = Some(Pending::Pick(picker));
         self.dirty = true;
+    }
+
+    fn mirror_picker(&mut self, picker: &Picker) {
+        if let Some(prefix) = &picker.prefix {
+            self.input = format!("{prefix}{}", picker.filter);
+            self.cursor = self.input.len();
+        }
     }
 
     fn submit(&mut self, tx: &Sender<Cmd>) {
@@ -1874,16 +2082,8 @@ impl App {
                 let rest = other.strip_prefix("agent").unwrap_or("").trim();
                 match rest {
                     "" => {
-                        let items = self
-                            .agents
-                            .iter()
-                            .map(|name| PickItem {
-                                label: name.clone(),
-                                value: name.clone(),
-                                actions: Vec::new(),
-                            })
-                            .collect();
-                        let mut picker = Picker::new("agent", items, PickKind::Agent);
+                        let mut picker =
+                            Picker::new("agent", self.agent_items(), PickKind::Agent);
                         picker.index = self
                             .agents
                             .iter()
@@ -1918,7 +2118,8 @@ impl App {
                         label: crate::store::format_session(&m, now),
                         value: m.id,
                         actions: Vec::new(),
-                    })
+                desc: String::new(),
+            })
                     .collect();
                 options.truncate(20);
                 self.pending = Some(Pending::Pick(Picker::new(
@@ -2019,19 +2220,11 @@ impl App {
                 let level = other.strip_prefix("verbosity").unwrap_or("").trim();
                 match level {
                     "" => {
-                        let items = vec![
-                            PickItem {
-                                label: "low".into(),
-                                value: "low".into(),
-                                actions: Vec::new(),
-                            },
-                            PickItem {
-                                label: "high".into(),
-                                value: "high".into(),
-                                actions: Vec::new(),
-                            },
-                        ];
-                        let mut picker = Picker::new("verbosity", items, PickKind::Verbosity);
+                        let mut picker = Picker::new(
+                            "verbosity",
+                            self.verbosity_items(),
+                            PickKind::Verbosity,
+                        );
                         picker.index = if self.verbose { 1 } else { 0 };
                         self.pending = Some(Pending::Pick(picker));
                         self.dirty = true;
@@ -2056,31 +2249,7 @@ impl App {
             other if other == "model" || other.starts_with("model ") => {
                 let rest = other.strip_prefix("model").unwrap_or("").trim();
                 if rest.is_empty() {
-                    let current = self.cfg.model.clone();
-                    let default = self.cfg.provider.profile().model.to_string();
-                    let mut names = vec![current.clone(), default.clone()];
-                    for recent in load_models(&self.models_path) {
-                        names.push(recent);
-                    }
-                    let mut seen: Vec<String> = Vec::new();
-                    let mut items = Vec::new();
-                    for name in names {
-                        if name.is_empty() || seen.contains(&name) {
-                            continue;
-                        }
-                        seen.push(name.clone());
-                        let mut label = name.clone();
-                        if name == current {
-                            label.push_str("  (current)");
-                        } else if name == default {
-                            label.push_str("  (default)");
-                        }
-                        items.push(PickItem {
-                            label,
-                            value: name,
-                            actions: Vec::new(),
-                        });
-                    }
+                    let items = self.model_items();
                     self.pending = Some(Pending::Pick(Picker::new(
                         "model",
                         items,
@@ -2250,26 +2419,43 @@ impl App {
                     Key::PageUp => picker.move_by(-(PICK_ROWS as isize)),
                     Key::PageDown => picker.move_by(PICK_ROWS as isize),
                     Key::Backspace => {
-                        if picker.kind == PickKind::Command && picker.filter.is_empty() {
-                            // Backspacing the slash leaves command editing.
-                            self.input.clear();
-                            self.cursor = 0;
+                        if picker.prefix.is_some() && picker.filter.is_empty() {
+                            if picker.kind == PickKind::Command {
+                                // Backspacing the slash leaves command editing.
+                                self.input.clear();
+                                self.cursor = 0;
+                            } else {
+                                // Backspacing the space returns to the command.
+                                let prefix = picker.prefix.clone().unwrap_or_default();
+                                self.input = prefix.trim_end().to_string();
+                                self.cursor = self.input.len();
+                                self.pending = None;
+                                self.sync_menu();
+                            }
                             self.dirty = true;
                             return;
                         }
                         picker.filter_pop();
-                        if picker.kind == PickKind::Command {
-                            self.input = format!("/{}", picker.filter);
-                            self.cursor = self.input.len();
-                        }
+                        self.mirror_picker(&picker);
                     }
-                    Key::Char(c) if picker.kind == PickKind::Command => {
-                        picker.filter_push(c);
-                        self.input = format!("/{}", picker.filter);
+                    Key::Char(c)
+                        if picker.prefix.is_none()
+                            && matches!(picker.kind, PickKind::Dir | PickKind::Image)
+                            && matches!(c, '/' | '~' | '.') =>
+                    {
+                        // A typed path takes over from the browser.
+                        self.input.push(c);
                         self.cursor = self.input.len();
-                        if self.input.contains(' ') {
-                            // A value is being typed; the command word is done.
-                            self.dirty = true;
+                        self.dirty = true;
+                        return;
+                    }
+                    Key::Char(c) if picker.prefix.is_some() => {
+                        picker.filter_push(c);
+                        self.mirror_picker(&picker);
+                        if picker.kind == PickKind::Command && picker.filter.contains(' ') {
+                            // The word is done; open its value list if it has one.
+                            self.pending = None;
+                            self.sync_menu();
                             return;
                         }
                     }
@@ -2366,6 +2552,17 @@ impl App {
                                 self.verbose = choice.value == "high";
                                 self.push(Role::Info, format!("verbosity: {}", choice.value));
                             }
+                            PickKind::Theme => {
+                                let _ = crate::theme::save(&choice.value);
+                                self.palette = Palette::detect(&self.cfg);
+                                self.push(Role::Info, format!("theme: {}", choice.value));
+                            }
+                            PickKind::Provider => match self.set_provider(&choice.value, tx) {
+                                Ok(()) => {
+                                    self.push(Role::Info, format!("provider: {}", choice.value))
+                                }
+                                Err(e) => self.push(Role::Error, e),
+                            },
                             PickKind::Dir => {
                                 if choice.label.ends_with('/') {
                                     picker.current = std::path::PathBuf::from(&choice.value);
@@ -2392,6 +2589,10 @@ impl App {
                                     Err(e) => self.push(Role::Error, e),
                                 }
                             }
+                        }
+                        if picker.prefix.is_some() {
+                            self.input.clear();
+                            self.cursor = 0;
                         }
                         self.dirty = true;
                         return;
@@ -2600,7 +2801,7 @@ impl App {
         let end = (start + body_rows).min(total);
         let visible = &lines[start..end];
 
-        let mut screen = String::from("\x1b[?7l\x1b[H");
+        let mut screen = String::from("\x1b[?25l\x1b[?7l\x1b[H");
         for _ in 0..body_rows.saturating_sub(visible.len()) {
             screen.push_str("\x1b[2K\r\n");
         }
@@ -2630,9 +2831,10 @@ impl App {
         screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
         screen.push_str("\x1b[?7h");
 
-        if let Some(overlay) = self.overlay(cols, rows) {
+        if let Some((overlay, cursor_x, cursor_y)) = self.overlay(cols, rows) {
             screen.push_str("\x1b[?7l");
             screen.push_str(&overlay);
+            screen.push_str(&format!("\x1b[{cursor_y};{cursor_x}H\x1b[?25h"));
             screen.push_str("\x1b[?7h");
         }
 
@@ -2719,7 +2921,7 @@ impl App {
     ///
     /// Absolute cursor addressing paints the rectangle without disturbing the
     /// transcript, and the next full frame replaces it, leaving no residue.
-    fn overlay(&self, cols: usize, rows: usize) -> Option<String> {
+    fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize)> {
         let picker = match &self.pending {
             Some(Pending::Pick(picker)) => picker,
             _ => return None,
@@ -2759,10 +2961,7 @@ impl App {
                 "  no matches".to_string()
             } else {
                 match matches.get(at) {
-                    Some(&item) => {
-                        let marker = if at == picker.index { "▸" } else { " " };
-                        format!("{marker} {}", picker.items[item].label)
-                    }
+                    Some(&item) => picker_row(picker, at, item),
                     None => String::new(),
                 }
             };
@@ -2786,7 +2985,9 @@ impl App {
         for (i, line) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{line}", y + i, x));
         }
-        Some(out)
+        let head = format!(" {}  filter: ", picker.title).chars().count();
+        let cursor = (x + 1 + head + picker.filter.chars().count()).min(x + width - 2);
+        Some((out, cursor, y + 1))
     }
 
     /// Fit one row of text to the interior width and pad it with spaces.
@@ -4237,6 +4438,138 @@ mod tests {
     }
 
     #[test]
+    fn a_value_picker_opens_after_the_command_and_space() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        for c in "/theme ".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Theme);
+        assert_eq!(picker.prefix.as_deref(), Some("/theme "));
+        assert!(picker.filter.is_empty());
+
+        for c in "gru".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        let picker = open_picker(&a);
+        assert_eq!(picker.filter, "gru");
+        assert_eq!(a.input, "/theme gru", "the composer did not mirror");
+        let labels: Vec<&str> = picker
+            .matches()
+            .iter()
+            .map(|&i| picker.items[i].label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["gruvbox-dark"], "{labels:?}");
+
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.pending.is_none());
+        assert_eq!(a.input, "/theme gru", "Esc discarded the typed text");
+    }
+
+    #[test]
+    fn a_value_picker_applies_and_clears_the_line() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        for c in "/verbosity ".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Char('h'), &tx);
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.verbose, "Enter did not apply high verbosity");
+        assert!(a.pending.is_none());
+        assert!(a.input.is_empty(), "the command line stayed: {:?}", a.input);
+    }
+
+    #[test]
+    fn backspace_from_a_value_picker_returns_to_the_command() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        for c in "/model ".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert_eq!(open_picker(&a).kind, PickKind::Model);
+        a.handle_key(Key::Backspace, &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Command);
+        assert_eq!(picker.filter, "model");
+        assert_eq!(a.input, "/model");
+    }
+
+    #[test]
+    fn free_text_arguments_keep_the_composer() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        for c in "/stash remember the tests".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert!(a.pending.is_none(), "a stash draft opened a picker");
+        assert_eq!(a.input, "/stash remember the tests");
+    }
+
+    #[test]
+    fn a_typed_cd_path_takes_over_from_the_browser() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        for c in "/cd ".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert_eq!(open_picker(&a).kind, PickKind::Dir);
+        a.handle_key(Key::Char('/'), &tx);
+        assert!(a.pending.is_none(), "the browser kept the slash");
+        assert_eq!(a.input, "/cd /");
+    }
+
+    #[test]
+    fn command_rows_show_aligned_descriptions() {
+        let picker = Picker::new("commands", command_items(), PickKind::Command);
+        let row = |label: &str| {
+            let at = picker
+                .items
+                .iter()
+                .position(|item| item.label == label)
+                .unwrap_or_else(|| panic!("no row {label}"));
+            picker_row(&picker, at, at)
+        };
+        let compact = row("/compact");
+        let help = row("/help");
+        assert!(compact.contains("compact the conversation now"), "{compact}");
+        assert!(help.contains("show keys and commands"), "{help}");
+        let desc_col = |line: &str, desc: &str| {
+            line[..line.find(desc).unwrap()].chars().count()
+        };
+        assert_eq!(
+            desc_col(&compact, "compact the conversation now"),
+            desc_col(&help, "show keys and commands"),
+            "descriptions are not aligned:\n{compact}\n{help}"
+        );
+        assert!(help.contains("▸ /help"), "no marker: {help}");
+    }
+
+    #[test]
+    fn the_picker_shows_its_filter_cursor() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        let idle = a.frame(80, 20);
+        assert!(!idle.contains("\x1b[?25h"), "idle frame showed a cursor");
+        a.handle_key(Key::Char('/'), &tx);
+        let open = a.frame(80, 20);
+        assert!(open.contains("\x1b[?25h"), "the filter has no cursor");
+        a.handle_key(Key::Esc, &tx);
+        let closed = a.frame(80, 20);
+        assert!(!closed.contains("\x1b[?25h"), "the cursor stayed after closing");
+    }
+
+    #[test]
+    fn the_directory_browser_stops_at_the_filesystem_root() {
+        let root = scratch("fsroot");
+        let mut picker = Picker::browse("cd", PickKind::Dir, &root);
+        picker.current = std::path::PathBuf::from("/");
+        assert!(!picker.parent(), "Left moved above /");
+        assert_eq!(picker.current, std::path::PathBuf::from("/"));
+    }
+
+    #[test]
     fn cwd_commands_report_and_change_the_root() {
         let mut a = app();
         let (tx, rx) = channel();
@@ -4293,10 +4626,12 @@ mod tests {
     }
 
     #[test]
-    fn directory_browser_navigates_selects_and_stops_at_the_root() {
-        let root = scratch("dir");
+    fn directory_browser_navigates_selects_and_climbs() {
+        let base = scratch("dir");
+        let root = base.join("work");
         std::fs::create_dir_all(root.join("src").join("nested")).unwrap();
         std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::create_dir_all(base.join("sibling")).unwrap();
         std::fs::write(root.join("notes.txt"), "x").unwrap();
 
         let mut a = app_at(root.clone());
@@ -4323,8 +4658,14 @@ mod tests {
         a.handle_key(Key::Left, &tx);
         assert_eq!(open_picker(&a).current, root, "Left did not go up");
         a.handle_key(Key::Left, &tx);
-        assert_eq!(open_picker(&a).current, root, "Left passed the root");
+        let above = base.canonicalize().unwrap();
+        assert_eq!(open_picker(&a).current, above, "Left did not climb");
         assert!(rx.try_recv().is_err(), "navigating changed the root");
+
+        let back = format!("{}/", root.file_name().unwrap().to_string_lossy());
+        highlight(&mut a, &tx, &back);
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(open_picker(&a).current, root, "Enter did not go back down");
 
         highlight(&mut a, &tx, "src/");
         a.handle_key(Key::Tab, &tx);
@@ -4602,6 +4943,7 @@ mod tests {
                 label: "abc123  3m  old title  4 msgs".into(),
                 value: "abc123".into(),
                 actions: Vec::new(),
+                desc: String::new(),
             }],
             PickKind::Session,
         )));
@@ -4737,6 +5079,7 @@ mod tests {
                 label: "abc123  title  3 msgs".into(),
                 value: "abc123".into(),
                 actions: Vec::new(),
+                desc: String::new(),
             }],
             PickKind::Session,
         )));
@@ -4801,6 +5144,7 @@ mod tests {
                 label: format!("profile {i}"),
                 value: format!("p{i}"),
                 actions: Vec::new(),
+                desc: String::new(),
             })
             .collect();
         a.pending = Some(Pending::Pick(Picker::new("agent", items, PickKind::Agent)));
@@ -4860,6 +5204,7 @@ mod tests {
                 label: format!("profile {i}"),
                 value: format!("p{i}"),
                 actions: Vec::new(),
+                desc: String::new(),
             })
             .collect();
         a.pending = Some(Pending::Pick(Picker::new("agent", items, PickKind::Agent)));
@@ -5139,6 +5484,7 @@ mod tests {
                 label: "one".into(),
                 value: "one".into(),
                 actions: Vec::new(),
+                desc: String::new(),
             }],
             PickKind::Session,
         )));
