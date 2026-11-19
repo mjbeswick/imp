@@ -2934,6 +2934,14 @@ impl App {
             }
         }
 
+        if self.entries.is_empty() {
+            // A quiet hint until the first message: where, and how to begin.
+            let hint = " · / for commands";
+            let root = tail(&tilde(&self.root), cols.saturating_sub(6 + hint.len()));
+            let welcome = format!("imp · {root}{hint}");
+            lines.push((Role::Thinking, Line::Text(welcome)));
+        }
+
         let total = lines.len();
         let max_top = total.saturating_sub(body_rows);
         self.body_rows = body_rows;
@@ -4151,6 +4159,18 @@ mod tests {
 
         let short = strip(&a.frame(80, 7));
         assert!(!short.contains("────"), "a rule on a 7-row screen: {short:?}");
+    }
+
+    #[test]
+    fn an_empty_transcript_shows_a_welcome_row() {
+        let mut a = app();
+        let frame = strip(&a.frame(80, 24));
+        let want = format!("imp · {} · / for commands", tilde(&a.root));
+        assert!(frame.contains(&want), "{want} not in {frame:?}");
+        a.push(Role::User, "hello");
+        assert!(!strip(&a.frame(80, 24)).contains("/ for commands"));
+        let narrow = strip(&app().frame(30, 24));
+        assert!(narrow.contains("/ for commands"), "{narrow:?}");
     }
 
     #[test]

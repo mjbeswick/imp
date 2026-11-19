@@ -12,7 +12,7 @@
 ## 2. Chat column
 
 - [x] 2.1 Draw the rule above the composer and the blank row before each later user turn; drop the rule below 8 rows. Verify: frame tests at 80x24 and 80x7.
-- [ ] 2.2 Draw the welcome row while the transcript is empty. Verify: a frame test finds it when empty and not after the first message.
+- [x] 2.2 Draw the welcome row while the transcript is empty. Verify: a frame test finds it when empty and not after the first message.
 - [ ] 2.3 Add the right-aligned session root to the status line. Verify: frame tests at 100 and 40 columns.
 
 ## 3. Rows
