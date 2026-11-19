@@ -1122,7 +1122,8 @@ impl Picker {
                 "Esc close".into(),
             ],
             PickKind::Image => vec![
-                "Enter open or attach".into(),
+                "Enter attach".into(),
+                "Tab/→ open".into(),
                 "← up".into(),
                 "Esc close".into(),
             ],
@@ -2731,7 +2732,7 @@ impl App {
                         self.dirty = true;
                         return;
                     }
-                    Key::Tab | Key::Right if picker.kind == PickKind::Dir => {
+                    Key::Tab | Key::Right if matches!(picker.kind, PickKind::Dir | PickKind::Image) => {
                         // Tab and Right open; `./` is already open.
                         if let Some(choice) = picker.selected().cloned() {
                             if choice.label.ends_with('/') && choice.label != "./" {
@@ -5473,6 +5474,22 @@ mod tests {
         }
         assert!(a.pending.is_none(), "Enter left the browser open");
         assert_eq!(a.root, root, "the root moved before the worker replied");
+    }
+
+    #[test]
+    fn the_image_browser_opens_folders_with_right() {
+        let root = scratch("img-right");
+        std::fs::create_dir_all(root.join("shots")).unwrap();
+        std::fs::write(root.join("shots").join("a.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        let mut a = app_at(root.clone());
+        let (tx, _rx) = channel();
+        a.run_command("image", &tx);
+        assert!(open_picker(&a).footer().starts_with("Enter attach · Tab/→ open"));
+        highlight(&mut a, &tx, "shots/");
+        a.handle_key(Key::Right, &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.current, root.join("shots"), "Right did not open");
+        assert!(picker.items.iter().any(|i| i.label == "a.png"));
     }
 
     #[test]
