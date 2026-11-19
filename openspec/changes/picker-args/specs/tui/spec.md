@@ -1,0 +1,31 @@
+# Spec Delta
+
+## MODIFIED Requirements
+
+### Requirement: Slash commands autocomplete
+
+The system SHALL open the picker overlay when the input begins with `/`, SHALL show commands filtered by the word before the first space, SHALL rank prefix matches before substring matches, SHALL show a title and a footer naming Enter and Esc, SHALL accept the highlighted command with Tab or Enter, SHALL open the value picker after a command word and a space when that command has enumerable values, SHALL seed that picker's filter with the text after the space, and SHALL keep the picker closed for commands whose argument is free text.
+
+#### Scenario: Narrowing
+- **WHEN** the user types `/co`
+- **THEN** `/compact` is listed and other commands are filtered out
+
+#### Scenario: Accept
+- **WHEN** the user presses Tab
+- **THEN** the highlighted command is completed in the input line and the overlay closes
+
+#### Scenario: Run immediately
+- **WHEN** the user presses Enter on the highlighted command
+- **THEN** the command runs and the input clears
+
+#### Scenario: Dismiss
+- **WHEN** the user presses Esc
+- **THEN** the overlay closes and the typed text stays
+
+#### Scenario: Values follow the command
+- **WHEN** the user types `/theme ` and then `gru`
+- **THEN** the theme picker opens with `gru` in the filter and `gruvbox-dark` listed
+
+#### Scenario: Free text
+- **WHEN** the user types `/stash remember the tests`
+- **THEN** no picker opens and the whole text is stashed on Enter
