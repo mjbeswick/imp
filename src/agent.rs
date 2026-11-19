@@ -1094,12 +1094,17 @@ pub fn summarise(text: &str) -> String {
     s
 }
 
+/// The whole text on one line. The renderer wraps it.
+fn flatten(text: &str) -> String {
+    text.replace('\n', " ").trim().to_string()
+}
+
 /// One short line for a tool call, in place of its JSON arguments.
 pub fn describe(name: &str, args: &Value) -> String {
     let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
     let lines = |key: &str| text(key).lines().count();
     match name {
-        "bash" => format!("run `{}`", summarise(text("command"))),
+        "bash" => format!("run `{}`", flatten(text("command"))),
         "job" => match args.get("id").and_then(Value::as_u64) {
             Some(id) => format!("job {} {id}", text("op")),
             None => format!("job {}", text("op")),
@@ -1110,7 +1115,7 @@ pub fn describe(name: &str, args: &Value) -> String {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(Value::as_str).collect())
                 .unwrap_or_default();
-            format!("read {}", summarise(&paths.join(", ")))
+            format!("read {}", flatten(&paths.join(", ")))
         }
         "edit" => {
             let edits = args
@@ -1118,18 +1123,18 @@ pub fn describe(name: &str, args: &Value) -> String {
                 .and_then(Value::as_array)
                 .map(|a| a.len())
                 .unwrap_or(0);
-            format!("edit {} ({edits} changes)", summarise(text("path")))
+            format!("edit {} ({edits} changes)", flatten(text("path")))
         }
         "write" => format!(
             "write {} ({} lines)",
-            summarise(text("path")),
+            flatten(text("path")),
             lines("content")
         ),
         "search" => {
             if text("op") == "fetch" {
-                format!("fetch {}", summarise(text("url")))
+                format!("fetch {}", flatten(text("url")))
             } else {
-                format!("search {:?}", summarise(text("query")))
+                format!("search {:?}", flatten(text("query")))
             }
         }
         "memory" => {
@@ -1138,10 +1143,10 @@ pub fn describe(name: &str, args: &Value) -> String {
             } else {
                 text("title")
             };
-            format!("memory {} {:?}", text("op"), summarise(what))
+            format!("memory {} {:?}", text("op"), flatten(what))
         }
-        "skill_load" => format!("load skill {}", summarise(text("name"))),
-        "ask" => format!("ask {:?}", summarise(text("question"))),
+        "skill_load" => format!("load skill {}", flatten(text("name"))),
+        "ask" => format!("ask {:?}", flatten(text("question"))),
         other => other.to_string(),
     }
 }
@@ -1272,6 +1277,19 @@ mod tests {
         let write = diff_detail("write", &json!({"path": "x", "content": "one\ntwo"}));
         assert_eq!(write, "+one\n+two");
         assert!(diff_detail("read", &json!({})).is_empty());
+    }
+
+    #[test]
+    fn long_tool_descriptions_are_kept_whole() {
+        let command = format!("echo {}", "word ".repeat(80));
+        let text = describe("bash", &json!({"command": command}));
+        assert!(text.chars().count() > 120, "{}", text.chars().count());
+        assert!(!text.ends_with('…'), "{text}");
+
+        let question = "why ".repeat(80);
+        let ask = describe("ask", &json!({"question": question}));
+        assert!(ask.chars().count() > 120);
+        assert!(!ask.ends_with('…'), "{ask}");
     }
 
     #[test]

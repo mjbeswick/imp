@@ -2778,7 +2778,6 @@ impl App {
                     match entry.role {
                         Role::User => "> ",
                         Role::Thinking => "~ ",
-                        Role::Tool => "  ",
                         _ => "",
                     }
                 } else {
@@ -4906,6 +4905,128 @@ mod tests {
             }
         }
         assert!(seen > 1, "summary did not wrap: {out:?}");
+    }
+
+    fn tool_call(a: &mut App, summary: String) {
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary,
+            args: "{}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: String::new(),
+            output: String::new(),
+            detail: String::new(),
+            ms: 4,
+        });
+    }
+
+    #[test]
+    fn tool_rows_start_in_the_same_column() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `ls`".into(),
+            args: "{}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: String::new(),
+            output: String::new(),
+            detail: String::new(),
+            ms: 4,
+        });
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `false`".into(),
+            args: "{}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: false,
+            preview: "exit 1".into(),
+            output: "exit 1".into(),
+            detail: String::new(),
+            ms: 7,
+        });
+        let painted = strip(&a.frame(60, 12));
+        for row in painted.split("\r\n") {
+            if row.contains('✓') || row.contains('✗') {
+                assert!(
+                    row.starts_with('✓') || row.starts_with('✗'),
+                    "tool row is indented: {row:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_tool_summary_wraps_and_keeps_its_duration() {
+        let mut a = app();
+        let command = format!("echo {}", "a".repeat(300));
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: crate::agent::describe("bash", &serde_json::json!({"command": command})),
+            args: "{}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: String::new(),
+            output: String::new(),
+            detail: String::new(),
+            ms: 12,
+        });
+        let painted = strip(&a.frame(80, 30));
+        let rows: Vec<&str> = painted
+            .split("\r\n")
+            .filter(|row| row.contains("aaaa"))
+            .collect();
+        assert!(rows.len() > 1, "the summary did not wrap: {painted:?}");
+        assert!(painted.contains("· 12 ms"), "the duration was lost");
+        assert!(!painted.contains('…'), "the summary was cut: {painted:?}");
+    }
+
+    #[test]
+    fn a_long_failure_preview_wraps_under_the_indent() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `false`".into(),
+            args: "{}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: false,
+            preview: "exit 1 timed out after 30s ".to_string() + &"reason ".repeat(20),
+            output: String::new(),
+            detail: String::new(),
+            ms: 30_000,
+        });
+        let painted = strip(&a.frame(70, 20));
+        let rows: Vec<&str> = painted
+            .split("\r\n")
+            .filter(|row| row.contains("reason"))
+            .collect();
+        assert!(rows.len() > 1, "the failure preview did not wrap: {painted:?}");
+        for row in rows {
+            assert!(row.starts_with("  "), "preview lost its indent: {row:?}");
+        }
+    }
+
+    #[test]
+    fn an_ask_question_wraps_instead_of_clipping() {
+        let mut a = app();
+        let question = "delete all five files? ".repeat(12);
+        a.apply(Ev::ToolStart {
+            name: "ask".into(),
+            summary: crate::agent::describe("ask", &serde_json::json!({"question": question})),
+            args: "{}".into(),
+        });
+        let painted = strip(&a.frame(80, 30));
+        let rows: Vec<&str> = painted
+            .split("\r\n")
+            .filter(|row| row.contains("delete all five files?"))
+            .collect();
+        assert!(rows.len() > 1, "the question did not wrap: {painted:?}");
     }
 
     #[test]
