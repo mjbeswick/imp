@@ -7,7 +7,7 @@
 
 ## 1. Resume
 
-- [ ] 1.1 Add `display_entries`, `Ev::Replay`, and the post-resume usage event; send the replay from `-r`, `-c`, and the picker; retitle the picker `sessions`. Verify: a test resumes a fixture log and the frame shows its user, assistant, and tool rows in order with a non-zero token count.
+- [x] 1.1 Add `display_entries`, `Ev::Replay`, and the post-resume usage event; send the replay from `-r`, `-c`, and the picker; retitle the picker `sessions`. Verify: a test resumes a fixture log and the frame shows its user, assistant, and tool rows in order with a non-zero token count.
 
 ## 2. Chat column
 

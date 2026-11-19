@@ -505,6 +505,8 @@ pub enum Cmd {
 
 pub enum Ev {
     Token(String),
+    /// A restored conversation, drawn in place of the transcript.
+    Replay(Vec<(Role, String)>),
     Root(std::path::PathBuf),
     Think(String),
     ToolStart {
@@ -1339,6 +1341,14 @@ impl App {
                     }
                 }
                 self.dirty = true;
+            }
+            Ev::Replay(rows) => {
+                self.entries.clear();
+                self.tool = None;
+                for (role, text) in rows {
+                    self.push(role, text);
+                }
+                self.follow_tail();
             }
             Ev::Usage {
                 tokens,
@@ -2177,7 +2187,7 @@ impl App {
                     .collect();
                 options.truncate(20);
                 self.pending = Some(Pending::Pick(Picker::new(
-                    "session (Enter resumes after restart)",
+                    "sessions",
                     options,
                     PickKind::Session,
                 )));
@@ -3332,6 +3342,43 @@ fn save_history(history: &[String]) {
     let _ = std::fs::write(path, body);
 }
 
+/// The rows a restored history draws: user and assistant text, and one
+/// row per tool call. Reasoning, system, and tool results stay hidden.
+fn replay(history: &[crate::api::Message]) -> Vec<(Role, String)> {
+    use crate::api::Role as Api;
+    let mut rows = Vec::new();
+    for m in history {
+        match m.role {
+            Api::User => rows.push((Role::User, m.content.clone())),
+            Api::Assistant => {
+                if !m.content.trim().is_empty() {
+                    rows.push((Role::Assistant, m.content.clone()));
+                }
+                for call in &m.tool_calls {
+                    let args = serde_json::from_str(&call.arguments).unwrap_or_default();
+                    // ponytail: no mark; the log does not say if the call failed.
+                    let summary = crate::agent::describe(&call.name, &args);
+                    rows.push((Role::Tool, format!("▸ {summary}")));
+                }
+            }
+            _ => {}
+        }
+    }
+    rows
+}
+
+/// Draw a restored session and its context size.
+fn send_replay(tx: &Sender<Ev>, history: &[crate::api::Message]) {
+    let _ = tx.send(Ev::Replay(replay(history)));
+    let _ = tx.send(Ev::Usage {
+        tokens: crate::api::estimate_tokens(history),
+        hit: 0,
+        miss: 0,
+        output: 0,
+        model: None,
+    });
+}
+
 /// Run the interface until the user quits. Returns the final session id.
 pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
     install_guards();
@@ -3352,6 +3399,13 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
 
     let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
     let mut worker_session = session;
+    if worker_session
+        .history
+        .iter()
+        .any(|m| m.role != crate::api::Role::System)
+    {
+        send_replay(&ev_tx, &worker_session.history);
+    }
     let session_id = std::sync::Arc::new(std::sync::Mutex::new(
         worker_session
             .log
@@ -3450,6 +3504,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                             if let Ok(mut slot) = session_id.lock() {
                                 *slot = id.clone();
                             }
+                            send_replay(&ev_tx, &worker_session.history);
                             let _ = ev_tx.send(Ev::Info(format!("resumed {id}")));
                         }
                         Err(e) => {
@@ -5349,6 +5404,39 @@ mod tests {
         a.handle_key(Key::Esc, &tx);
         assert!(a.pending.is_none(), "Esc left the overlay open");
         assert_eq!(a.input, "/co", "Esc discarded the typed text");
+    }
+
+    #[test]
+    fn a_replay_draws_the_restored_conversation() {
+        use crate::api::{Message, ToolCall};
+        let mut asked = Message::assistant("");
+        asked.tool_calls.push(ToolCall {
+            id: "c1".into(),
+            name: "bash".into(),
+            arguments: "{\"command\":\"ls\"}".into(),
+        });
+        let history = vec![
+            Message::system("prompt"),
+            Message::user("list the files"),
+            asked,
+            Message::tool("c1", "a\nb"),
+            Message::assistant("two files"),
+        ];
+        let mut a = app();
+        a.push(Role::User, "old conversation");
+        let (tx, rx) = channel();
+        send_replay(&tx, &history);
+        while let Ok(ev) = rx.try_recv() {
+            a.apply(ev);
+        }
+        let frame = strip(&a.frame(80, 24));
+        assert!(!frame.contains("old conversation"), "{frame}");
+        let user = frame.find("> list the files").expect("user row");
+        let tool = frame.find("▸ ").expect("tool row");
+        let reply = frame.find("two files").expect("reply");
+        assert!(user < tool && tool < reply, "{frame}");
+        assert!(!frame.contains("prompt"), "{frame}");
+        assert!(!frame.contains(" 0 tok"), "{frame}");
     }
 
     #[test]
