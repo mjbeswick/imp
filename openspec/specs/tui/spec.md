@@ -759,15 +759,19 @@ After a successful `edit` or `write`, the system SHALL draw the changed lines un
 
 ### Requirement: Nineteen slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/mode`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/mode`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all nineteen commands appear with a one-line description
+- **THEN** all twenty commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
 - **THEN** nothing is sent to the model and the nearest matching command is suggested
+
+#### Scenario: Rename
+- **WHEN** the user runs `/rename fix the parser`
+- **THEN** the current session carries that title and no request is sent
 
 #### Scenario: Line mode
 - **WHEN** the user runs `/help` in line mode
@@ -930,3 +934,23 @@ The system SHALL start every tool row with its mark in column one, SHALL place t
 #### Scenario: No width ellipsis
 - **WHEN** a row is wider than the terminal
 - **THEN** it wraps, and the only ellipsis allowed marks content the model itself shortened
+
+### Requirement: Yolo applies when the command runs
+
+The system SHALL apply `/yolo` to the shared mode before its worker command is handled, SHALL stop confirmations for the rest of the running turn, SHALL switch back to the launch mode on the next `/yolo`, SHALL label the session and launch modes in the transcript, and SHALL keep the deny list and sudo gate in force.
+
+#### Scenario: Enabled mid-turn
+- **WHEN** a confirmation would appear and the user has just run `/yolo`
+- **THEN** the call runs without a prompt
+
+#### Scenario: Disabled
+- **WHEN** the user runs `/yolo` again
+- **THEN** the launch mode returns and later calls ask as before
+
+#### Scenario: No double toggle
+- **WHEN** `/yolo` commands are queued while a turn runs
+- **THEN** each carries its target mode and the last one wins
+
+#### Scenario: Hard stops
+- **WHEN** the mode is yolo and a command is on the deny list
+- **THEN** it is still refused

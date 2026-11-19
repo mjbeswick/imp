@@ -235,7 +235,7 @@ The system SHALL resolve every path, including symlinks and `..`, and SHALL reje
 
 ### Requirement: Tools respect the permission decision
 
-The system SHALL classify every tool action before executing it, SHALL refuse actions the policy denies, SHALL wait for the user on actions the policy asks about, and SHALL return the refusal to the model as a result rather than an error.
+The system SHALL classify every tool action before executing it against the live permission mode, SHALL refuse actions the policy denies, SHALL wait for the user on actions the policy asks about, and SHALL return the refusal to the model as a result rather than an error.
 
 #### Scenario: Denied by policy
 - **WHEN** a command matches the deny list
@@ -248,6 +248,10 @@ The system SHALL classify every tool action before executing it, SHALL refuse ac
 #### Scenario: Asked and refused
 - **WHEN** the user refuses
 - **THEN** nothing happens and the model receives a result saying the user declined
+
+#### Scenario: Mode changes mid-turn
+- **WHEN** the user enables yolo after the turn started
+- **THEN** the turn's next tool call does not ask for confirmation
 
 ### Requirement: Search returns summaries, not pages
 
