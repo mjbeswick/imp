@@ -51,7 +51,7 @@ The system SHALL provide a single picker with a title, a filter, a scrolling lis
 
 ### Requirement: Image picker attaches a file
 
-The system SHALL open a browser for `/image` with no argument, SHALL show directories and PNG, JPEG, GIF, and WebP files under the session root, SHALL mark directories as navigable, SHALL attach the highlighted image on Enter, and SHALL leave the browser open when Enter lands on a directory.
+The system SHALL open a browser for `/image` with no argument, SHALL show directories and PNG, JPEG, GIF, and WebP files under the session root, SHALL mark directories as navigable, SHALL open the highlighted directory on Enter, Tab, or Right, SHALL attach the highlighted image on Enter, and SHALL leave the browser open when a key opens a directory.
 
 #### Scenario: Browse and attach
 - **WHEN** the user runs `/image`, opens `Pictures`, highlights `shot.png`, and presses Enter
@@ -63,6 +63,10 @@ The system SHALL open a browser for `/image` with no argument, SHALL show direct
 
 #### Scenario: Directory
 - **WHEN** the highlight is on a directory and the user presses Enter
+- **THEN** the browser lists that directory and nothing is attached
+
+#### Scenario: Open with an arrow
+- **WHEN** the highlight is on a directory and the user presses Right or Tab
 - **THEN** the browser lists that directory and nothing is attached
 
 ### Requirement: The picker is one bordered overlay
@@ -109,34 +113,6 @@ The system SHALL allow a picker row to declare single-key actions, SHALL show th
 - **WHEN** a picker has row actions
 - **THEN** the footer lists each key and its action next to Enter and Esc
 
-### Requirement: Directory picker can climb above the session root
-
-The system SHALL open a directory browser for `/cd` with no argument, SHALL start it at the current session root, SHALL show directories under the browsed directory, SHALL enter the highlighted directory on Enter, SHALL select it on Tab and close, SHALL go to the parent on Left, SHALL allow Left above the session root up to the filesystem root, and SHALL change the root only after the selection succeeds.
-
-#### Scenario: Enter navigates
-- **WHEN** the highlight is on `src/` and the user presses Enter
-- **THEN** the browser lists `src/` and the session root is unchanged
-
-#### Scenario: Tab selects
-- **WHEN** the highlight is on `src/` and the user presses Tab
-- **THEN** the picker closes and the session root becomes the absolute path of `src/`
-
-#### Scenario: Parent
-- **WHEN** the user presses Left inside `src/`
-- **THEN** the browser returns to the directory above it
-
-#### Scenario: Above the root
-- **WHEN** the browser is at the session root and the user presses Left
-- **THEN** it lists the parent directory, and Tab there makes that parent the session root
-
-#### Scenario: Filesystem root
-- **WHEN** the browser is at `/` and the user presses Left
-- **THEN** nothing moves
-
-#### Scenario: Typed path
-- **WHEN** the user runs `/cd ~/Projects/imp`
-- **THEN** the root changes directly and no browser opens
-
 ### Requirement: The picker filter takes focus and shows a cursor
 
 The system SHALL put the keyboard focus in the picker filter while the overlay is open, SHALL draw a visible cursor at the end of the filter text, SHALL append typed characters and remove them with Backspace, SHALL hide the cursor again when the overlay closes, and SHALL leave the terminal unchanged when the overlay does not fit.
@@ -156,33 +132,6 @@ The system SHALL put the keyboard focus in the picker filter while the overlay i
 #### Scenario: Close
 - **WHEN** the picker closes
 - **THEN** the cursor returns to the composer and no cursor remains in the overlay region
-
-### Requirement: The directory list starts with the parent row
-
-The system SHALL put a `../` row first in every directory browser listing that
-has a parent, SHALL omit it at the filesystem root, SHALL open the parent on
-Enter, SHALL select the parent as the session root on Tab, and SHALL leave the
-image browser without the row.
-
-#### Scenario: Top row
-- **WHEN** the user opens `/cd` at the session root
-- **THEN** `../` is the first row, above the session's own directories
-
-#### Scenario: Enter
-- **WHEN** the highlight is on `../` and the user presses Enter
-- **THEN** the browser lists the parent directory and the session root is unchanged
-
-#### Scenario: Tab
-- **WHEN** the highlight is on `../` and the user presses Tab
-- **THEN** the picker closes and the parent becomes the session root
-
-#### Scenario: Filesystem root
-- **WHEN** the browser lists `/`
-- **THEN** no `../` row appears
-
-#### Scenario: Image browser
-- **WHEN** the user opens `/image`
-- **THEN** no `../` row appears and Left keeps its existing behaviour
 
 ### Requirement: Picker columns stay aligned
 
@@ -235,3 +184,51 @@ The system SHALL put the picker title in the top edge with the scroll position a
 #### Scenario: Edges
 - **WHEN** forty profiles are listed
 - **THEN** the top edge starts `╭─ agent`, ends `1/40 ─╮`, and the bottom edge holds the key hints
+
+### Requirement: The directory picker chooses with Enter
+
+The system SHALL open a directory browser for `/cd` with no argument at the session root, SHALL make the highlighted folder the session root on Enter and close, SHALL open the highlighted folder on Tab or Right, SHALL go to the parent on Left, up to the filesystem root, and SHALL change the root only after the choice succeeds.
+
+#### Scenario: Enter chooses
+- **WHEN** the highlight is on `src/` and the user presses Enter
+- **THEN** the picker closes and the session root becomes the absolute path of `src/`
+
+#### Scenario: Tab opens
+- **WHEN** the highlight is on `src/` and the user presses Tab or Right
+- **THEN** the browser lists `src/` and the session root is unchanged
+
+#### Scenario: Parent
+- **WHEN** the user presses Left inside `src/`
+- **THEN** the browser returns to the directory above it
+
+#### Scenario: Filesystem root
+- **WHEN** the browser is at `/` and the user presses Left
+- **THEN** nothing moves
+
+#### Scenario: Filter and choose
+- **WHEN** the user types `pro` and presses Enter
+- **THEN** the first matching folder becomes the session root
+
+#### Scenario: Typed path
+- **WHEN** the user runs `/cd ~/Projects/imp`
+- **THEN** the root changes directly and no browser opens
+
+### Requirement: The directory list starts with this folder and its parent
+
+The system SHALL begin every `/cd` listing with a `./` row for the folder being browsed, followed by a `../` row when a parent exists, SHALL make either the session root on Enter, SHALL open the parent when Tab or Right is pressed on `../`, SHALL ignore Tab and Right on `./`, and SHALL show the keys as `Enter choose · Tab/→ open · ← up · Esc close`.
+
+#### Scenario: Row order
+- **WHEN** the user opens `/cd` in a folder with subfolders
+- **THEN** the rows read `./`, `../`, then the subfolders
+
+#### Scenario: Leaf folder
+- **WHEN** the user opens a folder with no subfolders and presses Enter on `./`
+- **THEN** that folder becomes the session root
+
+#### Scenario: Filesystem root
+- **WHEN** the browser lists `/`
+- **THEN** `./` is the only fixed row and no `../` appears
+
+#### Scenario: Image browser
+- **WHEN** the user opens `/image`
+- **THEN** neither `./` nor `../` appears
