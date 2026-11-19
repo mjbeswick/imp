@@ -3076,7 +3076,13 @@ impl App {
             // A finished tool row: wrap the summary, then set its duration
             // at the right edge of the last summary line, or under it.
             let mut timed: Option<String> = None;
-            let mut text = entry.text.clone();
+            // Tool output and thinking never drive the terminal; TIME stays.
+            let mut text: String = entry
+                .text
+                .split(TIME)
+                .map(|part| crate::render::clean(part).replace('\t', "    "))
+                .collect::<Vec<_>>()
+                .join(&TIME.to_string());
             let mut head_rows = 0;
             if let Some(at) = text.find(TIME) {
                 let end = text[at..].find('\n').map_or(text.len(), |n| at + n);
@@ -4550,6 +4556,17 @@ mod tests {
         let before = plain.frame(80, 20);
         plain.cfg.set_permissions(crate::config::Permissions::Yolo);
         assert_eq!(plain.frame(80, 20), before, "no-colour frame changed");
+    }
+
+    #[test]
+    fn escapes_in_replies_and_tools_never_reach_the_terminal() {
+        let mut a = app();
+        a.push(Role::Assistant, "copy \u{1b}]52;c;aGk=\u{7}done");
+        a.push(Role::Tool, "✓ run `ls`\n\u{1b}[31mred\u{1b}[0m");
+        let frame = a.frame(80, 12);
+        assert!(!frame.contains("]52;"), "{frame:?}");
+        assert!(!frame.contains("[31m"), "{frame:?}");
+        assert!(strip(&frame).contains("copy done"), "{frame:?}");
     }
 
     #[test]

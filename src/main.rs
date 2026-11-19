@@ -613,7 +613,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
             let done = session.tools.bash(command, &cancel);
             let role = if done.ok { tui::Role::Tool } else { tui::Role::Error };
             println!("{}", cli.palette.paint(role, &format!("$ {command}")));
-            for line in done.text.lines() {
+            for line in render::clean(&done.text).lines() {
                 println!("  {}", cli.palette.paint(role, line));
             }
             println!();
@@ -722,13 +722,15 @@ fn print_ui_to<W: Write>(
 ) -> std::io::Result<()> {
     match event {
         Ui::Content(t) => {
-            write!(out, "{t}")?;
+            // Model text never drives the terminal, piped or not.
+            write!(out, "{}", render::clean(&t))?;
             out.flush().ok();
         }
         Ui::Reasoning(t) => {
             let _ = t;
         }
         Ui::ToolStart { name, summary, args } => {
+            let (summary, args) = (render::clean(&summary), render::clean(&args));
             let line = format!("\u{25b8} {summary}");
             writeln!(out, "\n{}", palette.paint(tui::Role::Tool, &line))?;
             if verbose && !args.is_empty() {
@@ -741,7 +743,7 @@ fn print_ui_to<W: Write>(
         Ui::ToolEnd { ok, preview, output, ms, .. } => {
             let role = if ok { tui::Role::Tool } else { tui::Role::Error };
             let time = tui::duration(ms);
-            let preview = preview_lines(&preview);
+            let preview = preview_lines(&render::clean(&preview));
             if ok {
                 let line = format!("✓ {} · {time}", preview.trim_end());
                 writeln!(out, "  {}", palette.paint(role, &line))?;
@@ -753,16 +755,18 @@ fn print_ui_to<W: Write>(
                 }
             }
             if verbose && !output.is_empty() {
-                for line in preview_lines(&output).lines() {
+                for line in preview_lines(&render::clean(&output)).lines() {
                     writeln!(out, "  {}", palette.paint(tui::Role::Thinking, line))?;
                 }
             }
         }
         Ui::Info(t) => {
+            let t = render::clean(&t);
             let line = format!("\u{25e6} {t}");
             writeln!(out, "\n{}", palette.paint(tui::Role::Info, &line))?;
         }
         Ui::Error(t) => {
+            let t = render::clean(&t);
             let line = format!("! {t}");
             writeln!(out, "\n{}", palette.paint(tui::Role::Error, &line))?;
         }

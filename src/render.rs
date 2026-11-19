@@ -4,6 +4,41 @@
 //! and only the painter adds escape sequences. That keeps wrapping honest and
 //! means a sequence can never be split across a row boundary.
 
+/// Text from the model or a tool, without anything that could drive the
+/// terminal: CSI and OSC sequences, other escapes, and control characters.
+/// Newlines and tabs stay.
+pub fn clean(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' | '\t' => out.push(c),
+            '\u{1b}' => match chars.next() {
+                // CSI: parameters, then one final byte.
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: up to BEL or ESC backslash.
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// The inline attributes a run of text carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Style {
@@ -49,6 +84,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
     let mut fence: Option<char> = None;
     let mut fence_body: Vec<String> = Vec::new();
 
+    let markdown = clean(markdown).replace('\t', "    ");
     for raw in markdown.split('\n') {
         let line = raw.trim_end();
         if let Some(marker) = fence {
@@ -431,6 +467,16 @@ mod tests {
     fn bare_urls_are_linked() {
         let rows = lines("read https://x.dev/a today", 80, true);
         assert!(rows[0].iter().any(|s| s.link.as_deref() == Some("https://x.dev/a")));
+    }
+
+    #[test]
+    fn clean_drops_escapes_and_controls() {
+        assert_eq!(clean("a\u{1b}[31mred\u{1b}[0m b"), "ared b");
+        assert_eq!(clean("x\u{1b}]52;c;aGk=\u{7}y"), "xy");
+        assert_eq!(clean("x\u{1b}]0;title\u{1b}\\y"), "xy");
+        assert_eq!(clean("50%\r100%\u{7}"), "50%100%");
+        assert_eq!(clean("tab\there\nnext"), "tab\there\nnext");
+        assert_eq!(clean("é ✓ 漢"), "é ✓ 漢");
     }
 
     #[test]
