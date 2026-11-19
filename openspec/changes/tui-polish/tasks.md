@@ -42,7 +42,7 @@
 - [x] 7.1 Refuse deny-listed typed `!` commands in both front-ends before they run. Verify: a line-mode test refuses a harmless deny-listed command and a chat test does the same.
 - [x] 7.2 Narrow the value-command requirement: `/sessions` lists newest first with no current marker, and `/provider` subcommands run only in the chat. Verify: `openspec validate --all --strict` passes.
 - [x] 7.3 Restore the misplaced `#[test]` on the composer row test. Verify: `composer_draws_one_row_per_line` runs and passes.
-- [ ] 7.4 Place a tool duration after the whole summary when the summary has several lines. Verify: a test with a two-line summary.
+- [x] 7.4 Place a tool duration after the whole summary when the summary has several lines. Verify: a test with a two-line summary.
 
 ## 6. Finish
 

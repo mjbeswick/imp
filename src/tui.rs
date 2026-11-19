@@ -2931,12 +2931,14 @@ impl App {
             // at the right edge of the last summary line, or under it.
             let mut timed: Option<String> = None;
             let mut text = entry.text.clone();
+            let mut head_rows = 0;
             if let Some(at) = text.find(TIME) {
                 let end = text[at..].find('\n').map_or(text.len(), |n| at + n);
                 timed = Some(text[at + TIME.len_utf8()..end].to_string());
                 text.replace_range(at..end, "");
+                // The summary may span lines, as a heredoc does.
+                head_rows = wrap(&text[..at], cols.saturating_sub(2)).len();
             }
-            let head_rows = wrap(text.split('\n').next().unwrap_or(""), cols.saturating_sub(2)).len();
             for (i, part) in wrap(&text, cols.saturating_sub(2))
                 .into_iter()
                 .enumerate()
@@ -5572,6 +5574,29 @@ mod tests {
         let at = rows.iter().position(|r| r.contains("xxxx")).unwrap();
         assert!(!rows[at].contains("7ms"), "{rows:?}");
         assert!(rows[at + 1].trim() == "7ms" && rows[at + 1].ends_with("7ms"), "{rows:?}");
+    }
+
+    #[test]
+    fn a_multi_line_summary_keeps_its_duration_last() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `cat <<EOF\nhello\nEOF`".into(),
+            args: "{}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: String::new(),
+            output: String::new(),
+            detail: String::new(),
+            ms: 9,
+        });
+        let frame = strip(&a.frame(60, 12));
+        let rows: Vec<&str> = frame.split("\r\n").collect();
+        let first = rows.iter().position(|r| r.contains("cat <<EOF")).unwrap();
+        assert!(!rows[first].contains("9ms"), "{rows:?}");
+        let last = rows.iter().position(|r| r.contains("EOF`")).unwrap();
+        assert!(rows[last].ends_with("9ms"), "{rows:?}");
     }
 
     #[test]
