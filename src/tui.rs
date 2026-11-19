@@ -772,7 +772,8 @@ pub struct App {
     verbose: bool,
     root: std::path::PathBuf,
     agent: String,
-    agents: Vec<String>,
+    /// Agent profiles as name and description.
+    agents: Vec<(String, String)>,
     sessions_dir: std::path::PathBuf,
     last_redraw: Instant,
     last_size: (usize, usize),
@@ -898,6 +899,15 @@ fn command_items() -> Vec<PickItem> {
 
 /// One list row: mark, label, and an aligned description when the picker has
 /// any.
+/// The right column of a picker row, led by `current` for the active entry.
+fn mark_current(current: bool, about: &str) -> String {
+    match (current, about.is_empty()) {
+        (true, true) => "current".into(),
+        (true, false) => format!("current · {about}"),
+        (false, _) => about.to_string(),
+    }
+}
+
 fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize) -> String {
     let item = &picker.items[index];
     let marker = if at == picker.index { "▸" } else { " " };
@@ -1170,7 +1180,7 @@ impl App {
         let history = load_history();
         let agents = crate::store::load_agents(&cfg, &root)
             .into_iter()
-            .map(|a| a.name)
+            .map(|a| (a.name, a.description))
             .collect();
         let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
         Self {
@@ -1594,10 +1604,10 @@ impl App {
     fn agent_items(&self) -> Vec<PickItem> {
         self.agents
             .iter()
-            .map(|name| PickItem {
+            .map(|(name, about)| PickItem {
                 label: name.clone(),
                 value: name.clone(),
-                desc: String::new(),
+                desc: mark_current(name == &self.agent, about),
                 actions: Vec::new(),
             })
             .collect()
@@ -1616,16 +1626,11 @@ impl App {
                 continue;
             }
             seen.push(name.clone());
-            let mut label = name.clone();
-            if name == current {
-                label.push_str("  (current)");
-            } else if name == default {
-                label.push_str("  (default)");
-            }
+            let about = if name == default { "default" } else { "" };
             items.push(PickItem {
-                label,
+                label: name.clone(),
+                desc: mark_current(name == current, about),
                 value: name,
-                desc: String::new(),
                 actions: Vec::new(),
             });
         }
@@ -1639,11 +1644,7 @@ impl App {
             .map(|name| PickItem {
                 label: name.to_string(),
                 value: name.to_string(),
-                desc: if name == current {
-                    "current".into()
-                } else {
-                    String::new()
-                },
+                desc: mark_current(name == current, ""),
                 actions: Vec::new(),
             })
             .collect()
@@ -1678,10 +1679,11 @@ impl App {
         ] {
             let name = format!("{provider:?}").to_lowercase();
             let profile = provider.profile();
+            let about = format!("{}  {}", profile.base_url, profile.model);
             items.push(PickItem {
+                desc: mark_current(name == self.cfg.active_name, &about),
                 label: name.clone(),
                 value: name.clone(),
-                desc: format!("{}  {}", profile.base_url, profile.model),
                 actions: Vec::new(),
             });
         }
@@ -1689,7 +1691,10 @@ impl App {
             items.push(PickItem {
                 label: profile.name.clone(),
                 value: profile.name.clone(),
-                desc: format!("{}  {}  ({})", profile.base, profile.model, profile.dialect),
+                desc: mark_current(
+                    profile.name == self.cfg.active_name,
+                    &format!("{}  {}  {}", profile.base, profile.model, profile.dialect),
+                ),
                 actions: Vec::new(),
             });
         }
@@ -2164,13 +2169,7 @@ impl App {
                 let rest = other.strip_prefix("agent").unwrap_or("").trim();
                 match rest {
                     "" => {
-                        let mut picker =
-                            Picker::new("agent", self.agent_items(), PickKind::Agent);
-                        picker.index = self
-                            .agents
-                            .iter()
-                            .position(|name| name == &self.agent)
-                            .unwrap_or(0);
+                        let picker = self.value_picker("agent", self.agent_items(), PickKind::Agent);
                         self.pending = Some(Pending::Pick(picker));
                         self.dirty = true;
                     }
@@ -4474,9 +4473,33 @@ mod tests {
         let picker = open_picker(&a);
         assert_eq!(picker.kind, PickKind::Model);
         let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
-        assert_eq!(labels[0], "other  (current)");
-        assert_eq!(labels[1], "deepseek-flash  (default)");
+        assert_eq!(labels[0], "other");
+        assert_eq!(picker.items[0].desc, "current");
+        assert_eq!(labels[1], "deepseek-flash");
+        assert_eq!(picker.items[1].desc, "default");
         assert!(labels.contains(&"deepseek-v4-pro"), "{labels:?}");
+        assert!(labels.iter().all(|l| !l.contains("(current)")), "{labels:?}");
+    }
+
+    #[test]
+    fn pickers_mark_the_current_entry_one_way() {
+        let mut a = app();
+        open_agent_picker(&mut a);
+        let picker = open_picker(&a);
+        let current = &picker.items[picker.index];
+        assert_eq!(current.desc, "current · default profile");
+        assert_eq!(picker.items[1].desc, "reviewer profile");
+        a.pending = None;
+        let (tx, _rx) = channel();
+        a.run_command("theme", &tx);
+        let picker = open_picker(&a);
+        let marked: Vec<&str> = picker
+            .items
+            .iter()
+            .filter(|i| i.desc.starts_with("current"))
+            .map(|i| i.label.as_str())
+            .collect();
+        assert_eq!(marked, vec![a.palette.theme_name()]);
     }
 
     #[test]
@@ -5547,12 +5570,10 @@ mod tests {
     }
 
     fn open_agent_picker(a: &mut App) {
-        a.agents = vec![
-            "default".into(),
-            "reviewer".into(),
-            "researcher".into(),
-            "writer".into(),
-        ];
+        a.agents = ["default", "reviewer", "researcher", "writer"]
+            .iter()
+            .map(|n| (n.to_string(), format!("{n} profile")))
+            .collect();
         let (tx, _rx) = channel();
         a.run_command("agent", &tx);
     }

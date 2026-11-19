@@ -28,7 +28,7 @@
 ## 5. Modals
 
 - [x] 5.1 Open the picker for bare `/theme` and `/provider`, and close a value picker when its filter gains a space. Verify: tests for both pickers and for `/provider add work` reaching the form.
-- [ ] 5.2 Use `current` as the only current marker and show agent descriptions. Verify: model, theme, and agent picker tests.
+- [x] 5.2 Use `current` as the only current marker and show agent descriptions. Verify: model, theme, and agent picker tests.
 - [ ] 5.3 Show the browsed directory in `/cd` and `/image` titles. Verify: a test after opening a subdirectory.
 - [ ] 5.4 Keep the session picker behind the delete confirmation and name the title. Verify: a frame test with both visible.
 - [ ] 5.5 Draw the composer caret in text prompts. Verify: a `/rename` frame test finds no trailing `_`.
