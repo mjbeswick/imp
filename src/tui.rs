@@ -2893,11 +2893,21 @@ impl App {
     /// One frame as bytes. No terminal access, so it can be tested.
     pub fn frame(&mut self, cols: usize, rows: usize) -> String {
         let composer = self.composer(cols, rows.saturating_sub(1).max(1));
-        let body_rows = rows.saturating_sub(1 + composer.len()).max(1);
+        // A rule sets the composer apart, unless the screen is too short.
+        let rule = usize::from(rows >= 8);
+        let body_rows = rows.saturating_sub(1 + rule + composer.len()).max(1);
 
         let markdown = self.cfg.links.supported();
         let mut lines: Vec<(Role, Line)> = Vec::new();
+        let mut spoke = false;
         for entry in &self.entries {
+            if entry.role == Role::User {
+                // One blank row opens every turn after the first.
+                if spoke {
+                    lines.push((Role::User, Line::Text(String::new())));
+                }
+                spoke = true;
+            }
             if entry.role == Role::Assistant {
                 for row in crate::render::lines(&entry.text, cols, markdown) {
                     lines.push((entry.role, Line::Spans(row)));
@@ -2957,6 +2967,11 @@ impl App {
             screen.push_str("\r\n");
         }
 
+        if rule == 1 {
+            screen.push_str("\x1b[2K");
+            screen.push_str(&self.palette.paint(Role::Thinking, &"─".repeat(cols)));
+            screen.push_str("\r\n");
+        }
         for row in &composer {
             screen.push_str("\x1b[2K");
             screen.push_str(row);
@@ -4115,6 +4130,27 @@ mod tests {
         a.handle_key(Key::Down, &tx);
         assert_eq!(a.cursor, 3, "Down did not land on the row below");
         assert_eq!(a.input, "aa\nbbb");
+    }
+
+    #[test]
+    fn a_rule_sets_the_composer_apart_and_turns_are_spaced() {
+        let mut a = app();
+        a.push(Role::User, "first");
+        a.push(Role::Assistant, "reply");
+        a.push(Role::User, "second");
+        let frame = strip(&a.frame(80, 24));
+        let rows: Vec<&str> = frame.split("\r\n").collect();
+        let rule = rows.iter().position(|r| r.starts_with("────")).expect("no rule");
+        assert!(rows[rule + 1].starts_with("> "), "the composer does not follow: {rows:?}");
+        assert_eq!(rows[rule].chars().count(), 80);
+        let first = rows.iter().position(|r| *r == "> first").unwrap();
+        let second = rows.iter().position(|r| *r == "> second").unwrap();
+        assert_eq!(rows[second - 1], "", "no gap before the second turn: {rows:?}");
+        assert_ne!(rows[first - 1], "> first");
+        assert!(rows[..first].iter().all(|r| r.is_empty()), "{rows:?}");
+
+        let short = strip(&a.frame(80, 7));
+        assert!(!short.contains("────"), "a rule on a 7-row screen: {short:?}");
     }
 
     #[test]
@@ -5976,8 +6012,12 @@ mod tests {
         a.push(Role::User, "brand new line");
         let after = a.frame(60, 8);
         assert!(!after.contains("brand new line"), "view jumped to the tail");
-        assert!(before.contains("line 29"), "{before:?}");
-        assert!(after.contains("line 29"), "rows moved: {after:?}");
+        // Turns are spaced now, so probe whichever row the page showed.
+        let probe = (0..40)
+            .map(|i| format!("> line {i}\r"))
+            .find(|l| before.contains(l.as_str()))
+            .unwrap_or_else(|| panic!("no row visible: {before:?}"));
+        assert!(after.contains(&probe), "rows moved: {after:?}");
         assert!(a.unseen > 5, "unseen count did not grow: {}", a.unseen);
     }
 
