@@ -553,13 +553,13 @@ The system SHALL draw `[text](url)` as the link text wrapped in an OSC 8 hyperli
 - **WHEN** `links=never`
 - **THEN** no OSC 8 sequence is emitted and links render as text with the URL
 
-### Requirement: Thirteen slash commands, no more
+### Requirement: Fourteen slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, `/image`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all thirteen commands appear with a one-line description
+- **THEN** all fourteen commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -588,6 +588,10 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reloa
 #### Scenario: Line mode
 - **WHEN** the user runs `/help` in line mode
 - **THEN** it prints the same list as a plain block
+
+#### Scenario: Fork
+- **WHEN** the user runs `/fork`
+- **THEN** the session continues in a new id and the transcript names both ids
 
 ### Requirement: The session root can be inspected and changed
 
