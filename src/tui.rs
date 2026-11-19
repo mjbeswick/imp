@@ -2996,30 +2996,38 @@ impl App {
             Some(Pending::Pick(picker)) => picker,
             _ => return None,
         };
-        let width = (cols * 80 / 100).max(40).min(cols);
+        let width = (cols * 80 / 100).clamp(40, 72).min(cols);
         if width < 4 || rows < 5 {
             return None;
         }
         let inner = width.saturating_sub(2);
         let matches = picker.matches();
         let visible = matches.len().min(PICK_ROWS).max(1);
-        let height = visible + 5;
+        let height = visible + 4;
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
 
-        let wall = self.palette.paint(Role::Thinking, "│");
-        let mut block: Vec<String> = Vec::new();
-        block.push(
+        // An edge with text set into it: `╭─ title ───── 3/40 ─╮`.
+        let edge = |l: char, r: char, left: &str, right: &str| {
+            let left = fit(&format!("─ {left} "), inner);
+            let right = if right.is_empty() { String::new() } else { format!(" {right} ─") };
+            let used = left.chars().count() + right.chars().count();
+            let right = if used > inner { String::new() } else { right };
+            let fill = inner.saturating_sub(left.chars().count() + right.chars().count());
             self.palette
-                .paint(Role::Thinking, &format!("┌{}┐", "─".repeat(inner))),
-        );
+                .paint(Role::Thinking, &format!("{l}{left}{}{right}{r}", "─".repeat(fill)))
+        };
+        let position = if matches.len() > visible {
+            format!("{}/{}", picker.index + 1, matches.len())
+        } else {
+            String::new()
+        };
 
-        let mut head = format!(" {}  filter: {}", picker.title, picker.filter);
-        if matches.len() > visible {
-            head.push_str(&format!("  {}/{}", picker.index + 1, matches.len()));
-        }
-        block.push(format!("{wall}{}{wall}", self.boxed(&head, inner, false)));
+        let wall = self.palette.paint(Role::Thinking, "│");
+        let mut block: Vec<String> = vec![edge('╭', '╮', &picker.title, &position)];
+        let filter = format!(" › {}", picker.filter);
+        block.push(format!("{wall}{}{wall}", self.boxed(&filter, inner, false)));
         block.push(
             self.palette
                 .paint(Role::Thinking, &format!("├{}┤", "─".repeat(inner))),
@@ -3041,22 +3049,13 @@ impl App {
                 self.boxed(&text, inner, selected)
             ));
         }
-
-        block.push(format!(
-            "{wall}{}{wall}",
-            self.boxed(&picker.footer(), inner, false)
-        ));
-        block.push(
-            self.palette
-                .paint(Role::Thinking, &format!("└{}┘", "─".repeat(inner))),
-        );
+        block.push(edge('╰', '╯', &picker.footer(), ""));
 
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{line}", y + i, x));
         }
-        let head = format!(" {}  filter: ", picker.title).chars().count();
-        let cursor = (x + 1 + head + picker.filter.chars().count()).min(x + width - 2);
+        let cursor = (x + 1 + filter.chars().count()).min(x + width - 2);
         Some((out, cursor, y + 1))
     }
 
@@ -5593,10 +5592,10 @@ mod tests {
         open_many(&mut a, 3);
         let frame = a.frame(50, 24);
         let start = frame
-            .find('┌')
+            .find('╭')
             .unwrap_or_else(|| panic!("no overlay in {frame:?}"));
         let end = frame[start..]
-            .find('┐')
+            .find('╮')
             .map(|at| start + at)
             .unwrap_or_else(|| panic!("no top border in {frame:?}"));
         assert_eq!(
@@ -5626,17 +5625,45 @@ mod tests {
     }
 
     #[test]
+    fn the_overlay_sets_title_position_and_keys_in_its_edges() {
+        let mut a = app();
+        open_many(&mut a, 40);
+        let frame = strip(&a.frame(200, 30));
+        let start = frame.find('╭').expect("top edge");
+        let end = start + frame[start..].find('╮').expect("top corner");
+        let top = &frame[start..end + '╮'.len_utf8()];
+        assert!(top.starts_with("╭─ agent "), "{top}");
+        assert!(top.ends_with(" 1/40 ─╮"), "{top}");
+        assert_eq!(top.chars().count(), 72, "{top}");
+        let bottom = &frame[frame.find('╰').expect("bottom edge")..];
+        assert!(bottom.starts_with("╰─ Enter choose · Esc close "), "{bottom}");
+        assert!(frame.contains("│ › "), "no filter row: {frame}");
+    }
+
+    #[test]
+    fn the_filter_cursor_follows_the_typed_text() {
+        let mut a = app();
+        open_many(&mut a, 3);
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Char('r'), &tx);
+        let (_, x, y) = a.overlay(100, 30).expect("overlay");
+        // Box at column 15 (72 wide in 100): wall, " › ", then `r`.
+        assert_eq!(x, 15 + 1 + 3 + 1);
+        assert!(y >= 1);
+    }
+
+    #[test]
     fn closing_the_picker_leaves_no_border() {
         let mut a = app();
         a.push(Role::User, "a transcript row");
         let before = a.frame(80, 20);
         open_many(&mut a, 40);
         let open = a.frame(80, 20);
-        assert!(open.contains('┌'), "the picker did not draw");
+        assert!(open.contains('╭'), "the picker did not draw");
         let (tx, _rx) = channel();
         a.handle_key(Key::Esc, &tx);
         let after = a.frame(80, 20);
-        assert!(!after.contains('┌'), "border residue after close");
+        assert!(!after.contains('╭'), "border residue after close");
         assert_eq!(before, after, "closing the picker changed the frame");
     }
 
