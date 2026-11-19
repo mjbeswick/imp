@@ -2997,14 +2997,14 @@ impl App {
                 Pending::ConfirmDelete { id, title, .. } => {
                     format!("delete \"{}\" ({id})? y/N", title.replace('\n', " "))
                 }
-                Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
-                Pending::RenameCurrent { value } => format!("new title: {value}_"),
+                Pending::Prompt { label, value, .. } => format!("{label}: {value}{CARET}"),
+                Pending::RenameCurrent { value } => format!("new title: {value}{CARET}"),
                 Pending::ProviderForm { name, fields, at } => {
                     let (label, value) = fields
                         .get(*at)
                         .cloned()
                         .unwrap_or_else(|| ("field".into(), String::new()));
-                    format!("provider {name} · {label}: {value}_  (Enter next · Esc cancel)")
+                    format!("provider {name} · {label}: {value}{CARET}  (Enter next · Esc cancel)")
                 }
                 Pending::Question {
                     q,
@@ -3019,7 +3019,7 @@ impl App {
                     }
                     match mode {
                         AskMode::Choose => text.push_str("[e] answer   Esc skip"),
-                        AskMode::Custom => text.push_str(&format!("> {typed}_")),
+                        AskMode::Custom => text.push_str(&format!("> {typed}{CARET}")),
                     }
                     text
                 }
@@ -3029,7 +3029,9 @@ impl App {
             } else {
                 text
             };
-            return Some(self.palette.paint(Role::Info, &fit(&text, cols)));
+            // The caret is the composer's block, and keeps the row's colour.
+            let painted = self.palette.paint(Role::Info, &fit(&text, cols));
+            return Some(painted.replace(CARET, "\x1b[7m \x1b[27m"));
         }
         None
     }
@@ -5489,6 +5491,17 @@ mod tests {
         });
         let frame = strip(&a.frame(100, 30));
         assert!(frame.contains("delete \"Rate my machine.\" (51280befc)? y/N"), "{frame}");
+    }
+
+    #[test]
+    fn text_prompts_use_the_block_caret() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.run_command("rename", &tx);
+        a.handle_key(Key::Char('x'), &tx);
+        let frame = a.frame(80, 20);
+        assert!(frame.contains("new title: x\x1b[7m \x1b[27m"), "{frame:?}");
+        assert!(!strip(&frame).contains("x_"), "{frame:?}");
     }
 
     #[test]
