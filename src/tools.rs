@@ -15,6 +15,9 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_WRITE: u64 = 5 * 1024 * 1024;
 const READ_LINES: usize = 2000;
 const READ_BYTES: usize = 200 * 1024;
+const DIR_ENTRIES: usize = 200;
+const LIST_BYTES: usize = 3500;
+const IGNORE: &[&str] = &[".git", ".jj", "target", "node_modules", "dist", "build", ".venv"];
 
 extern "C" {
     fn setpgid(pid: c_int, pgid: c_int) -> c_int;
@@ -263,9 +266,17 @@ impl Tools {
         }
     }
 
-    pub fn read(&mut self, paths: &[String], offset: Option<usize>, limit: Option<usize>) -> Outcome {
+    pub fn read(
+        &mut self,
+        paths: &[String],
+        offset: Option<usize>,
+        limit: Option<usize>,
+        depth: Option<usize>,
+    ) -> Outcome {
         let limit = limit.unwrap_or(READ_LINES).min(READ_LINES);
         let offset = offset.unwrap_or(0);
+        let depth = depth.unwrap_or(1).clamp(1, 3);
+        let mut budget = LIST_BYTES;
         let mut out = String::new();
         let mut ok = true;
 
@@ -279,8 +290,8 @@ impl Tools {
                 }
             };
             if path.is_dir() {
-                ok = false;
-                out.push_str(&format!("== {raw} ==\nis a directory\n"));
+                out.push_str(&format!("== {raw} ==\n"));
+                walk_dir(&path, 0, depth, &mut out, &mut budget);
                 continue;
             }
             let bytes = match std::fs::read(&path) {
@@ -396,6 +407,66 @@ impl Tools {
     }
 }
 
+/// Sorted, depth-limited directory listing with the shared ignore list and a
+/// byte budget that keeps it under the spill threshold.
+fn walk_dir(
+    dir: &std::path::Path,
+    level: usize,
+    depth: usize,
+    out: &mut String,
+    budget: &mut usize,
+) {
+    if *budget == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        out.push_str(&format!("{}... [unreadable]\n", "  ".repeat(level)));
+        return;
+    };
+    let mut items: Vec<_> = entries.flatten().collect();
+    items.sort_by_key(|e| e.file_name());
+    let mut shown = 0usize;
+    for e in items {
+        let name = e.file_name().to_string_lossy().to_string();
+        if IGNORE.contains(&name.as_str()) {
+            continue;
+        }
+        if shown >= DIR_ENTRIES {
+            let line = format!("{}... [more entries cut]\n", "  ".repeat(level));
+            if line.len() <= *budget {
+                *budget -= line.len();
+                out.push_str(&line);
+            }
+            return;
+        }
+        let path = e.path();
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let file_type = meta.file_type();
+        let (suffix, is_dir) = if file_type.is_symlink() {
+            ("@", false)
+        } else if file_type.is_dir() {
+            ("/", true)
+        } else {
+            ("", false)
+        };
+        let line = format!("{}{}{}\n", "  ".repeat(level), name, suffix);
+        if line.len() > *budget {
+            *budget = 0;
+            out.push_str("... [listing cut]\n");
+            return;
+        }
+        *budget -= line.len();
+        out.push_str(&line);
+        shown += 1;
+        if is_dir && level + 1 < depth {
+            walk_dir(&path, level + 1, depth, out, budget);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,7 +554,7 @@ mod tests {
         let (mut t, d) = tools();
         std::fs::write(d.join("a.txt"), "one\ntwo\n").unwrap();
         std::fs::write(d.join("b.txt"), "three\n").unwrap();
-        let o = t.read(&["a.txt".into(), "b.txt".into()], None, None);
+        let o = t.read(&["a.txt".into(), "b.txt".into()], None, None, None);
         assert!(o.ok);
         assert!(o.text.contains("1: one"), "{}", o.text);
         assert!(o.text.contains("three"), "{}", o.text);
@@ -493,12 +564,60 @@ mod tests {
     fn read_rejects_escape_and_binary() {
         let (mut t, d) = tools();
         std::fs::write(d.join("bin"), [0xff, 0xfe, 0x00]).unwrap();
-        let o = t.read(&["bin".into()], None, None);
+        let o = t.read(&["bin".into()], None, None, None);
         assert!(!o.ok);
         assert!(o.text.contains("not valid UTF-8"));
-        let o = t.read(&["../../etc/passwd".into()], None, None);
+        let o = t.read(&["../../etc/passwd".into()], None, None, None);
         assert!(!o.ok);
         assert!(o.text.contains("outside"), "{}", o.text);
+    }
+
+    #[test]
+    fn read_lists_a_directory_tree() {
+        let (mut t, d) = tools();
+        std::fs::create_dir_all(d.join("src/a")).unwrap();
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        std::fs::create_dir_all(d.join("target")).unwrap();
+        std::fs::write(d.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(d.join("src/a/mod.rs"), "mod a;\n").unwrap();
+        std::fs::write(d.join("root.txt"), "root\n").unwrap();
+        let _ = std::os::unix::fs::symlink(d.join("src"), d.join("src/loop"));
+
+        let one = t.read(&["src".into()], None, None, None);
+        assert!(one.ok, "{}", one.text);
+        assert!(one.text.contains("main.rs"), "{}", one.text);
+        assert!(!one.text.contains("mod.rs"), "depth 1 went deeper");
+        assert!(!one.text.contains(".git") && !one.text.contains("target"));
+
+        let two = t.read(&["src".into()], None, None, Some(2));
+        assert!(two.text.contains("a/"), "{}", two.text);
+        assert!(two.text.contains("  mod.rs"), "{}", two.text);
+        assert!(two.text.contains("loop@"), "symlink not marked: {}", two.text);
+    }
+
+    #[test]
+    fn read_caps_a_long_directory() {
+        let (mut t, d) = tools();
+        std::fs::create_dir_all(d.join("many")).unwrap();
+        for i in 0..500 {
+            std::fs::write(d.join("many").join(format!("f{i:03}")), "x").unwrap();
+        }
+        let o = t.read(&["many".into()], None, None, None);
+        assert!(o.ok);
+        assert!(o.text.contains("more entries cut"), "{}", o.text);
+        let shown = o.text.lines().filter(|l| l.starts_with('f')).count();
+        assert_eq!(shown, 200, "{}", shown);
+    }
+
+    #[test]
+    fn read_mixes_a_directory_and_a_file() {
+        let (mut t, d) = tools();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("root.txt"), "root\n").unwrap();
+        let o = t.read(&["src".into(), "root.txt".into()], None, None, None);
+        assert!(o.ok);
+        assert!(o.text.contains("== src =="), "{}", o.text);
+        assert!(o.text.contains("1: root"), "{}", o.text);
     }
 
     #[test]
@@ -516,7 +635,7 @@ mod tests {
         let o = t.write("f.txt", "new");
         assert!(!o.ok);
         assert!(o.text.contains("read f.txt"));
-        let _ = t.read(&["f.txt".into()], None, None);
+        let _ = t.read(&["f.txt".into()], None, None, None);
         assert!(t.write("f.txt", "new").ok);
         assert_eq!(std::fs::read_to_string(d.join("f.txt")).unwrap(), "new");
     }
