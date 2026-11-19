@@ -71,6 +71,7 @@ pub struct Session {
     pub job_dir: std::path::PathBuf,
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
+    pub last_model: Option<String>,
     pub transport: Box<dyn Transport>,
     pub memory: Memory,
     pub skills: Vec<Skill>,
@@ -115,6 +116,7 @@ impl Session {
             job_dir,
             log: None,
             last_usage: (0, 0, 0),
+            last_model: None,
             transport: Box::new(Live),
             memory,
             skills,
@@ -314,6 +316,7 @@ impl Session {
             }
 
             self.last_usage = (acc.cache_hit, acc.cache_miss, acc.completion_tokens);
+            self.last_model = acc.model.clone();
             match api::classify(status, acc.finish.as_deref(), &raw_error) {
                 Ok(()) if status == 200 => return Ok(acc),
                 Ok(()) => {}

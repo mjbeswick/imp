@@ -196,6 +196,7 @@ pub enum Event {
         arguments: Option<String>,
     },
     Finish(String),
+    Model(String),
     Usage {
         prompt: u64,
         completion: u64,
@@ -241,6 +242,12 @@ fn parse_chunk(payload: &str) -> Vec<Event> {
     let Ok(v) = serde_json::from_str::<Value>(payload) else {
         return out;
     };
+
+    if let Some(model) = v.get("model").and_then(Value::as_str) {
+        if !model.is_empty() {
+            out.push(Event::Model(model.to_string()));
+        }
+    }
 
     if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
         out.push(Event::Usage {
@@ -317,6 +324,7 @@ pub struct Accum {
     pub reasoning: String,
     pub calls: BTreeMap<usize, ToolCall>,
     pub finish: Option<String>,
+    pub model: Option<String>,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cache_hit: u64,
@@ -346,6 +354,7 @@ impl Accum {
                 }
             }
             Event::Finish(f) => self.finish = Some(f),
+            Event::Model(m) => self.model = Some(m),
             Event::Usage {
                 prompt,
                 completion,
@@ -432,6 +441,14 @@ mod tests {
             }
         }
         a
+    }
+
+    #[test]
+    fn served_model_is_kept() {
+        let a = feed(&[
+            "data: {\"model\":\"deepseek-flash-2026-11\",\"choices\":[]}\n\n",
+        ]);
+        assert_eq!(a.model.as_deref(), Some("deepseek-flash-2026-11"));
     }
 
     #[test]

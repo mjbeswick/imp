@@ -489,6 +489,7 @@ pub enum Ev {
         hit: u64,
         miss: u64,
         output: u64,
+        model: Option<String>,
     },
     Confirm { what: String, reply: Sender<bool> },
     Question { q: String, opts: Vec<String>, reply: Sender<Option<String>> },
@@ -700,6 +701,7 @@ struct Status {
     hit: u64,
     miss: u64,
     output: u64,
+    served: String,
     streaming: bool,
 }
 
@@ -744,6 +746,7 @@ impl App {
                 hit: 0,
                 miss: 0,
                 output: 0,
+                served: String::new(),
                 streaming: false,
             },
             agents,
@@ -846,11 +849,15 @@ impl App {
                 hit,
                 miss,
                 output,
+                model,
             } => {
                 self.status.tokens = tokens;
                 self.status.hit += hit;
                 self.status.miss += miss;
                 self.status.output += output;
+                if let Some(model) = model {
+                    self.status.served = model;
+                }
                 self.dirty = true;
             }
             Ev::Confirm { what, reply } => {
@@ -1730,10 +1737,14 @@ impl App {
         )
         .map(|c| format!(" · ${c:.2}"))
         .unwrap_or_default();
+        let model = if self.status.served.is_empty() || self.status.served == self.cfg.model {
+            self.cfg.model.clone()
+        } else {
+            format!("{} ({})", self.cfg.model, self.status.served)
+        };
         fit(
             &format!(
-                " {spin} {} · {} tok{money}{unseen}{thinking}",
-                self.cfg.model,
+                " {spin} {model} · {} tok{money}{unseen}{thinking}",
                 compact_tokens(self.status.tokens),
             ),
             cols,
@@ -1904,6 +1915,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         hit: worker_session.last_usage.0,
                         miss: worker_session.last_usage.1,
                         output: worker_session.last_usage.2,
+                        model: worker_session.last_model.clone(),
                     });
                     let _ = ev_tx.send(Ev::Done(result.err()));
                 }
@@ -2593,12 +2605,14 @@ mod tests {
             hit: 900,
             miss: 100,
             output: 50,
+            model: None,
         });
         a.apply(Ev::Usage {
             tokens: 200,
             hit: 400,
             miss: 200,
             output: 25,
+            model: None,
         });
         assert_eq!(a.status.hit, 1300);
         assert_eq!(a.status.miss, 300);
@@ -2613,6 +2627,20 @@ mod tests {
         .unwrap();
         let line = a.status_line(120);
         assert!(line.contains(&format!("${total:.2}")), "{line}");
+    }
+
+    #[test]
+    fn status_shows_the_served_model_when_it_differs() {
+        let mut a = app();
+        a.status.served = "deepseek-flash-2026-11".into();
+        assert!(
+            a.status_line(120)
+                .contains("deepseek-flash (deepseek-flash-2026-11)"),
+            "{}",
+            a.status_line(120)
+        );
+        a.status.served = "deepseek-flash".into();
+        assert!(!a.status_line(120).contains('('), "{}", a.status_line(120));
     }
 
     #[test]
