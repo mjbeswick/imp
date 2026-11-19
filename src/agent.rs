@@ -736,11 +736,6 @@ impl Session {
                         Decision::Allow => {}
                     }
                 }
-                if cmd.split_whitespace().next() == Some("sudo") {
-                    if let Some(code) = hooks.run_attached(cmd) {
-                        return (code == 0, format!("exit {code}\n(ran attached to the terminal)"));
-                    }
-                }
                 match perm::classify_command(cmd, self.cfg.live_permissions(), self.cfg.allow_sudo) {
                     Decision::Deny(why) => return (false, why),
                     Decision::Ask => {
@@ -749,6 +744,12 @@ impl Session {
                         }
                     }
                     Decision::Allow => {}
+                }
+                // Only after the deny list, the opt-in, and any confirmation.
+                if cmd.split_whitespace().next() == Some("sudo") {
+                    if let Some(code) = hooks.run_attached(cmd) {
+                        return (code == 0, format!("exit {code}\n(ran attached to the terminal)"));
+                    }
                 }
                 if args.get("background").and_then(Value::as_bool).unwrap_or(false) {
                     return match self.jobs.start(cmd, &self.job_dir) {
@@ -1732,6 +1733,37 @@ mod tests {
             self.0 = true;
             Some(7)
         }
+    }
+
+    #[test]
+    fn a_refused_privilege_command_never_reaches_the_terminal() {
+        let d = tmp();
+        let cfg = crate::config::Config::default();
+        assert!(!cfg.allow_sudo);
+        let args = serde_json::json!({ "command": privileged_command() }).to_string();
+        let fake = std::sync::Arc::new(crate::transport::Fake::new(vec![
+            crate::transport::Script::Ok(crate::transport::tool_reply("c1", "bash", &args)),
+            crate::transport::Script::Ok(crate::transport::text_reply("done")),
+        ]));
+        let mut s = Session::new(
+            cfg,
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        );
+        s.transport = Box::new(fake);
+        let mut hooks = Attach(false);
+        s.turn("try", &mut hooks).unwrap();
+        assert!(!hooks.0, "ran attached without allow_sudo");
+        let tool = s
+            .history
+            .iter()
+            .find(|m| m.role == crate::api::Role::Tool)
+            .unwrap();
+        assert!(tool.content.contains("refused"), "{}", tool.content);
     }
 
     #[test]
