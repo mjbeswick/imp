@@ -45,7 +45,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 ```
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn scroll
-Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab pick directory · Left up · Esc cancel
+Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
 Ctrl+O expand the last tool call · Ctrl+D leaves line mode
 ```
 
@@ -77,10 +77,12 @@ opens its picker, `/stash` and `/rename` get a space for their text, and any
 other command waits for Enter.
 
 Command rows show the command on the left and its description on the right.
-Bare `/cd` browses directories from the session root, with Enter to open one,
-Tab to select it, and Left or the `../` row to go up, including above the root.
-The picker title names the directory being browsed. Bare `/image`
-browses directories and PNG, JPEG, GIF, and WebP files, and Enter attaches the
+Bare `/cd` browses directories from the session root. Enter makes the
+highlighted folder the session root; Tab or Right opens it; Left goes up,
+including above the root. The list starts with `./`, the folder on screen, so
+Enter there chooses where you are, then `../`. The picker title names the
+directory being browsed. Bare `/image` browses directories and PNG, JPEG, GIF,
+and WebP files: Enter, Tab, or Right opens a folder, and Enter attaches the
 highlighted image.
 
 `/image <path>` or pasting an image path attaches PNG, JPEG, GIF, or WebP up to
