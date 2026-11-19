@@ -725,6 +725,7 @@ pub struct App {
     status: Status,
     verbose: bool,
     root: std::path::PathBuf,
+    agent: String,
     agents: Vec<String>,
     sessions_dir: std::path::PathBuf,
     last_redraw: Instant,
@@ -736,7 +737,7 @@ pub struct App {
 }
 
 enum Pending {
-    Choose { title: String, options: Vec<String>, index: usize, action: ChooseKind },
+    Pick(Picker),
     Confirm { what: String, reply: Sender<bool> },
     Prompt { label: String, value: String, rename_id: String },
     ConfirmDelete { id: String },
@@ -749,9 +750,91 @@ enum AskMode {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum ChooseKind {
+enum PickKind {
     Agent,
     Session,
+}
+
+#[derive(Clone)]
+struct PickItem {
+    label: String,
+    value: String,
+}
+
+/// The one picker: a title, a filter, a scrolling list, and a selection.
+struct Picker {
+    title: String,
+    filter: String,
+    items: Vec<PickItem>,
+    index: usize,
+    offset: usize,
+    kind: PickKind,
+}
+
+/// Rows the picker shows at once. Paging moves by the same amount.
+const PICK_ROWS: usize = 8;
+
+impl Picker {
+    fn new(title: impl Into<String>, items: Vec<PickItem>, kind: PickKind) -> Self {
+        Self {
+            title: title.into(),
+            filter: String::new(),
+            items,
+            index: 0,
+            offset: 0,
+            kind,
+        }
+    }
+
+    /// Indices of the items matching the filter, in list order.
+    fn matches(&self) -> Vec<usize> {
+        let needle = self.filter.to_lowercase();
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| needle.is_empty() || item.label.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn selected(&self) -> Option<&PickItem> {
+        let matches = self.matches();
+        matches.get(self.index).map(|&i| &self.items[i])
+    }
+
+    fn reset(&mut self) {
+        self.index = 0;
+        self.offset = 0;
+    }
+
+    fn move_by(&mut self, delta: isize) {
+        let count = self.matches().len();
+        if count == 0 {
+            self.reset();
+            return;
+        }
+        let target = (self.index as isize + delta).clamp(0, count as isize - 1);
+        self.index = target as usize;
+        if self.index < self.offset {
+            self.offset = self.index;
+        }
+        if self.index >= self.offset + PICK_ROWS {
+            self.offset = self.index + 1 - PICK_ROWS;
+        }
+        if self.offset + PICK_ROWS > count {
+            self.offset = count.saturating_sub(PICK_ROWS);
+        }
+    }
+
+    fn filter_push(&mut self, c: char) {
+        self.filter.push(c);
+        self.reset();
+    }
+
+    fn filter_pop(&mut self) {
+        self.filter.pop();
+        self.reset();
+    }
 }
 
 struct Status {
@@ -771,6 +854,7 @@ impl App {
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
         cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
         root: std::path::PathBuf,
+        agent: String,
     ) -> Self {
         let palette = Palette::detect(&cfg);
         let history = load_history();
@@ -809,6 +893,7 @@ impl App {
             },
             verbose: false,
             root,
+            agent,
             agents,
             sessions_dir,
             last_redraw: Instant::now() - Duration::from_secs(1),
@@ -1291,13 +1376,21 @@ impl App {
                 let rest = other.strip_prefix("agent").unwrap_or("").trim();
                 match rest {
                     "" => {
-                        let options = self.agents.clone();
-                        self.pending = Some(Pending::Choose {
-                            title: "agent".into(),
-                            options,
-                            index: 0,
-                            action: ChooseKind::Agent,
-                        });
+                        let items = self
+                            .agents
+                            .iter()
+                            .map(|name| PickItem {
+                                label: name.clone(),
+                                value: name.clone(),
+                            })
+                            .collect();
+                        let mut picker = Picker::new("agent", items, PickKind::Agent);
+                        picker.index = self
+                            .agents
+                            .iter()
+                            .position(|name| name == &self.agent)
+                            .unwrap_or(0);
+                        self.pending = Some(Pending::Pick(picker));
                         self.dirty = true;
                     }
                     "current" => {
@@ -1320,17 +1413,19 @@ impl App {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                let mut options: Vec<String> = crate::store::Log::list(&self.sessions_dir)
+                let mut options: Vec<PickItem> = crate::store::Log::list(&self.sessions_dir)
                     .into_iter()
-                    .map(|m| crate::store::format_session(&m, now))
+                    .map(|m| PickItem {
+                        label: crate::store::format_session(&m, now),
+                        value: m.id,
+                    })
                     .collect();
                 options.truncate(20);
-                self.pending = Some(Pending::Choose {
-                    title: "session (Enter resumes after restart)".into(),
+                self.pending = Some(Pending::Pick(Picker::new(
+                    "session (Enter resumes after restart)",
                     options,
-                    index: 0,
-                    action: ChooseKind::Session,
-                });
+                    PickKind::Session,
+                )));
                 self.dirty = true;
             }
             "compact" => {
@@ -1475,64 +1570,58 @@ impl App {
                 self.dirty = true;
                 return;
             }
-            Pending::Choose { title, options, mut index, action } => {
+            Pending::Pick(mut picker) => {
                 match key {
-                    Key::Up => index = index.saturating_sub(1),
-                    Key::Down => {
-                        if index + 1 < options.len() {
-                            index += 1
-                        }
-                    }
-                    Key::Char(c) if c.is_ascii_digit() => {
-                        let n = c.to_digit(10).unwrap_or(0) as usize;
-                        if n >= 1 && n <= options.len().min(9) {
-                            index = n - 1;
-                        }
-                    }
-                    Key::Char('n') => {
+                    Key::Up => picker.move_by(-1),
+                    Key::Down => picker.move_by(1),
+                    Key::PageUp => picker.move_by(-(PICK_ROWS as isize)),
+                    Key::PageDown => picker.move_by(PICK_ROWS as isize),
+                    Key::Backspace => picker.filter_pop(),
+                    Key::Char('n') if picker.kind == PickKind::Session && picker.filter.is_empty() => {
                         let _ = tx.send(Cmd::NewSession);
                         self.entries.clear();
                         self.push(Role::Info, "new conversation");
                         self.dirty = true;
                         return;
                     }
-                    Key::Char('r') => {
-                        if let Some(choice) = options.get(index) {
-                            let id = choice.split_whitespace().next().unwrap_or("").to_string();
+                    Key::Char('r') if picker.kind == PickKind::Session && picker.filter.is_empty() => {
+                        if let Some(choice) = picker.selected() {
+                            let id = choice.value.clone();
                             self.pending = Some(Pending::Prompt {
                                 label: format!("new title for {id}"),
                                 value: String::new(),
                                 rename_id: id,
                             });
+                        } else {
+                            self.pending = Some(Pending::Pick(picker));
                         }
                         self.dirty = true;
                         return;
                     }
-                    Key::Char('d') => {
-                        if let Some(choice) = options.get(index) {
-                            let id = choice.split_whitespace().next().unwrap_or("").to_string();
-                            self.pending = Some(Pending::ConfirmDelete { id });
+                    Key::Char('d') if picker.kind == PickKind::Session && picker.filter.is_empty() => {
+                        if let Some(choice) = picker.selected() {
+                            self.pending = Some(Pending::ConfirmDelete {
+                                id: choice.value.clone(),
+                            });
+                        } else {
+                            self.pending = Some(Pending::Pick(picker));
                         }
                         self.dirty = true;
                         return;
                     }
+                    Key::Char(c) => picker.filter_push(c),
                     Key::Enter => {
-                        if let Some(choice) = options.get(index) {
-                            match action {
-                                ChooseKind::Agent => {
-                                    let name = choice.clone();
-                                    let _ = tx.send(Cmd::SetAgent(name.clone()));
-                                    self.push(Role::Info, format!("agent: {name}"));
+                        if let Some(choice) = picker.selected().cloned() {
+                            match picker.kind {
+                                PickKind::Agent => {
+                                    self.agent = choice.value.clone();
+                                    let _ = tx.send(Cmd::SetAgent(choice.value.clone()));
+                                    self.push(Role::Info, format!("agent: {}", choice.value));
                                 }
-                                ChooseKind::Session => {
-                                    let id = choice
-                                        .split_whitespace()
-                                        .next()
-                                        .unwrap_or("")
-                                        .to_string();
+                                PickKind::Session => {
                                     self.entries.clear();
-                                    self.push(Role::Info, format!("resuming {id}"));
-                                    let _ = tx.send(Cmd::Resume(id));
+                                    self.push(Role::Info, format!("resuming {}", choice.value));
+                                    let _ = tx.send(Cmd::Resume(choice.value));
                                 }
                             }
                         }
@@ -1545,7 +1634,7 @@ impl App {
                     }
                     _ => {}
                 }
-                self.pending = Some(Pending::Choose { title, options, index, action });
+                self.pending = Some(Pending::Pick(picker));
                 self.dirty = true;
             }
             Pending::Confirm { what, reply } => {
@@ -1804,16 +1893,17 @@ impl App {
     fn pending_row(&self, cols: usize) -> Option<String> {
         if let Some(pending) = &self.pending {
             let text = match pending {
-                Pending::Choose { title, options, index, .. } => {
-                    let shown: Vec<String> = options
+                Pending::Pick(picker) => {
+                    let shown: Vec<String> = picker
+                        .matches()
                         .iter()
                         .enumerate()
-                        .map(|(i, o)| {
-                            let marker = if i == *index { "▸" } else { " " };
-                            format!("{marker}{}. {o}", i + 1)
+                        .map(|(i, &item)| {
+                            let marker = if i == picker.index { "▸" } else { " " };
+                            format!("{marker}{}. {}", i + 1, picker.items[item].label)
                         })
                         .collect();
-                    format!("{title}: {}", shown.join("  "))
+                    format!("{}: {}", picker.title, shown.join("  "))
                 }
                 Pending::Confirm { what, .. } => {
                     format!("{} y/N  ({}s)", verb(what), self.seconds_left())
@@ -2128,6 +2218,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
         session.cancel.clone(),
         session.cols.clone(),
         session.tools.root.clone(),
+        session.agent.name.clone(),
     );
 
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
@@ -2481,6 +2572,7 @@ mod tests {
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
             std::env::temp_dir(),
+            "default".into(),
         )
     }
 
@@ -2492,6 +2584,7 @@ mod tests {
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
             std::env::temp_dir(),
+            "default".into(),
         )
     }
 
@@ -3157,12 +3250,14 @@ mod tests {
 
     fn picker() -> App {
         let mut a = app();
-        a.pending = Some(Pending::Choose {
-            title: "session".into(),
-            options: vec!["abc123  3m  old title  4 msgs".into()],
-            index: 0,
-            action: ChooseKind::Session,
-        });
+        a.pending = Some(Pending::Pick(Picker::new(
+            "session",
+            vec![PickItem {
+                label: "abc123  3m  old title  4 msgs".into(),
+                value: "abc123".into(),
+            }],
+            PickKind::Session,
+        )));
         a
     }
 
@@ -3208,18 +3303,107 @@ mod tests {
     #[test]
     fn choosing_a_session_sends_resume() {
         let mut a = app();
-        a.pending = Some(Pending::Choose {
-            title: "session".into(),
-            options: vec!["abc123  title  3 msgs".into()],
-            index: 0,
-            action: ChooseKind::Session,
-        });
+        a.pending = Some(Pending::Pick(Picker::new(
+            "session",
+            vec![PickItem {
+                label: "abc123  title  3 msgs".into(),
+                value: "abc123".into(),
+            }],
+            PickKind::Session,
+        )));
         let (tx, rx) = channel();
         a.handle_key(Key::Enter, &tx);
         match rx.try_recv() {
             Ok(Cmd::Resume(id)) => assert_eq!(id, "abc123"),
             _ => panic!("expected a resume command"),
         }
+    }
+
+    fn open_agent_picker(a: &mut App) {
+        a.agents = vec![
+            "default".into(),
+            "reviewer".into(),
+            "researcher".into(),
+            "writer".into(),
+        ];
+        let (tx, _rx) = channel();
+        a.run_command("agent", &tx);
+    }
+
+    fn open_picker<'a>(a: &'a App) -> &'a Picker {
+        match &a.pending {
+            Some(Pending::Pick(picker)) => picker,
+            _ => panic!("no picker is open"),
+        }
+    }
+
+    #[test]
+    fn picker_filter_narrows_and_resets_the_highlight() {
+        let mut a = app();
+        open_agent_picker(&mut a);
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Down, &tx);
+        a.handle_key(Key::Down, &tx);
+        assert_eq!(open_picker(&a).index, 2, "Down did not move");
+
+        for c in "rev".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        let picker = open_picker(&a);
+        assert_eq!(picker.filter, "rev");
+        let labels: Vec<&str> = picker
+            .matches()
+            .iter()
+            .map(|&i| picker.items[i].label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["reviewer"], "filter kept the wrong rows");
+        assert_eq!(picker.index, 0, "filter did not reset the highlight");
+
+        a.handle_key(Key::Backspace, &tx);
+        assert_eq!(open_picker(&a).filter, "re");
+        assert_eq!(open_picker(&a).matches().len(), 2);
+    }
+
+    #[test]
+    fn picker_pages_eight_rows_at_a_time() {
+        let mut a = app();
+        let items = (0..40)
+            .map(|i| PickItem {
+                label: format!("profile {i}"),
+                value: format!("p{i}"),
+            })
+            .collect();
+        a.pending = Some(Pending::Pick(Picker::new("agent", items, PickKind::Agent)));
+        let (tx, _rx) = channel();
+
+        a.handle_key(Key::PageDown, &tx);
+        assert_eq!(open_picker(&a).index, 8, "PgDn did not move eight rows");
+        assert_eq!(open_picker(&a).offset, 1, "the window did not scroll");
+
+        a.handle_key(Key::PageDown, &tx);
+        a.handle_key(Key::PageUp, &tx);
+        assert_eq!(open_picker(&a).index, 8, "PgUp did not move eight rows");
+    }
+
+    #[test]
+    fn picker_esc_cancels_without_changing_anything() {
+        let mut a = app();
+        open_agent_picker(&mut a);
+        let (tx, rx) = channel();
+        a.handle_key(Key::Char('w'), &tx);
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.pending.is_none(), "the picker stayed open");
+        assert!(rx.try_recv().is_err(), "Esc sent a command");
+        assert_eq!(a.agent, "default", "Esc changed the agent");
+    }
+
+    #[test]
+    fn agent_picker_highlights_the_current_profile() {
+        let mut a = app();
+        a.agent = "writer".into();
+        open_agent_picker(&mut a);
+        let picker = open_picker(&a);
+        assert_eq!(picker.selected().map(|i| i.label.as_str()), Some("writer"));
     }
 
     fn long_app() -> App {
@@ -3392,12 +3576,14 @@ mod tests {
     #[test]
     fn ctrl_c_exits_from_a_picker() {
         let mut a = app();
-        a.pending = Some(Pending::Choose {
-            title: "session".into(),
-            options: vec!["one".into()],
-            index: 0,
-            action: ChooseKind::Session,
-        });
+        a.pending = Some(Pending::Pick(Picker::new(
+            "session",
+            vec![PickItem {
+                label: "one".into(),
+                value: "one".into(),
+            }],
+            PickKind::Session,
+        )));
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
         assert!(a.quit, "Ctrl+C did not exit from a picker");
