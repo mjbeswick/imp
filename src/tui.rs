@@ -2128,7 +2128,10 @@ impl App {
 
     fn run_command(&mut self, cmd: &str, tx: &Sender<Cmd>) {
         match cmd {
-            "help" => self.push(Role::Info, crate::help::commands()),
+            "help" => {
+                let width = self.cols.load(Ordering::Relaxed) as usize;
+                self.push(Role::Info, crate::help::commands(width.saturating_sub(2).max(40)))
+            }
             "quit" | "exit" => self.quit = true,
             other if other == "agent" || other.starts_with("agent ") => {
                 let rest = other.strip_prefix("agent").unwrap_or("").trim();
@@ -2845,6 +2848,9 @@ impl App {
                         Role::Thinking => "~ ",
                         _ => "",
                     }
+                } else if entry.role == Role::Info {
+                    // Info text lays itself out, as `/help` does.
+                    ""
                 } else {
                     "  "
                 };
@@ -3290,9 +3296,11 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
             out.push(String::new());
             continue;
         }
-        let mut line = String::new();
-        for word in raw.split(' ') {
-            if line.is_empty() {
+        // Leading spaces are layout, as in `/help`; keep them.
+        let indent = raw.len() - raw.trim_start_matches(' ').len();
+        let mut line = raw[..indent].to_string();
+        for word in raw[indent..].split(' ') {
+            if line.len() == indent {
                 line.push_str(word);
             } else if line.chars().count() + 1 + word.chars().count() <= width {
                 line.push(' ');
@@ -5724,6 +5732,11 @@ mod tests {
         let short = fit("abcdefghij", 5);
         assert_eq!(short.chars().count(), 5);
         assert!(short.ends_with('…'));
+    }
+
+    #[test]
+    fn wrap_keeps_leading_spaces() {
+        assert_eq!(wrap("  /new  start", 40), vec!["  /new  start"]);
     }
 
     #[test]

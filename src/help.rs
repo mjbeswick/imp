@@ -1,6 +1,27 @@
 //! Help text. One renderer, used by `--help`, `/help`, and line mode.
 
-pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear · PgUp/PgDn scroll · Up/Down history · Tab complete · !cmd shell · picker: type to filter, Enter choose, Esc cancel";
+/// Keys in the full-screen chat.
+pub const KEYS: &[(&str, &str)] = &[
+    ("Enter", "send"),
+    ("Shift+Enter, Alt+Enter", "newline"),
+    ("Esc", "cancel the turn or close a picker"),
+    ("Ctrl+C", "clear the draft, or quit"),
+    ("Ctrl+L", "clear the screen"),
+    ("Ctrl+O", "expand the last tool call"),
+    ("Up, Down", "history"),
+    ("PgUp, PgDn", "scroll"),
+    ("Tab", "complete"),
+    ("Picker", "type to filter, Enter choose, Esc cancel"),
+];
+
+/// Commands by area, named from `COMMANDS`.
+const GROUPS: &[(&str, &[&str])] = &[
+    ("Conversation", &["/new", "/compact", "/think", "/stash"]),
+    ("Model and agent", &["/model", "/provider", "/agent", "/yolo", "/reload"]),
+    ("Workspace", &["/cwd", "/cd", "/image", "/shell"]),
+    ("Session", &["/sessions", "/fork", "/rename", "/quit"]),
+    ("Interface", &["/help", "/theme", "/verbosity"]),
+];
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
@@ -172,14 +193,23 @@ pub fn usage(width: usize) -> String {
     out
 }
 
-/// `/help` in either front-end.
-pub fn commands() -> String {
-    let mut out = format!("Keys\n  {KEYS}\n\nCommands\n");
-    let col = COMMANDS.iter().map(|(n, _)| n.len()).max().unwrap_or(8);
-    for (name, desc) in COMMANDS {
-        out.push_str(&format!("  {name:<col$}  {desc}\n", col = col));
+/// `/help`, wrapped to `width`.
+pub fn commands(width: usize) -> String {
+    let desc = |name: &str| {
+        COMMANDS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map_or("", |(_, d)| *d)
+    };
+    let mut sections = vec![("Keys", KEYS.to_vec())];
+    for (title, names) in GROUPS {
+        sections.push((title, names.iter().map(|n| (*n, desc(n))).collect()));
     }
-    out.push_str("\nAnything else goes to the model. Prefix a line with `!` to run it as a shell command.");
+    let mut out = String::new();
+    table(&mut out, &sections, width);
+    out.push('\n');
+    let note = "Anything else goes to the model. Prefix a line with `!` to run it as a shell command.";
+    out.push_str(&wrap(note, width).join("\n"));
     out
 }
 
@@ -302,30 +332,33 @@ mod tests {
     }
 
     #[test]
-    fn keys_explain_ctrl_c() {
-        assert!(KEYS.contains("Ctrl+C clear or quit"), "{KEYS}");
-    }
-
-    #[test]
-    fn keys_mention_shift_enter() {
-        let text = commands();
+    fn keys_are_rows() {
+        let text = commands(80);
+        assert!(text.contains("Ctrl+C"), "{text}");
         assert!(text.contains("Shift+Enter"), "{text}");
-        assert!(text.contains("PgUp/PgDn scroll"), "{text}");
+        assert!(text.contains("PgUp, PgDn"), "{text}");
     }
 
     #[test]
-    fn commands_lists_every_command() {
-        let text = commands();
+    fn every_command_sits_in_one_group() {
         assert_eq!(COMMANDS.len(), 20);
         for (name, _) in COMMANDS {
-            assert!(text.contains(name), "missing {name}");
+            let n = GROUPS.iter().filter(|(_, g)| g.contains(name)).count();
+            assert_eq!(n, 1, "{name} is in {n} groups");
         }
-        assert!(text.contains("Tab"));
+        let text = commands(60);
+        for line in text.lines() {
+            assert!(line.chars().count() <= 60, "too wide: {line:?}");
+        }
+        let cols: std::collections::BTreeSet<usize> =
+            text.lines().filter_map(desc_col).collect();
+        assert_eq!(cols.len(), 1, "{cols:?}\n{text}");
+        assert!(text.contains("\nModel and agent\n"), "{text}");
     }
 
     #[test]
     fn commands_describe_the_picker_forms() {
-        let text = commands();
+        let text = commands(80);
         for phrase in [
             "pick a session",
             "low, high, or pick",

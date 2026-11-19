@@ -335,7 +335,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
         if let Some(cmd) = text.strip_prefix('/') {
             match cmd {
                 "quit" | "exit" => return Ok(()),
-                "help" => println!("{}", help::commands()),
+                "help" => println!("{}", help::commands(terminal_width())),
                 "new" => {
                     let system = session
                         .history
