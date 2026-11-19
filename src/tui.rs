@@ -306,6 +306,8 @@ pub enum Role {
 
 pub(crate) struct Palette {
     on: bool,
+    /// Colour as the terminal and settings allow it, before `mono` turns it off.
+    allowed: bool,
     truecolor: bool,
     theme: &'static crate::theme::Theme,
 }
@@ -319,6 +321,7 @@ impl Palette {
             ColorMode::Always => true,
             ColorMode::Auto => tty && std::env::var_os("NO_COLOR").is_none(),
         };
+        let allowed = on;
         if theme.name == "mono" {
             on = false;
         }
@@ -327,7 +330,18 @@ impl Palette {
             .unwrap_or(false);
         Self {
             on,
+            allowed,
             truecolor,
+            theme,
+        }
+    }
+
+    /// The same terminal and settings, painting with another theme.
+    pub(crate) fn with_theme(&self, theme: &'static crate::theme::Theme) -> Self {
+        Self {
+            on: self.allowed && theme.name != "mono",
+            allowed: self.allowed,
+            truecolor: self.truecolor,
             theme,
         }
     }
@@ -799,6 +813,8 @@ pub struct App {
     unseen: usize,
     pending: Option<Pending>,
     pending_since: Option<Instant>,
+    /// The theme active when the theme picker opened, while it previews.
+    preview_from: Option<&'static crate::theme::Theme>,
     /// Where managed provider profiles are written.
     config_path: std::path::PathBuf,
     /// Where recently chosen models are remembered.
@@ -1254,6 +1270,7 @@ impl App {
             unseen: 0,
             pending: None,
             pending_since: None,
+            preview_from: None,
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
             available_models: crate::providers::catalog(provider),
@@ -1474,6 +1491,38 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
+        self.handle_key_inner(key, tx);
+        self.sync_preview();
+    }
+
+    /// The open theme picker paints the screen in its highlighted theme; any
+    /// close but Enter puts the starting theme back.
+    fn sync_preview(&mut self) {
+        let shown = match &self.pending {
+            Some(Pending::Pick(p)) if p.kind == PickKind::Theme => {
+                Some(p.selected().and_then(|i| crate::theme::by_name(&i.value)))
+            }
+            _ => None,
+        };
+        match shown {
+            Some(choice) => {
+                let start = *self.preview_from.get_or_insert(self.palette.theme);
+                let theme = choice.unwrap_or(start);
+                if !std::ptr::eq(theme, self.palette.theme) {
+                    self.palette = self.palette.with_theme(theme);
+                    self.dirty = true;
+                }
+            }
+            None => {
+                if let Some(start) = self.preview_from.take() {
+                    self.palette = self.palette.with_theme(start);
+                    self.dirty = true;
+                }
+            }
+        }
+    }
+
+    fn handle_key_inner(&mut self, key: Key, tx: &Sender<Cmd>) {
         // Ctrl+C protects a draft first. Prompts do not use the composer, so
         // they keep the exit; a picker is part of composing, so it closes with
         // the text.
@@ -2738,7 +2787,11 @@ impl App {
                             }
                             PickKind::Theme => {
                                 let _ = crate::theme::save(&choice.value);
-                                self.palette = Palette::detect(&self.cfg);
+                                if let Some(theme) = crate::theme::by_name(&choice.value) {
+                                    self.palette = self.palette.with_theme(theme);
+                                }
+                                // Chosen, so closing must not restore.
+                                self.preview_from = None;
                                 self.push(Role::Info, format!("theme: {}", choice.value));
                             }
                             PickKind::Provider => match self.set_provider(&choice.value, tx) {
@@ -4112,6 +4165,7 @@ mod tests {
         // Pin the palette: the saved theme on this machine must not matter.
         a.palette = Palette {
             on: true,
+            allowed: true,
             truecolor: true,
             theme: crate::theme::by_name("default").unwrap(),
         };
@@ -4465,6 +4519,49 @@ mod tests {
     }
 
     #[test]
+    fn the_theme_picker_previews_and_esc_restores() {
+        let mut a = colour_app();
+        let (tx, _rx) = channel();
+        let start = a.palette.theme_name();
+        a.run_command("theme", &tx);
+        a.sync_preview();
+        a.handle_key(Key::Down, &tx);
+        let shown = {
+            let p = open_picker(&a);
+            p.items[p.index].value.clone()
+        };
+        assert_ne!(shown, start);
+        assert_eq!(a.palette.theme_name(), shown, "the highlight was not previewed");
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.pending.is_none());
+        assert_eq!(a.palette.theme_name(), start, "Esc did not restore");
+    }
+
+    #[test]
+    fn a_chosen_theme_stays_after_the_picker_closes() {
+        // The Enter path saves to the state directory, so this drives the
+        // same steps without touching it: choose, clear the start, close.
+        let mut a = colour_app();
+        let (tx, _rx) = channel();
+        a.run_command("theme", &tx);
+        a.handle_key(Key::Down, &tx);
+        let chosen = a.palette.theme_name();
+        a.preview_from = None;
+        a.pending = None;
+        a.sync_preview();
+        assert_eq!(a.palette.theme_name(), chosen, "closing undid the choice");
+    }
+
+    #[test]
+    fn mono_previews_without_colour_and_back() {
+        let mut a = colour_app();
+        let mono = crate::theme::by_name("mono").unwrap();
+        let off = a.palette.with_theme(mono);
+        assert!(!off.on);
+        assert!(off.with_theme(crate::theme::by_name("nord").unwrap()).on);
+    }
+
+    #[test]
     fn a_fenced_block_stays_dim() {
         let mut a = colour_app();
         a.push(Role::Assistant, "```\nfn x() {}\n```");
@@ -4553,18 +4650,21 @@ mod tests {
     fn colour_roles_use_256_and_truecolor() {
         let plain = Palette {
             on: true,
+            allowed: true,
             truecolor: false,
             theme: &crate::theme::THEMES[0],
         };
         assert!(plain.paint(Role::Error, "x").contains("38;5;"));
         let rgb = Palette {
             on: true,
+            allowed: true,
             truecolor: true,
             theme: &crate::theme::THEMES[0],
         };
         assert!(rgb.paint(Role::Error, "x").contains("38;2;"));
         let off = Palette {
             on: false,
+            allowed: false,
             truecolor: true,
             theme: &crate::theme::THEMES[0],
         };
@@ -5568,6 +5668,7 @@ mod tests {
 
         a.palette = Palette {
             on: false,
+            allowed: false,
             truecolor: false,
             theme: &crate::theme::THEMES[0],
         };
