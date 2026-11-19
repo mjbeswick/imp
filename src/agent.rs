@@ -41,8 +41,6 @@ pub enum Ui {
     Error(String),
 }
 
-const MAX_STEPS: usize = 24;
-
 pub fn schema() -> Vec<Value> {
     vec![
         json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."}},"required":["command"]}}}),
@@ -531,7 +529,8 @@ impl Session {
         message.images = std::mem::take(&mut self.attachments);
         self.say(message);
 
-        for step in 0..MAX_STEPS {
+        let max_steps = self.cfg.max_steps.max(1);
+        for step in 0..max_steps {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 hooks.ui(Ui::Info("cancelled".into()));
                 return Ok(());
@@ -562,15 +561,17 @@ impl Session {
             if calls.is_empty() {
                 return Ok(());
             }
-            if step == MAX_STEPS - 1 {
-                let msg = format!("stopped after {MAX_STEPS} tool steps");
-                hooks.ui(Ui::Error(msg.clone()));
-                return Err(msg);
-            }
 
             for call in calls {
                 let out = self.dispatch(&call, hooks);
                 self.say(Message::tool(call.id.clone(), out));
+            }
+
+            if step + 1 == max_steps {
+                hooks.ui(Ui::Info(format!(
+                    "paused after {max_steps} steps; send another message to continue"
+                )));
+                return Ok(());
             }
         }
         Ok(())
@@ -1150,6 +1151,30 @@ mod tests {
             .find(|m| m.role == crate::api::Role::User && m.content == "look")
             .unwrap();
         assert_eq!(user.images.len(), crate::images::MAX_PER_MESSAGE);
+    }
+
+    #[test]
+    fn max_steps_pauses_after_the_last_batch() {
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(tool_reply("c1", "bash", "{\"command\":\"true\"}")),
+            Script::Ok(tool_reply("c2", "bash", "{\"command\":\"true\"}")),
+            Script::Ok(text_reply("never reached")),
+        ]);
+        s.cfg.max_steps = 2;
+        let mut hooks = Null;
+        assert!(s.turn("go", &mut hooks).is_ok());
+        let calls = s
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::Assistant && !m.tool_calls.is_empty())
+            .count();
+        let results = s
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::Tool)
+            .count();
+        assert_eq!(calls, 2);
+        assert_eq!(results, 2, "every call needs a result");
     }
 
     #[test]
