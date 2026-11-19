@@ -954,6 +954,19 @@ impl Picker {
             PickKind::Image => browse_items(&self.current, &self.root, true),
             _ => Vec::new(),
         };
+        if self.kind == PickKind::Dir {
+            if let Some(up) = self.current.parent() {
+                self.items.insert(
+                    0,
+                    PickItem {
+                        label: "../".into(),
+                        value: up.display().to_string(),
+                        actions: Vec::new(),
+                        desc: String::new(),
+                    },
+                );
+            }
+        }
         self.filter.clear();
         self.reset();
     }
@@ -4680,6 +4693,30 @@ mod tests {
         picker.current = std::path::PathBuf::from("/");
         assert!(!picker.parent(), "Left moved above /");
         assert_eq!(picker.current, std::path::PathBuf::from("/"));
+        picker.reload();
+        assert!(picker.items.iter().all(|i| i.label != "../"), "/ has a parent row");
+    }
+
+    #[test]
+    fn the_parent_row_opens_and_selects_the_parent() {
+        let base = scratch("up");
+        let root = base.join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut a = app_at(root.clone());
+        let (tx, rx) = channel();
+        a.run_command("cd", &tx);
+        assert_eq!(open_picker(&a).items[0].label, "../");
+        a.handle_key(Key::Enter, &tx);
+        let above = base.canonicalize().unwrap();
+        assert_eq!(open_picker(&a).current, above, "Enter did not open the parent");
+        assert_eq!(open_picker(&a).items[0].label, "../");
+        a.handle_key(Key::Tab, &tx);
+        match rx.try_recv() {
+            Ok(Cmd::SetRoot(path)) => assert_eq!(path, above.parent().unwrap()),
+            _ => panic!("Tab did not select the parent"),
+        }
+        a.run_command("image", &tx);
+        assert!(open_picker(&a).items.iter().all(|i| i.label != "../"));
     }
 
     #[test]
