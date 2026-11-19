@@ -8,11 +8,23 @@ Lets a user attach image files to a message from a terminal composer and carries
 
 ### Requirement: Images attach from a path
 
-The system SHALL attach an image when the user runs `/image <path>` or submits a composer token that names an existing image file, SHALL accept PNG, JPEG, GIF, and WebP, SHALL refuse a missing file, an unsupported type, a file over 10 MB, or a fifth image in one message, and SHALL leave the composer text and the pending attachments unchanged on refusal. When removing a pasted path leaves no text, the system SHALL send a short caption instead.
+The system SHALL attach an image when the user runs `/image <path>` or submits a composer token naming an image, SHALL open a browser at the session root when `/image` has no path in chat, SHALL accept PNG, JPEG, GIF, and WebP, SHALL refuse a missing file, an unsupported type, a file over 10 MB, or a fifth image, and SHALL leave the composer unchanged on refusal. When a pasted path leaves no text, it SHALL send a short caption.
 
 #### Scenario: Explicit command
 - **WHEN** the user runs `/image ~/Pictures/shot.png`
 - **THEN** the file is attached to the next message and a marker is shown
+
+#### Scenario: Bare command
+- **WHEN** the user runs `/image` with no path in the chat interface
+- **THEN** a browser opens at the session root listing directories and image files
+
+#### Scenario: Browse and attach
+- **WHEN** the user highlights `shot.png` in the image browser and presses Enter
+- **THEN** the browser closes and the image is attached to the next message
+
+#### Scenario: Line mode bare command
+- **WHEN** the user runs `/image` with no path in line mode
+- **THEN** the usage `image <path>` prints and nothing is attached
 
 #### Scenario: Pasted path
 - **WHEN** the user pastes `/Users/michael/Pictures/shot.png` and presses Enter with no other text

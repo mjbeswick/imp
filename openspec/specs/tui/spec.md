@@ -207,7 +207,7 @@ The system SHALL render a frame only when a key was handled, an event arrived fr
 
 ### Requirement: The interface is one chat column
 
-The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL NOT use panes, borders, tabs, or widgets, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
+The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
 
 #### Scenario: Quiet layout
 - **WHEN** the session is idle
@@ -228,6 +228,10 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 #### Scenario: Piped output
 - **WHEN** input is a pipe with no terminal size
 - **THEN** no width line is sent
+
+#### Scenario: One overlay
+- **WHEN** the picker is open
+- **THEN** it is the only bordered element and the chat column resumes unchanged when it closes
 
 ### Requirement: The status line reports tokens and cost
 
@@ -603,7 +607,7 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reloa
 
 ### Requirement: The session root can be inspected and changed
 
-The system SHALL print the session root for `/cwd`, SHALL change it for `/cd <path>`, SHALL expand a leading `~`, SHALL resolve a relative path against the current root, SHALL refuse a missing path or a file without changing anything, SHALL keep the conversation, SHALL reload instructions, skills, memory, and the system prompt, and SHALL report the new root and the cache reset.
+The system SHALL print the session root for `/cwd`, SHALL change it for `/cd <path>`, SHALL open a directory browser rooted at the session directory for `/cd` with no path in the chat interface, SHALL expand a leading `~`, SHALL resolve a relative path against the current root, SHALL refuse a missing path or a file without changing anything, SHALL keep the conversation, SHALL reload instructions, skills, memory, and the system prompt, and SHALL report the new root and the cache reset.
 
 #### Scenario: Show the root
 - **WHEN** the user runs `/cwd`
@@ -630,8 +634,12 @@ The system SHALL print the session root for `/cwd`, SHALL change it for `/cd <pa
 - **THEN** the transcript reports that the path is not a directory and the root is unchanged
 
 #### Scenario: Bare command
-- **WHEN** the user runs `/cd` with no path
-- **THEN** the transcript shows the usage `cd <path>` and nothing changes
+- **WHEN** the user runs `/cd` with no path in the chat interface
+- **THEN** a directory browser opens at the session root
+
+#### Scenario: Line mode bare command
+- **WHEN** the user runs `/cd` with no path in line mode
+- **THEN** the usage `cd <path>` prints and nothing changes
 
 #### Scenario: History kept
 - **WHEN** the root changes after several turns
@@ -643,7 +651,7 @@ The system SHALL print the session root for `/cwd`, SHALL change it for `/cd <pa
 
 ### Requirement: Verbosity controls tool detail
 
-The system SHALL keep a per-session verbosity with two levels, `low` and `high`, SHALL default to `low`, SHALL change it with `/verbosity low` or `/verbosity high`, SHALL show one summary line per tool call at `low`, SHALL show every call's arguments and capped output at `high` in both front-ends, SHALL apply the level to calls that start after the command runs, and SHALL NOT write the level to the config file.
+The system SHALL keep a per-session verbosity with two levels, `low` and `high`, SHALL default to `low`, SHALL change it with `/verbosity low` or `/verbosity high`, SHALL show one summary line at `low`, every call's arguments and capped output at `high` in both front-ends, SHALL apply the level to later calls, and SHALL NOT write it to the config file.
 
 #### Scenario: Default
 - **WHEN** a session starts and the user has run no verbosity command
@@ -662,8 +670,12 @@ The system SHALL keep a per-session verbosity with two levels, `low` and `high`,
 - **THEN** each following call prints its arguments and capped output as plain text
 
 #### Scenario: No argument
-- **WHEN** the user runs `/verbosity` with no level
-- **THEN** the transcript reports the current level and the command does nothing else
+- **WHEN** the user runs `/verbosity` with no level in the chat interface
+- **THEN** the picker lists `low` and `high` with the current level highlighted and choosing one applies it
+
+#### Scenario: Line mode no argument
+- **WHEN** the user runs `/verbosity` with no level in line mode
+- **THEN** the transcript reports the current level and no picker opens
 
 #### Scenario: Unknown level
 - **WHEN** the user runs `/verbosity loud`
