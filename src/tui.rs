@@ -736,7 +736,6 @@ impl App {
     ) -> Self {
         let palette = Palette::detect(&cfg);
         let history = load_history();
-        let root = std::env::current_dir().unwrap_or_default();
         let agents = crate::store::load_agents(&cfg, &root)
             .into_iter()
             .map(|a| a.name)
@@ -2772,6 +2771,7 @@ mod tests {
     fn cwd_commands_report_and_change_the_root() {
         let mut a = app();
         let (tx, rx) = channel();
+        assert_eq!(a.root, std::env::temp_dir(), "constructor root ignored");
 
         a.run_command("cwd", &tx);
         assert_eq!(
