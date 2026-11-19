@@ -1044,17 +1044,18 @@ impl Picker {
             _ => Vec::new(),
         };
         if self.kind == PickKind::Dir {
+            // `./` makes the folder on screen choosable; `../` sits under it.
+            let row = |label: &str, path: &std::path::Path| PickItem {
+                label: label.into(),
+                value: path.display().to_string(),
+                actions: Vec::new(),
+                desc: String::new(),
+            };
+            let mut fixed = vec![row("./", &self.current)];
             if let Some(up) = self.current.parent() {
-                self.items.insert(
-                    0,
-                    PickItem {
-                        label: "../".into(),
-                        value: up.display().to_string(),
-                        actions: Vec::new(),
-                        desc: String::new(),
-                    },
-                );
+                fixed.push(row("../", up));
             }
+            self.items.splice(0..0, fixed);
         }
         self.filter.clear();
         self.reset();
@@ -1115,8 +1116,8 @@ impl Picker {
     fn footer(&self) -> String {
         let mut parts: Vec<String> = match self.kind {
             PickKind::Dir => vec![
-                "Enter open".into(),
-                "Tab choose".into(),
+                "Enter choose".into(),
+                "Tab/→ open".into(),
                 "← up".into(),
                 "Esc close".into(),
             ],
@@ -2730,19 +2731,14 @@ impl App {
                         self.dirty = true;
                         return;
                     }
-                    Key::Tab if picker.kind == PickKind::Dir => {
+                    Key::Tab | Key::Right if picker.kind == PickKind::Dir => {
+                        // Tab and Right open; `./` is already open.
                         if let Some(choice) = picker.selected().cloned() {
-                            if choice.label.ends_with('/') {
-                                // The typed command keeps the existing jail and
-                                // root-change logic in one place.
-                                self.run_command(&format!("cd {}", choice.value), tx);
-                                self.dirty = true;
-                                return;
+                            if choice.label.ends_with('/') && choice.label != "./" {
+                                picker.current = std::path::PathBuf::from(&choice.value);
+                                picker.reload();
                             }
                         }
-                        self.pending = Some(Pending::Pick(picker));
-                        self.dirty = true;
-                        return;
                     }
                     Key::Left if matches!(picker.kind, PickKind::Dir | PickKind::Image) => {
                         picker.parent();
@@ -2801,13 +2797,11 @@ impl App {
                                 Err(e) => self.push(Role::Error, e),
                             },
                             PickKind::Dir => {
-                                if choice.label.ends_with('/') {
-                                    picker.current = std::path::PathBuf::from(&choice.value);
-                                    picker.reload();
-                                    self.pending = Some(Pending::Pick(picker));
-                                    self.dirty = true;
-                                    return;
-                                }
+                                // Enter chooses. The typed command keeps the jail
+                                // and root-change logic in one place.
+                                self.run_command(&format!("cd {}", choice.value), tx);
+                                self.dirty = true;
+                                return;
                             }
                             PickKind::Command => {}
                             PickKind::Image => {
@@ -5326,7 +5320,7 @@ mod tests {
         let (tx, _rx) = channel();
         a.run_command("cd", &tx);
         highlight(&mut a, &tx, "src/");
-        a.handle_key(Key::Enter, &tx);
+        a.handle_key(Key::Tab, &tx);
         let frame = strip(&a.frame(200, 30));
         let start = frame.find("╭─ cd ").expect("title");
         let top = &frame[start..start + frame[start..].find('╮').unwrap()];
@@ -5336,25 +5330,41 @@ mod tests {
     }
 
     #[test]
-    fn the_parent_row_opens_and_selects_the_parent() {
+    fn the_listing_starts_with_this_folder_and_its_parent() {
         let base = scratch("up");
         let root = base.join("work");
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(root.join("leaf")).unwrap();
         let mut a = app_at(root.clone());
         let (tx, rx) = channel();
         a.run_command("cd", &tx);
-        assert_eq!(open_picker(&a).items[0].label, "../");
-        a.handle_key(Key::Enter, &tx);
-        let above = base.canonicalize().unwrap();
-        assert_eq!(open_picker(&a).current, above, "Enter did not open the parent");
-        assert_eq!(open_picker(&a).items[0].label, "../");
+        let labels: Vec<String> = open_picker(&a).items.iter().map(|i| i.label.clone()).collect();
+        assert_eq!(labels, vec!["./", "../", "leaf/"]);
+        assert!(open_picker(&a).footer().starts_with("Enter choose · Tab/→ open · ← up"));
+
+        // Tab on `../` opens the parent; Tab on `./` stays put.
+        a.handle_key(Key::Down, &tx);
         a.handle_key(Key::Tab, &tx);
+        let above = base.canonicalize().unwrap();
+        assert_eq!(open_picker(&a).current, above, "Tab did not open the parent");
+        a.handle_key(Key::Tab, &tx);
+        assert_eq!(open_picker(&a).current, above, "Tab on ./ moved");
+
+        // A leaf folder: open it, then Enter on `./` chooses it.
+        highlight(&mut a, &tx, "work/");
+        a.handle_key(Key::Right, &tx);
+        highlight(&mut a, &tx, "leaf/");
+        a.handle_key(Key::Right, &tx);
+        let labels: Vec<String> = open_picker(&a).items.iter().map(|i| i.label.clone()).collect();
+        assert_eq!(labels, vec!["./", "../"]);
+        a.handle_key(Key::Enter, &tx);
         match rx.try_recv() {
-            Ok(Cmd::SetRoot(path)) => assert_eq!(path, above.parent().unwrap()),
-            _ => panic!("Tab did not select the parent"),
+            Ok(Cmd::SetRoot(path)) => assert_eq!(path, root.join("leaf")),
+            _ => panic!("Enter on ./ did not choose the folder"),
         }
+        assert!(a.pending.is_none());
+
         a.run_command("image", &tx);
-        assert!(open_picker(&a).items.iter().all(|i| i.label != "../"));
+        assert!(open_picker(&a).items.iter().all(|i| i.label != "../" && i.label != "./"));
     }
 
     #[test]
@@ -5434,14 +5444,14 @@ mod tests {
         }
 
         highlight(&mut a, &tx, "src/");
-        a.handle_key(Key::Enter, &tx);
+        a.handle_key(Key::Tab, &tx);
         {
             let picker = open_picker(&a);
-            assert_eq!(picker.current, root.join("src"), "Enter did not navigate");
+            assert_eq!(picker.current, root.join("src"), "Tab did not open");
             assert!(picker.items.iter().any(|i| i.label == "nested/"));
             assert!(!picker.items.iter().any(|i| i.label == "docs/"));
         }
-        assert_eq!(a.root, root, "Enter changed the session root");
+        assert_eq!(a.root, root, "opening changed the session root");
 
         a.handle_key(Key::Left, &tx);
         assert_eq!(open_picker(&a).current, root, "Left did not go up");
@@ -5452,16 +5462,16 @@ mod tests {
 
         let back = format!("{}/", root.file_name().unwrap().to_string_lossy());
         highlight(&mut a, &tx, &back);
-        a.handle_key(Key::Enter, &tx);
-        assert_eq!(open_picker(&a).current, root, "Enter did not go back down");
+        a.handle_key(Key::Right, &tx);
+        assert_eq!(open_picker(&a).current, root, "Right did not open");
 
         highlight(&mut a, &tx, "src/");
-        a.handle_key(Key::Tab, &tx);
+        a.handle_key(Key::Enter, &tx);
         match rx.try_recv() {
             Ok(Cmd::SetRoot(path)) => assert_eq!(path, root.join("src")),
-            _ => panic!("Tab did not select the directory"),
+            _ => panic!("Enter did not choose the directory"),
         }
-        assert!(a.pending.is_none(), "Tab left the browser open");
+        assert!(a.pending.is_none(), "Enter left the browser open");
         assert_eq!(a.root, root, "the root moved before the worker replied");
     }
 
