@@ -530,7 +530,9 @@ impl Session {
         let mut facts = facts_from_summary(&summary);
         for fact in facts.drain(..) {
             let title: String = fact.chars().take(48).collect();
-            if hooks.confirm(&format!("save note `{title}`")) {
+            // Yolo saves without asking; every other mode offers each fact.
+            let yolo = self.cfg.live_permissions() == Permissions::Yolo;
+            if yolo || hooks.confirm(&format!("save note `{title}`")) {
                 match self.memory.save(&title, &fact) {
                     Ok(p) => hooks.ui(Ui::Info(format!("saved {}", p.display()))),
                     Err(e) => hooks.ui(Ui::Error(format!("memory: {e}"))),
@@ -883,7 +885,8 @@ impl Session {
                             .map(|d| d.join(format!("{}.md", crate::store::slugify(title))))
                             .map(|p| p.display().to_string())
                             .unwrap_or_default();
-                        if !hooks.confirm(&format!("save note {target}")) {
+                        let yolo = self.cfg.live_permissions() == Permissions::Yolo;
+                        if !yolo && !hooks.confirm(&format!("save note {target}")) {
                             return (false, "refused: the user declined to save this note".into());
                         }
                         match self.memory.save(title, body) {
@@ -1834,6 +1837,30 @@ mod tests {
         };
         s.turn("save it", &mut Null).unwrap();
         assert!(!memory_dir.exists() || std::fs::read_dir(&memory_dir).unwrap().count() == 0);
+    }
+
+    #[test]
+    fn yolo_saves_notes_without_asking() {
+        for (mode, asks) in [(Permissions::Yolo, 0), (Permissions::Normal, 1)] {
+            let d = tmp();
+            let memory_dir = d.join("memory");
+            let (mut s, _fake) = scripted(vec![
+                Script::Ok(tool_reply(
+                    "c1",
+                    "memory",
+                    "{\"op\":\"save\",\"title\":\"note\",\"body\":\"a fact\"}",
+                )),
+                Script::Ok(text_reply("saved")),
+            ]);
+            s.memory = crate::store::Memory {
+                dirs: vec![memory_dir.clone()],
+            };
+            s.cfg.set_permissions(mode);
+            let mut hooks = CountingHooks::default();
+            s.turn("save it", &mut hooks).unwrap();
+            assert_eq!(hooks.confirms, asks, "{mode:?}");
+            assert_eq!(std::fs::read_dir(&memory_dir).map(|r| r.count()).unwrap_or(0), 1, "{mode:?}");
+        }
     }
 
     #[test]
