@@ -13,7 +13,21 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
 const ALT_ON: &str = "\x1b[?1049h\x1b[?25l\x1b[>1u";
-const ALT_OFF: &str = "\x1b[<u\x1b[?25h\x1b[?1049l";
+const ALT_OFF: &str = "\x1b[?1006l\x1b[?1000l\x1b[<u\x1b[?25h\x1b[?1049l";
+/// SGR mouse reports, so the wheel reaches imp instead of the scrollback.
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1006h";
+const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1000l";
+/// Set from the `mouse` setting before raw mode starts.
+static MOUSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// What raw mode writes on entry: the alternate screen, then the mouse if on.
+fn enter_sequence(mouse: bool) -> String {
+    if mouse {
+        format!("{ALT_ON}{MOUSE_ON}")
+    } else {
+        ALT_ON.to_string()
+    }
+}
 
 #[repr(C)]
 struct Winsize {
@@ -126,7 +140,7 @@ const OPOST: Flag = 0x1;
 const TCSANOW: c_int = 0;
 
 static SAVED: std::sync::Mutex<Option<Termios>> = std::sync::Mutex::new(None);
-const RESTORE: &str = "\x1b[<u\x1b[?25h\x1b[?1049l";
+const RESTORE: &str = "\x1b[?1006l\x1b[?1000l\x1b[<u\x1b[?25h\x1b[?1049l";
 
 extern "C" {
     fn write(fd: std::ffi::c_int, buf: *const u8, len: usize) -> isize;
@@ -235,7 +249,7 @@ impl RawMode {
                 *slot = Some(saved);
             }
         }
-        print!("{ALT_ON}");
+        print!("{}", enter_sequence(MOUSE.load(Ordering::Relaxed)));
         std::io::stdout().flush().ok();
         Self
     }
@@ -686,7 +700,8 @@ impl Hooks for WorkerHooks {
     }
 
     fn run_attached(&mut self, command: &str) -> Option<i32> {
-        print!("\x1b[?25h\x1b[?1049l");
+        // The shell gets the mouse back, and imp takes it again after.
+        print!("{MOUSE_OFF}\x1b[?25h\x1b[?1049l");
         std::io::stdout().flush().ok();
         let saved = SAVED.lock().ok().and_then(|slot| *slot);
         if let Some(saved) = saved {
@@ -703,7 +718,7 @@ impl Hooks for WorkerHooks {
                 tcsetattr(0, TCSANOW, &raw_of(saved));
             }
         }
-        print!("\x1b[?1049h\x1b[?25l");
+        print!("{}", enter_sequence(MOUSE.load(Ordering::Relaxed)).replace("\x1b[>1u", ""));
         std::io::stdout().flush().ok();
         Some(status.ok().and_then(|s| s.code()).unwrap_or(-1))
     }
@@ -3687,6 +3702,7 @@ fn send_replay(tx: &Sender<Ev>, history: &[crate::api::Message]) {
 /// Run the interface until the user quits. Returns the final session id.
 pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
     install_guards();
+    MOUSE.store(cfg.mouse, Ordering::Relaxed);
     let _raw = RawMode::enter();
     if std::env::var_os("IMP_FORCE_PANIC").is_some() {
         panic!("forced panic for the terminal-guard test");
@@ -4050,6 +4066,17 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mouse_reporting_follows_the_setting() {
+        assert!(enter_sequence(true).ends_with(MOUSE_ON));
+        assert!(!enter_sequence(false).contains("?1000h"));
+        assert!(ALT_OFF.starts_with(MOUSE_OFF) && RESTORE.starts_with(MOUSE_OFF));
+        let mut cfg = Config::default();
+        assert!(cfg.mouse, "mouse should default on");
+        cfg.set("mouse", "off").unwrap();
+        assert!(!cfg.mouse);
+    }
 
     #[test]
     fn decodes_arrows_and_text() {

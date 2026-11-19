@@ -138,6 +138,8 @@ pub struct Config {
     pub max_steps: usize,
     pub thinking: bool,
     pub color: ColorMode,
+    /// Capture the mouse wheel in the chat.
+    pub mouse: bool,
     pub links: Links,
     pub skills_dir: Option<PathBuf>,
 }
@@ -162,6 +164,7 @@ impl Default for Config {
             max_steps: 24,
             thinking: false,
             color: ColorMode::Auto,
+            mouse: true,
             links: Links::Auto,
             skills_dir: None,
         }
@@ -211,7 +214,7 @@ impl Config {
         Ok(cfg)
     }
 
-    fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
+    pub(crate) fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
             "provider" => self.set_active(value)?,
             "api_key" => self.api_key = value.to_string(),
@@ -226,6 +229,7 @@ impl Config {
             "thinking" => self.thinking = parse_bool(value)?,
             "links" => self.links = Links::parse(value)?,
             "color" => self.color = ColorMode::parse(value)?,
+            "mouse" => self.mouse = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Managed profile lines were read before this pass.
             key if key.starts_with("provider.") => {}
