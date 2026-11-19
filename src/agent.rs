@@ -122,6 +122,8 @@ pub struct Session {
     pub roster: Vec<Agent>,
     pub jobs: Jobs,
     pub job_dir: std::path::PathBuf,
+    /// Hosts the user approved for `fetch` in this session.
+    fetch_hosts: std::collections::HashSet<String>,
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
     pub last_model: Option<String>,
@@ -168,6 +170,7 @@ impl Session {
             roster,
             jobs: Jobs::default(),
             job_dir,
+            fetch_hosts: std::collections::HashSet::new(),
             log: None,
             last_usage: (0, 0, 0),
             last_model: None,
@@ -862,6 +865,15 @@ impl Session {
                 let url = args.get("url").and_then(Value::as_str).unwrap_or("").trim();
                 if !crate::tools::fetchable(url) {
                     return (false, "refused: fetch takes an http or https URL".into());
+                }
+                // A URL can carry data out, so a new host asks once.
+                let host = perm::url_host(url);
+                let approved = self.fetch_hosts.contains(&host);
+                if perm::classify_fetch(self.cfg.live_permissions(), approved) == Decision::Ask {
+                    if !hooks.confirm(&format!("fetch from {host} for this session")) {
+                        return (false, format!("refused: the user declined fetching from {host}"));
+                    }
+                    self.fetch_hosts.insert(host);
                 }
                 match crate::http::fetch(url, 15_000, 2 * 1024 * 1024) {
                     Ok((status, kind, body)) => {
@@ -1809,6 +1821,31 @@ mod tests {
 
         let (ok, out) = s.run_tool("fetch", &json!({"url": "file:///etc/passwd"}), &mut Null);
         assert!(!ok && out.contains("http or https"), "{out}");
+    }
+
+    #[test]
+    fn fetch_asks_once_per_host_in_normal() {
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Normal);
+        let mut hooks = CountingHooks::default();
+        let a = serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\none");
+        let b = serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ntwo");
+        // Both servers are 127.0.0.1 but on different ports: two hosts.
+        assert!(s.run_tool("fetch", &json!({"url": a}), &mut hooks).0);
+        assert_eq!(hooks.confirms, 1);
+        let again = format!("{}?x=1", a.trim_end_matches("/data"));
+        let _ = s.run_tool("fetch", &json!({"url": again}), &mut hooks);
+        assert_eq!(hooks.confirms, 1, "the same host asked again");
+        assert!(s.run_tool("fetch", &json!({"url": b}), &mut hooks).0);
+        assert_eq!(hooks.confirms, 2, "a new host did not ask");
+
+        let (mut strict, _f) = scripted(vec![]);
+        strict.cfg.set_permissions(Permissions::Strict);
+        let mut hooks = CountingHooks::default();
+        let c = serve_once("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nx");
+        let _ = strict.run_tool("fetch", &json!({"url": c}), &mut hooks);
+        let _ = strict.run_tool("fetch", &json!({"url": "http://127.0.0.1:9/"}), &mut hooks);
+        assert_eq!(hooks.confirms, 2, "strict did not ask every time");
     }
 
     #[test]

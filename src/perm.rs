@@ -121,6 +121,24 @@ pub fn shell_touches_self_config(command: &str, mode: Permissions) -> Option<Dec
     })
 }
 
+/// A fetch: `yolo` never asks, `strict` always does, and `normal` asks once
+/// per host per session.
+pub fn classify_fetch(mode: Permissions, host_approved: bool) -> Decision {
+    match mode {
+        Permissions::Yolo => Decision::Allow,
+        Permissions::Strict => Decision::Ask,
+        Permissions::Normal if host_approved => Decision::Allow,
+        Permissions::Normal => Decision::Ask,
+    }
+}
+
+/// The `host[:port]` of an http or https URL, lowercased, without user info.
+pub fn url_host(url: &str) -> String {
+    let rest = url.trim().split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    authority.rsplit('@').next().unwrap_or("").to_ascii_lowercase()
+}
+
 pub fn classify_write(inside_jail: bool, mode: Permissions) -> Decision {
     match mode {
         Permissions::Yolo => Decision::Allow,
@@ -251,6 +269,17 @@ mod tests {
             Some(Decision::Deny(_))
         ));
         assert!(shell_touches_self_config("ls -la", Permissions::Normal).is_none());
+    }
+
+    #[test]
+    fn fetches_ask_by_mode() {
+        assert_eq!(classify_fetch(Permissions::Normal, false), Decision::Ask);
+        assert_eq!(classify_fetch(Permissions::Normal, true), Decision::Allow);
+        assert_eq!(classify_fetch(Permissions::Strict, true), Decision::Ask);
+        assert_eq!(classify_fetch(Permissions::Yolo, false), Decision::Allow);
+        assert_eq!(url_host("https://wttr.in/Woking?format=3"), "wttr.in");
+        assert_eq!(url_host("http://u:p@192.168.0.61:11080/assets"), "192.168.0.61:11080");
+        assert_eq!(url_host("HTTPS://Feeds.BBCI.co.uk#x"), "feeds.bbci.co.uk");
     }
 
     #[test]
