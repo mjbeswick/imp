@@ -8,6 +8,8 @@ pub struct Theme {
     /// user, assistant, thinking, tool, error, info.
     pub rgb: [[u8; 3]; 6],
     pub ansi: [u8; 6],
+    pub add: ([u8; 3], u8),
+    pub delete: ([u8; 3], u8),
 }
 
 pub const THEMES: &[Theme] = &[
@@ -22,6 +24,8 @@ pub const THEMES: &[Theme] = &[
             [0xd7, 0xa6, 0x5a],
         ],
         ansi: [111, 255, 244, 108, 203, 214],
+        add: ([0x7f, 0xd6, 0x8f], 114),
+        delete: ([0xff, 0x6b, 0x6b], 203),
     },
     Theme {
         name: "mono",
@@ -34,6 +38,8 @@ pub const THEMES: &[Theme] = &[
             [0xd7, 0xa6, 0x5a],
         ],
         ansi: [255, 255, 245, 255, 203, 214],
+        add: ([0x7f, 0xd6, 0x8f], 114),
+        delete: ([0xff, 0x6b, 0x6b], 203),
     },
     Theme {
         name: "solarized-dark",
@@ -46,6 +52,8 @@ pub const THEMES: &[Theme] = &[
             [0xb5, 0x89, 0x00],
         ],
         ansi: [33, 245, 242, 100, 167, 136],
+        add: ([0x7f, 0xd6, 0x8f], 114),
+        delete: ([0xff, 0x6b, 0x6b], 203),
     },
     Theme {
         name: "gruvbox-dark",
@@ -58,6 +66,8 @@ pub const THEMES: &[Theme] = &[
             [0xfa, 0xbd, 0x2f],
         ],
         ansi: [109, 223, 246, 142, 167, 214],
+        add: ([0x7f, 0xd6, 0x8f], 114),
+        delete: ([0xff, 0x6b, 0x6b], 203),
     },
 ];
 

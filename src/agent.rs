@@ -35,6 +35,7 @@ pub enum Ui {
         ok: bool,
         preview: String,
         output: String,
+        detail: String,
         ms: u128,
     },
     Info(String),
@@ -53,6 +54,42 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
         json!({"type":"function","function":{"name":"ask","description":"Ask the user a question. Offer options for a choice; omit them for free text. Use only when blocked on a decision you cannot make yourself.","parameters":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"},"description":"Two to six short choices."}},"required":["question"]}}}),
     ]
+}
+
+fn diff_detail(name: &str, args: &Value) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    match name {
+        "edit" => {
+            for edit in args.get("edits").and_then(Value::as_array).into_iter().flatten() {
+                let old = edit.get("old").and_then(Value::as_str).unwrap_or("");
+                let new = edit.get("new").and_then(Value::as_str).unwrap_or("");
+                for line in old.lines() {
+                    lines.push(format!("-{line}"));
+                }
+                for line in new.lines() {
+                    lines.push(format!("+{line}"));
+                }
+                lines.push(String::new());
+            }
+        }
+        "write" => {
+            for line in args
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .lines()
+            {
+                lines.push(format!("+{line}"));
+            }
+        }
+        _ => return String::new(),
+    }
+    let mut out = lines.into_iter().take(200).collect::<Vec<_>>().join("\n");
+    if out.len() > 8192 {
+        out.truncate(8192);
+        out.push_str("\n…");
+    }
+    out
 }
 
 pub fn describe_agent(agent: &Agent, cfg: &Config) -> String {
@@ -648,10 +685,12 @@ impl Session {
         let start = std::time::Instant::now();
         let (ok, out) = self.run_tool(&call.name, &args, hooks);
         let spent = start.elapsed().saturating_sub(hooks.last_wait());
+        let detail = if ok { diff_detail(&call.name, &args) } else { String::new() };
         hooks.ui(Ui::ToolEnd {
             ok,
             preview: summarise(&out),
             output: out.clone(),
+            detail,
             ms: spent.as_millis(),
         });
         out
@@ -1201,6 +1240,18 @@ mod tests {
         assert_eq!(old_id, before);
         assert_eq!(s.log.as_ref().unwrap().id, new_id);
         assert_ne!(new_id, old_id);
+    }
+
+    #[test]
+    fn edit_detail_shows_removed_and_added_lines() {
+        let args = json!({"path": "x.rs", "edits": [{"old": "a\nb", "new": "c"}]});
+        let detail = diff_detail("edit", &args);
+        assert!(detail.contains("-a"), "{detail}");
+        assert!(detail.contains("-b"), "{detail}");
+        assert!(detail.contains("+c"), "{detail}");
+        let write = diff_detail("write", &json!({"path": "x", "content": "one\ntwo"}));
+        assert_eq!(write, "+one\n+two");
+        assert!(diff_detail("read", &json!({})).is_empty());
     }
 
     #[test]

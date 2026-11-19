@@ -715,6 +715,7 @@ mod tests {
                 ok: true,
                 preview: "total 8".into(),
                 output: "total 8\nfoo".into(),
+                detail: String::new(),
                 ms: 4,
             },
             true,

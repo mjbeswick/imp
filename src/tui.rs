@@ -264,6 +264,8 @@ pub enum Role {
     Tool,
     Error,
     Info,
+    Add,
+    Delete,
 }
 
 pub(crate) struct Palette {
@@ -309,9 +311,13 @@ impl Palette {
             Role::Tool => 3,
             Role::Error => 4,
             Role::Info => 5,
+            Role::Add | Role::Delete => 0,
         };
-        let [r, g, b] = self.theme.rgb[index];
-        let fallback = self.theme.ansi[index];
+        let ([r, g, b], fallback) = match role {
+            Role::Add => self.theme.add,
+            Role::Delete => self.theme.delete,
+            _ => (self.theme.rgb[index], self.theme.ansi[index]),
+        };
         if self.truecolor {
             format!("\x1b[38;2;{r};{g};{b}m{text}\x1b[0m")
         } else {
@@ -500,6 +506,7 @@ pub enum Ev {
         ok: bool,
         preview: String,
         output: String,
+        detail: String,
         ms: u128,
     },
     Info(String),
@@ -536,10 +543,11 @@ impl Hooks for WorkerHooks {
                 summary,
                 args,
             },
-            Ui::ToolEnd { ok, preview, output, ms } => Ev::ToolEnd {
+            Ui::ToolEnd { ok, preview, output, detail, ms } => Ev::ToolEnd {
                 ok,
                 preview,
                 output,
+                detail,
                 ms,
             },
             Ui::Info(t) => Ev::Info(t),
@@ -644,9 +652,21 @@ struct ToolRow {
     args: String,
     preview: String,
     output: String,
+    detail: String,
+    detail_start: Option<usize>,
+    detail_count: usize,
     ok: bool,
     ms: u128,
     expanded: bool,
+}
+
+fn preview_detail(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = text.lines().take(12).map(str::to_string).collect();
+    let total = text.lines().count();
+    if total > 12 {
+        lines.push(format!("… +{} lines (Ctrl+O)", total - 12));
+    }
+    lines
 }
 
 fn tool_row_text(row: &ToolRow, verbose: bool) -> String {
@@ -850,6 +870,9 @@ impl App {
                     args,
                     preview: String::new(),
                     output: String::new(),
+                    detail: String::new(),
+                    detail_start: None,
+                    detail_count: 0,
                     ok: true,
                     ms: 0,
                     expanded: false,
@@ -860,6 +883,7 @@ impl App {
                 ok,
                 preview,
                 output,
+                detail,
                 ms,
             } => {
                 let role = if ok { Role::Tool } else { Role::Error };
@@ -869,6 +893,23 @@ impl App {
                         row.ms = ms;
                         row.output = output;
                         row.preview = preview;
+                        row.detail = detail;
+                        if !row.detail.is_empty() {
+                            let start = self.entries.len();
+                            let preview = preview_detail(&row.detail);
+                            row.detail_count = preview.len();
+                            row.detail_start = Some(start);
+                            for line in preview {
+                                let role = if line.starts_with('+') {
+                                    Role::Add
+                                } else if line.starts_with('-') {
+                                    Role::Delete
+                                } else {
+                                    Role::Thinking
+                                };
+                                self.push(role, line);
+                            }
+                        }
                         let text = tool_row_text(&row, self.verbose);
                         if let Some(entry) = self.entries.get_mut(row.index) {
                             entry.role = role;
@@ -1154,6 +1195,27 @@ impl App {
         let text = tool_row_text(&row, self.verbose);
         if let Some(entry) = self.entries.get_mut(row.index) {
             entry.text = text;
+        }
+        if let (Some(start), true) = (row.detail_start, !row.detail.is_empty()) {
+            if start + row.detail_count == self.entries.len() {
+                self.entries.truncate(start);
+                let lines = if row.expanded {
+                    row.detail.lines().map(str::to_string).collect()
+                } else {
+                    preview_detail(&row.detail)
+                };
+                row.detail_count = lines.len();
+                for line in lines {
+                    let role = if line.starts_with('+') {
+                        Role::Add
+                    } else if line.starts_with('-') {
+                        Role::Delete
+                    } else {
+                        Role::Thinking
+                    };
+                    self.push(role, line);
+                }
+            }
         }
         self.tool = Some(row);
     }
@@ -2632,7 +2694,7 @@ mod tests {
             ok: true,
             preview: "exit 0".into(),
             output: "total 8\nfoo".into(),
-            ms: 4,
+            detail: String::new(), ms: 4,
         });
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('o'), &tx);
@@ -2971,7 +3033,7 @@ mod tests {
             ok: true,
             preview: "total 8".into(),
             output: "total 8\nfoo".into(),
-            ms: 4,
+            detail: String::new(), ms: 4,
         });
         let text = &a.entries[1].text;
         assert!(text.contains("args:"), "{text:?}");
@@ -2997,7 +3059,7 @@ mod tests {
             ok: false,
             preview: "Changes: render-on-change".into(),
             output: "Changes: render-on-change".into(),
-            ms: 7,
+            detail: String::new(), ms: 7,
         });
         let text = &a.entries[0].text;
         assert!(text.contains("\nChanges: render-on-change"), "{text:?}");
@@ -3018,6 +3080,7 @@ mod tests {
             ok: true,
             preview: String::new(),
             output: String::new(),
+            detail: String::new(),
             ms: 1,
         });
         let out = a.frame(80, 12);
@@ -3065,6 +3128,7 @@ mod tests {
             ok: false,
             preview: "exit 1".into(),
             output: "exit 1".into(),
+            detail: String::new(),
             ms: 7,
         });
         assert_eq!(a.entries.len(), 1, "the finish added a second row");
