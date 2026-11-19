@@ -45,7 +45,10 @@ pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decis
 
     let first = lower.split_whitespace().next().unwrap_or("");
     if first == "sudo" {
-        return if allow_sudo {
+        return if allow_sudo && mode == Permissions::Yolo {
+            // Opted in twice: the setting and the mode. Yolo never asks.
+            Decision::Allow
+        } else if allow_sudo {
             Decision::Ask
         } else {
             Decision::Deny("refused: sudo is disabled; set allow_sudo=true".into())
@@ -76,7 +79,8 @@ pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decis
     }
 }
 
-/// The agent may not rewrite its own settings; self-escalation is a hard stop.
+/// The agent may not rewrite its own settings, except in `yolo`, where the user
+/// has waived every prompt.
 pub fn self_config(path: &std::path::Path, mode: Permissions) -> Option<Decision> {
     let target = crate::config::Config::config_path();
     let same = path == target
@@ -88,7 +92,7 @@ pub fn self_config(path: &std::path::Path, mode: Permissions) -> Option<Decision
         return None;
     }
     Some(match mode {
-        Permissions::Yolo => Decision::Ask,
+        Permissions::Yolo => Decision::Allow,
         _ => Decision::Deny(
             "refused: imp's own config is edited by the user, not by the agent".into(),
         ),
@@ -110,7 +114,7 @@ pub fn shell_touches_self_config(command: &str, mode: Permissions) -> Option<Dec
         return None;
     }
     Some(match mode {
-        Permissions::Yolo => Decision::Ask,
+        Permissions::Yolo => Decision::Allow,
         _ => Decision::Deny(
             "refused: imp's own config is edited by the user, not by the agent".into(),
         ),
@@ -204,6 +208,10 @@ mod tests {
         ));
         assert_eq!(
             classify_command("sudo ls", Permissions::Yolo, true),
+            Decision::Allow
+        );
+        assert_eq!(
+            classify_command("sudo ls", Permissions::Strict, true),
             Decision::Ask
         );
     }
@@ -236,7 +244,11 @@ mod tests {
         ));
         assert!(matches!(
             shell_touches_self_config("echo x > ~/.config/imp/config", Permissions::Yolo),
-            Some(Decision::Ask)
+            Some(Decision::Allow)
+        ));
+        assert!(matches!(
+            shell_touches_self_config("echo x > ~/.config/imp/config", Permissions::Strict),
+            Some(Decision::Deny(_))
         ));
         assert!(shell_touches_self_config("ls -la", Permissions::Normal).is_none());
     }
@@ -257,7 +269,11 @@ mod tests {
         ));
         assert!(matches!(
             self_config(&p, Permissions::Yolo),
-            Some(Decision::Ask)
+            Some(Decision::Allow)
+        ));
+        assert!(matches!(
+            self_config(&p, Permissions::Strict),
+            Some(Decision::Deny(_))
         ));
         assert!(self_config(std::path::Path::new("/tmp/other"), Permissions::Normal).is_none());
     }
