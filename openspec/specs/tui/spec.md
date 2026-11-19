@@ -383,15 +383,51 @@ The system SHALL persist submitted prompts to a history file, SHALL recall them 
 
 ### Requirement: Help is grouped, aligned, and shared
 
-The system SHALL render `--help` with titled sections (usage, sessions, running, other, examples, environment, files), aligned columns, defaults in brackets, and descriptions wrapped to the terminal width, and SHALL render `/help` from the same command table in both front-ends.
+The system SHALL print help in named sections, SHALL align every description in one output to one shared column two spaces after the longest left entry in any section, capped at 26 columns, SHALL start the description on the next row at that column when an entry is longer than the cap, SHALL wrap a description that does not fit with its continuation under the same column, SHALL keep every row inside the requested width, SHALL show defaults as `(default: X)`, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, and SHALL use the same command table for `--help`, `/help`, and line mode.
+
+#### Scenario: Aligned sections
+- **WHEN** the user runs `imp --help`
+- **THEN** every flag starts in one column and every description in every section starts in one shared column
+
+#### Scenario: Long entry
+- **WHEN** an example command is longer than the column cap
+- **THEN** it keeps its own row and its description starts on the next row at the shared column
+
+#### Scenario: Wrapped description
+- **WHEN** a flag description is wider than the terminal
+- **THEN** it wraps under the description column and the flag row stays whole
+
+#### Scenario: Command sections
+- **WHEN** the user runs `/help`
+- **THEN** keys and commands appear in separate sections with aligned rows
+
+#### Scenario: Narrow terminal
+- **WHEN** the width is 60 columns
+- **THEN** no help row is wider than 60 and no flag name is cut
 
 #### Scenario: Flag help
 - **WHEN** the user runs `imp --help` in an 80-column terminal
 - **THEN** no line exceeds 80 columns, every flag appears once, and defaults are shown
 
 #### Scenario: Same commands everywhere
-- **WHEN** the user runs `/help` in chat or line mode
-- **THEN** the same seven commands and the same key list appear
+- **WHEN** help is printed in the chat, line mode, or with `--help`
+- **THEN** the same twenty commands and the same flags are named in each
+
+#### Scenario: Keys per front-end
+- **WHEN** the user runs `/help` in line mode
+- **THEN** no picker, scroll, or Tab key is listed
+
+#### Scenario: Subcommands
+- **WHEN** the user runs `imp --help`
+- **THEN** `init` and `prompt` each carry a one-line description
+
+#### Scenario: Shell examples
+- **WHEN** the user runs `imp --help`
+- **THEN** every example line is a command the shell accepts, and `!cmd` is described as chat input
+
+#### Scenario: Unknown option
+- **WHEN** the user runs `imp --bogus`
+- **THEN** stderr names the option and points to `imp --help`
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/compac`
@@ -757,7 +793,7 @@ After a successful `edit` or `write`, the system SHALL draw the changed lines un
 - **WHEN** an edit is refused because a match failed
 - **THEN** no diff is drawn and the existing error preview is shown
 
-### Requirement: Nineteen slash commands, no more
+### Requirement: Twenty slash commands, no more
 
 The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/mode`, or `/cost`.
 
