@@ -6,4 +6,4 @@
 - [x] 1.4 Add the directory browser for `/cd`. Enter navigates, Tab selects and closes, Left goes up but not past the root, and the root changes only after a successful selection. Verify: a fixture tree navigates, selects, and refuses the boundary.
 - [x] 1.5 Add the image browser for `/image`. List directories and the four image extensions, attach on Enter over a file, navigate on Enter over a directory. Verify: a `.txt` file never appears and a PNG attaches.
 - [x] 1.6 Update the dependent command scenarios and docs. Revise bare `/verbosity`, `/cd`, and `/image` in their specs now that they open pickers, and note the overlay in the README. Verify: `openspec validate --all --strict` and the help text agree.
-- [ ] 1.7 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 1.7 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.

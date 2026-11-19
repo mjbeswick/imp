@@ -1742,51 +1742,49 @@ impl App {
                         picker.parent();
                     }
                     Key::Enter => {
-                        if let Some(choice) = picker.selected().cloned() {
-                            match picker.kind {
-                                PickKind::Agent => {
-                                    self.agent = choice.value.clone();
-                                    let _ = tx.send(Cmd::SetAgent(choice.value.clone()));
-                                    self.push(Role::Info, format!("agent: {}", choice.value));
+                        let Some(choice) = picker.selected().cloned() else {
+                            self.pending = Some(Pending::Pick(picker));
+                            self.dirty = true;
+                            return;
+                        };
+                        match picker.kind {
+                            PickKind::Agent => {
+                                self.agent = choice.value.clone();
+                                let _ = tx.send(Cmd::SetAgent(choice.value.clone()));
+                                self.push(Role::Info, format!("agent: {}", choice.value));
+                            }
+                            PickKind::Session => {
+                                self.entries.clear();
+                                self.push(Role::Info, format!("resuming {}", choice.value));
+                                let _ = tx.send(Cmd::Resume(choice.value));
+                            }
+                            PickKind::Verbosity => {
+                                self.verbose = choice.value == "high";
+                                self.push(Role::Info, format!("verbosity: {}", choice.value));
+                            }
+                            PickKind::Dir => {
+                                if choice.label.ends_with('/') {
+                                    picker.current = std::path::PathBuf::from(&choice.value);
+                                    picker.reload();
+                                    self.pending = Some(Pending::Pick(picker));
+                                    self.dirty = true;
+                                    return;
                                 }
-                                PickKind::Session => {
-                                    self.entries.clear();
-                                    self.push(Role::Info, format!("resuming {}", choice.value));
-                                    let _ = tx.send(Cmd::Resume(choice.value));
+                            }
+                            PickKind::Image => {
+                                if choice.label.ends_with('/') {
+                                    picker.current = std::path::PathBuf::from(&choice.value);
+                                    picker.reload();
+                                    self.pending = Some(Pending::Pick(picker));
+                                    self.dirty = true;
+                                    return;
                                 }
-                                PickKind::Verbosity => {
-                                    self.verbose = choice.value == "high";
-                                    self.push(Role::Info, format!("verbosity: {}", choice.value));
-                                }
-                                PickKind::Dir => {
-                                    if choice.label.ends_with('/') {
-                                        picker.current =
-                                            std::path::PathBuf::from(&choice.value);
-                                        picker.reload();
-                                        self.pending = Some(Pending::Pick(picker));
-                                        self.dirty = true;
-                                        return;
+                                match crate::images::attach(&choice.value, &self.root) {
+                                    Ok(image) => {
+                                        self.push(Role::Thinking, crate::images::marker(&image));
+                                        let _ = tx.send(Cmd::Attach(vec![image]));
                                     }
-                                }
-                                PickKind::Image => {
-                                    if choice.label.ends_with('/') {
-                                        picker.current =
-                                            std::path::PathBuf::from(&choice.value);
-                                        picker.reload();
-                                        self.pending = Some(Pending::Pick(picker));
-                                        self.dirty = true;
-                                        return;
-                                    }
-                                    match crate::images::attach(&choice.value, &self.root) {
-                                        Ok(image) => {
-                                            self.push(
-                                                Role::Thinking,
-                                                crate::images::marker(&image),
-                                            );
-                                            let _ = tx.send(Cmd::Attach(vec![image]));
-                                        }
-                                        Err(e) => self.push(Role::Error, e),
-                                    }
+                                    Err(e) => self.push(Role::Error, e),
                                 }
                             }
                         }
@@ -3805,8 +3803,25 @@ mod tests {
     }
 
     #[test]
-    fn picker_esc_cancels_without_changing_anything() {
+    fn picker_enter_on_an_empty_result_does_nothing() {
         let mut a = app();
+        open_agent_picker(&mut a);
+        let (tx, rx) = channel();
+        for c in "zzz".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert!(open_picker(&a).matches().is_empty());
+        assert!(
+            strip(&a.frame(80, 20)).contains("no matches"),
+            "no no-match row"
+        );
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.pending.is_some(), "Enter closed an empty picker");
+        assert!(rx.try_recv().is_err(), "Enter sent a command");
+    }
+
+    #[test]
+    fn picker_esc_cancels_without_changing_anything() {        let mut a = app();
         open_agent_picker(&mut a);
         let (tx, rx) = channel();
         a.handle_key(Key::Char('w'), &tx);
