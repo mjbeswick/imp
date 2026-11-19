@@ -549,6 +549,18 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
             }
             continue;
         }
+        if let Some(command) = text.strip_prefix('!') {
+            // Same runner as the chat: local, never sent to the model.
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let done = session.tools.bash(command, &cancel);
+            let role = if done.ok { tui::Role::Tool } else { tui::Role::Error };
+            println!("{}", cli.palette.paint(role, &format!("$ {command}")));
+            for line in done.text.lines() {
+                println!("  {}", cli.palette.paint(role, line));
+            }
+            println!();
+            continue;
+        }
         if let Err(e) = session.turn(text, cli) {
             eprintln!("imp: {e}");
         }
