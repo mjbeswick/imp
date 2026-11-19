@@ -6,4 +6,4 @@
 - [x] 1.4 Add `/stash`. Session-bound list; add, list, pop, delete, pop all into the composer. Verify: pop moves text without sending, pop all joins, and an invalid index is refused.
 - [x] 1.5 Add `/rename`. A typed title renames the current session; bare opens a prompt; history and transcript are untouched. Verify: the worker log carries the new title and no request is sent.
 - [x] 1.6 Update the command table, `--help`, README, and the twenty-command spec. Verify: `/help` lists twenty.
-- [ ] 1.7 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 1.7 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
