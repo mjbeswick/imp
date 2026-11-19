@@ -457,6 +457,7 @@ pub enum Cmd {
     Prompt(String),
     SetThinking(bool),
     SetAgent(String),
+    SetRoot(std::path::PathBuf),
     Compact,
     Resume(String),
     Reload,
@@ -470,6 +471,7 @@ pub enum Cmd {
 
 pub enum Ev {
     Token(String),
+    Root(std::path::PathBuf),
     Think(String),
     ToolStart {
         name: String,
@@ -865,6 +867,10 @@ impl App {
             }
             Ev::Info(t) => self.push(Role::Info, t),
             Ev::Error(t) => self.push(Role::Error, t),
+            Ev::Root(path) => {
+                self.root = path;
+                self.dirty = true;
+            }
             Ev::Usage {
                 tokens,
                 hit,
@@ -1242,6 +1248,21 @@ impl App {
                 let _ = tx.send(Cmd::Reset);
                 self.entries.clear();
                 self.push(Role::Info, "new conversation");
+            }
+            "cwd" => self.push(Role::Info, self.root.display().to_string()),
+            other if other == "cd" || other.starts_with("cd ") => {
+                let raw = other[2..].trim();
+                if raw.is_empty() {
+                    self.push(Role::Info, "cd <path>");
+                } else {
+                    match crate::config::resolve_root(Some(raw), &self.root) {
+                        Ok(path) => {
+                            let _ = tx.send(Cmd::SetRoot(path.clone()));
+                            self.push(Role::Info, format!("cwd: {}", path.display()));
+                        }
+                        Err(e) => self.push(Role::Error, e),
+                    }
+                }
             }
             other if other == "verbosity" || other.starts_with("verbosity ") => {
                 let level = other.strip_prefix("verbosity").unwrap_or("").trim();
@@ -1996,6 +2017,18 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         let _ = ev_tx.send(Ev::Error(format!("no agent {name}")));
                     }
                 }
+                Ok(Cmd::SetRoot(path)) => match worker_session.set_root(path.clone()) {
+                    Ok(()) => {
+                        let _ = ev_tx.send(Ev::Root(path.clone()));
+                        let _ = ev_tx.send(Ev::Info(format!(
+                            "cwd: {} (prompt cache reset)",
+                            path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        let _ = ev_tx.send(Ev::Error(e));
+                    }
+                },
                 Ok(Cmd::Resume(id)) => {
                     match worker_session.resume_id(&sessions_dir, &id) {
                         Ok(()) => {
@@ -2731,6 +2764,41 @@ mod tests {
         assert!(!a.resized(80, 24));
         assert!(a.resized(81, 24));
         assert!(a.resized(80, 25));
+    }
+
+    #[test]
+    fn cwd_commands_report_and_change_the_root() {
+        let mut a = app();
+        let (tx, rx) = channel();
+
+        a.run_command("cwd", &tx);
+        assert_eq!(
+            a.entries.last().unwrap().text,
+            a.root.display().to_string()
+        );
+
+        a.run_command("cd", &tx);
+        assert_eq!(a.entries.last().unwrap().text, "cd <path>");
+
+        a.run_command("cd .", &tx);
+        match rx.try_recv() {
+            Ok(Cmd::SetRoot(path)) => assert!(path.is_dir()),
+            _ => panic!("cd did not send SetRoot"),
+        }
+
+        let dir = std::env::temp_dir();
+        a.apply(Ev::Root(dir.clone()));
+        assert_eq!(a.root, dir);
+        a.run_local("pwd");
+        let shown = dir.canonicalize().unwrap().display().to_string();
+        assert!(
+            a.entries.last().unwrap().text.contains(&shown),
+            "typed shell did not follow the root: {:?}",
+            a.entries.last().unwrap().text
+        );
+
+        a.run_command("cd /nope/imp-missing", &tx);
+        assert_eq!(a.entries.last().unwrap().role, Role::Error);
     }
 
     #[test]

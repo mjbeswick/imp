@@ -12,6 +12,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/think", "toggle thinking for the next turn"),
     ("/yolo", "prompt-free for this session"),
     ("/verbosity", "tool detail: low or high"),
+    ("/cwd", "show the session directory"),
+    ("/cd", "change the session directory"),
     ("/quit", "leave"),
 ];
 
