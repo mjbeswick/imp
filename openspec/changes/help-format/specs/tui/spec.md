@@ -4,11 +4,15 @@
 
 ### Requirement: Help is grouped, aligned, and shared
 
-The system SHALL print help in named sections, SHALL align each section's descriptions in one column two spaces after its longest entry, SHALL wrap a description that does not fit with its continuation under the same column, SHALL keep every row inside the requested width, SHALL show defaults as `(default: X)`, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, and SHALL use the same command table for `--help`, `/help`, and line mode.
+The system SHALL print help in named sections, SHALL align every description in one output to one shared column two spaces after the longest left entry in any section, capped at 26 columns, SHALL start the description on the next row at that column when an entry is longer than the cap, SHALL wrap a description that does not fit with its continuation under the same column, SHALL keep every row inside the requested width, SHALL show defaults as `(default: X)`, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, and SHALL use the same command table for `--help`, `/help`, and line mode.
 
 #### Scenario: Aligned sections
 - **WHEN** the user runs `imp --help`
-- **THEN** every flag in a section starts in one column and every description starts in the next
+- **THEN** every flag starts in one column and every description in every section starts in one shared column
+
+#### Scenario: Long entry
+- **WHEN** an example command is longer than the column cap
+- **THEN** it keeps its own row and its description starts on the next row at the shared column
 
 #### Scenario: Wrapped description
 - **WHEN** a flag description is wider than the terminal
