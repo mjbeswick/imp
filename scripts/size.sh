@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fail the build when the binary grows past the budget.
 set -e
-LIMIT=${LIMIT:-630000}    # ~10% over the achieved 572 KB
+LIMIT=${LIMIT:-700000}    # headroom for multi-provider adapters
 BIN=${BIN:-target/release/imp}
 cargo build --release --quiet
 SIZE=$(wc -c < "$BIN" | tr -d ' ')

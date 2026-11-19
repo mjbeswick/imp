@@ -455,6 +455,7 @@ fn utf8_len(b: u8) -> usize {
 
 pub enum Cmd {
     Prompt(String),
+    Attach(Vec<crate::api::Image>),
     SetThinking(bool),
     SetAgent(String),
     ShowAgent,
@@ -1171,6 +1172,17 @@ impl App {
             return;
         }
 
+        let (mut text, images) = extract_images(&text, &self.root);
+        if !images.is_empty() && text.trim().is_empty() {
+            text = "Look at the attached image.".into();
+        }
+        for image in &images {
+            self.push(Role::Thinking, crate::images::marker(image));
+        }
+        if !images.is_empty() {
+            let _ = tx.send(Cmd::Attach(images));
+        }
+
         self.history.push(text.clone());
         save_history(&self.history);
         if self.history.len() > 1000 {
@@ -1261,6 +1273,20 @@ impl App {
                 self.push(Role::Info, "new conversation");
             }
             "cwd" => self.push(Role::Info, self.root.display().to_string()),
+            other if other == "image" || other.starts_with("image ") => {
+                let raw = other.strip_prefix("image").unwrap_or("").trim();
+                if raw.is_empty() {
+                    self.push(Role::Info, "image <path>");
+                } else {
+                    match crate::images::attach(raw, &self.root) {
+                        Ok(image) => {
+                            self.push(Role::Thinking, crate::images::marker(&image));
+                            let _ = tx.send(Cmd::Attach(vec![image]));
+                        }
+                        Err(e) => self.push(Role::Error, e),
+                    }
+                }
+            }
             other if other == "cd" || other.starts_with("cd ") => {
                 let raw = other[2..].trim();
                 if raw.is_empty() {
@@ -1852,6 +1878,25 @@ fn compact_tokens(n: u64) -> String {
     }
 }
 
+fn extract_images(text: &str, root: &std::path::Path) -> (String, Vec<crate::api::Image>) {
+    let mut keep = Vec::new();
+    let mut images = Vec::new();
+    for token in text.split_whitespace() {
+        let lower = token.to_ascii_lowercase();
+        let looks_image = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+            .iter()
+            .any(|ext| lower.ends_with(ext));
+        if looks_image {
+            if let Ok(image) = crate::images::attach(token, root) {
+                images.push(image);
+                continue;
+            }
+        }
+        keep.push(token);
+    }
+    (keep.join(" "), images)
+}
+
 fn fit(text: &str, cols: usize) -> String {
     if text.chars().count() <= cols {
         return text.to_string();
@@ -1992,6 +2037,13 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
         let session_id = session_id.clone();
         move || loop {
             match cmd_rx.recv() {
+                Ok(Cmd::Attach(images)) => {
+                    for image in images {
+                        if let Err(e) = worker_session.attach_image(image) {
+                            let _ = ev_tx.send(Ev::Error(e));
+                        }
+                    }
+                }
                 Ok(Cmd::Prompt(text)) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),

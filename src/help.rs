@@ -14,6 +14,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/verbosity", "tool detail: low or high"),
     ("/cwd", "show the session directory"),
     ("/cd", "change the session directory"),
+    ("/image", "attach an image by path"),
     ("/quit", "leave"),
 ];
 
@@ -228,7 +229,7 @@ mod tests {
     #[test]
     fn commands_lists_every_command() {
         let text = commands();
-        assert_eq!(COMMANDS.len(), 12);
+        assert_eq!(COMMANDS.len(), 13);
         for (name, _) in COMMANDS {
             assert!(text.contains(name), "missing {name}");
         }

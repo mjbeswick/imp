@@ -3,6 +3,7 @@ mod api;
 mod config;
 mod help;
 mod http;
+mod images;
 mod init;
 mod jobs;
 mod perm;
@@ -394,6 +395,22 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     }
                 }
                 "cwd" => println!("{}", session.tools.root.display()),
+                other if other == "image" || other.starts_with("image ") => {
+                    let raw = other.strip_prefix("image").unwrap_or("").trim();
+                    if raw.is_empty() {
+                        println!("image <path>");
+                    } else {
+                        match images::attach(raw, &session.tools.root) {
+                            Ok(image) => {
+                                println!("{}", images::marker(&image));
+                                if let Err(e) = session.attach_image(image) {
+                                    eprintln!("imp: {e}");
+                                }
+                            }
+                            Err(e) => println!("{e}"),
+                        }
+                    }
+                }
                 other if other == "cd" || other.starts_with("cd ") => {
                     let raw = other[2..].trim();
                     if raw.is_empty() {

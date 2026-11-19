@@ -33,6 +33,14 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+    pub file: String,
+    pub name: String,
+    pub mime: String,
+    pub bytes: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Message {
     pub role: Role,
@@ -40,6 +48,7 @@ pub struct Message {
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
     pub tool_call_id: Option<String>,
+    pub images: Vec<Image>,
 }
 
 impl Message {
@@ -68,13 +77,28 @@ impl Message {
             reasoning: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            images: Vec::new(),
         }
     }
 
     pub fn to_json(&self) -> Value {
         let mut map = Map::new();
         map.insert("role".into(), json!(self.role.as_str()));
-        map.insert("content".into(), json!(self.content));
+        if self.images.is_empty() {
+            map.insert("content".into(), json!(self.content));
+        } else {
+            let mut parts = vec![json!({"type": "text", "text": self.content})];
+            for image in &self.images {
+                let path = crate::images::dir().join(&image.file);
+                if let Ok(bytes) = std::fs::read(&path) {
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": { "url": format!("data:{};base64,{}", image.mime, base64(&bytes)) }
+                    }));
+                }
+            }
+            map.insert("content".into(), Value::Array(parts));
+        }
         if !self.reasoning.is_empty() && self.role == Role::Assistant {
             // Required whenever tools are present; omitting it is a 400.
             map.insert("reasoning_content".into(), json!(self.reasoning));
@@ -96,6 +120,14 @@ impl Message {
                 .collect();
             map.insert("tool_calls".into(), Value::Array(calls));
         }
+        if !self.images.is_empty() {
+            let images: Vec<Value> = self
+                .images
+                .iter()
+                .map(|i| json!({"file": i.file, "name": i.name, "mime": i.mime, "bytes": i.bytes}))
+                .collect();
+            map.insert("images".into(), Value::Array(images));
+        }
         Value::Object(map)
     }
 
@@ -107,7 +139,32 @@ impl Message {
             "tool" => Role::Tool,
             _ => return None,
         };
-        let mut msg = Self::new(role, v.get("content").and_then(Value::as_str).unwrap_or(""));
+        let content = match v.get("content") {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Array(parts)) => parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        let mut msg = Self::new(role, content);
+        if let Some(images) = v.get("images").and_then(Value::as_array) {
+            for image in images {
+                let file = image.get("file").and_then(Value::as_str)?;
+                let mime = image.get("mime").and_then(Value::as_str)?;
+                msg.images.push(Image {
+                    file: file.to_string(),
+                    name: image
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(file)
+                        .to_string(),
+                    mime: mime.to_string(),
+                    bytes: image.get("bytes").and_then(Value::as_u64).unwrap_or(0),
+                });
+            }
+        }
         msg.reasoning = v
             .get("reasoning_content")
             .and_then(Value::as_str)
@@ -428,6 +485,31 @@ pub fn estimate_tokens(history: &[Message]) -> u64 {
     (bytes / 4) as u64
 }
 
+fn base64(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,6 +523,27 @@ mod tests {
             }
         }
         a
+    }
+
+    #[test]
+    fn base64_matches_rfc4648() {
+        assert_eq!(base64(b"Man"), "TWFu");
+        assert_eq!(base64(b"M"), "TQ==");
+        assert_eq!(base64(b"Ma"), "TWE=");
+    }
+
+    #[test]
+    fn image_records_round_trip() {
+        let v = serde_json::json!({
+            "role": "user",
+            "content": "look",
+            "images": [{"file": "abc.png", "name": "shot.png", "mime": "image/png", "bytes": 24}]
+        });
+        let message = Message::from_json(&v).unwrap();
+        assert_eq!(message.content, "look");
+        assert_eq!(message.images.len(), 1);
+        assert_eq!(message.images[0].name, "shot.png");
+        assert_eq!(message.images[0].mime, "image/png");
     }
 
     #[test]

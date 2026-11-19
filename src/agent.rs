@@ -1,6 +1,6 @@
 //! The turn loop: request, stream, run tools, repeat.
 
-use crate::api::{self, Accum, Message, RequestOptions, SseParser, ToolCall};
+use crate::api::{self, Accum, Image, Message, RequestOptions, SseParser, ToolCall};
 use crate::config::{Config, Permissions};
 use crate::perm::{self, Decision};
 use crate::jobs::Jobs;
@@ -89,6 +89,7 @@ pub struct Session {
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
     pub last_model: Option<String>,
+    pub attachments: Vec<Image>,
     pub transport: Box<dyn Transport>,
     pub memory: Memory,
     pub skills: Vec<Skill>,
@@ -134,6 +135,7 @@ impl Session {
             log: None,
             last_usage: (0, 0, 0),
             last_model: None,
+            attachments: Vec::new(),
             transport: Box::new(Live),
             memory,
             skills,
@@ -332,6 +334,19 @@ impl Session {
                 continue;
             }
 
+            if status == 400
+                && raw_error.to_ascii_lowercase().contains("image")
+                && attempt == 1
+            {
+                let dropped = self.drop_last_images();
+                if dropped > 0 {
+                    hooks.ui(Ui::Info(format!(
+                        "model refused images; dropped {dropped} and retrying"
+                    )));
+                    continue;
+                }
+            }
+
             self.last_usage = (acc.cache_hit, acc.cache_miss, acc.completion_tokens);
             self.last_model = acc.model.clone();
             match api::classify(status, acc.finish.as_deref(), &raw_error) {
@@ -382,6 +397,28 @@ impl Session {
             )));
         }
         pruned
+    }
+
+    pub fn attach_image(&mut self, image: Image) -> Result<(), String> {
+        if self.attachments.len() >= crate::images::MAX_PER_MESSAGE {
+            return Err(format!(
+                "at most {} images per message",
+                crate::images::MAX_PER_MESSAGE
+            ));
+        }
+        self.attachments.push(image);
+        Ok(())
+    }
+
+    fn drop_last_images(&mut self) -> usize {
+        for message in self.history.iter_mut().rev() {
+            if message.role == crate::api::Role::User && !message.images.is_empty() {
+                let count = message.images.len();
+                message.images.clear();
+                return count;
+            }
+        }
+        0
     }
 
     fn emergency_truncate(&mut self) -> usize {
@@ -490,7 +527,9 @@ impl Session {
     pub fn turn(&mut self, user: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
         self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
         self.note_width();
-        self.say(Message::user(user));
+        let mut message = Message::user(user);
+        message.images = std::mem::take(&mut self.attachments);
+        self.say(message);
 
         for step in 0..MAX_STEPS {
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1080,6 +1119,37 @@ mod tests {
             roster(),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         )
+    }
+
+    #[test]
+    fn turn_carries_attachments_and_caps_them() {
+        let (mut s, _fake) = scripted(vec![Script::Ok(text_reply("done"))]);
+        for i in 0..crate::images::MAX_PER_MESSAGE {
+            s.attach_image(Image {
+                file: format!("{i}.png"),
+                name: format!("{i}.png"),
+                mime: "image/png".into(),
+                bytes: 8,
+            })
+            .unwrap();
+        }
+        assert!(s
+            .attach_image(Image {
+                file: "extra.png".into(),
+                name: "extra.png".into(),
+                mime: "image/png".into(),
+                bytes: 8,
+            })
+            .is_err());
+
+        let mut hooks = Null;
+        s.turn("look", &mut hooks).unwrap();
+        let user = s
+            .history
+            .iter()
+            .find(|m| m.role == crate::api::Role::User && m.content == "look")
+            .unwrap();
+        assert_eq!(user.images.len(), crate::images::MAX_PER_MESSAGE);
     }
 
     #[test]
