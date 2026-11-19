@@ -1644,14 +1644,6 @@ impl App {
         if self.input.starts_with('!') && !self.status.streaming {
             return fit(" shell · local · not sent to the model", cols);
         }
-        let hit_rate = if self.status.hit + self.status.miss > 0 {
-            format!(
-                "{}%",
-                100 * self.status.hit / (self.status.hit + self.status.miss)
-            )
-        } else {
-            "—".into()
-        };
         let spin = if self.status.streaming {
             let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
             frames[self.spinner % frames.len()].to_string()
@@ -1666,20 +1658,32 @@ impl App {
             self.status.miss,
             self.status.output,
         )
-        .map(|c| {
-            let micros = (c * 1_000_000.0).round() as u64;
-            format!(" · ${}.{:04}", micros / 1_000_000, micros % 1_000_000)
-        })
+        .map(|c| format!(" · ${c:.2}"))
         .unwrap_or_default();
         fit(
             &format!(
-                " {spin} {} · {} tok · cache {hit_rate}{money} · {}{thinking}",
+                " {spin} {} · {} tok{money}{thinking}",
                 self.cfg.model,
-                self.status.tokens,
-                self.cfg.permissions.as_str()
+                compact_tokens(self.status.tokens),
             ),
             cols,
         )
+    }
+}
+
+/// 1234 draws as `1.2K`, 1_200_000 as `1.2M`. Below a thousand stays exact.
+fn compact_tokens(n: u64) -> String {
+    fn scaled(value: f64, unit: &str) -> String {
+        let text = format!("{value:.1}");
+        let text = text.strip_suffix(".0").unwrap_or(&text);
+        format!("{text}{unit}")
+    }
+    if n >= 1_000_000 {
+        scaled(n as f64 / 1_000_000.0, "M")
+    } else if n >= 1_000 {
+        scaled(n as f64 / 1_000.0, "K")
+    } else {
+        n.to_string()
     }
 }
 
@@ -2452,15 +2456,36 @@ mod tests {
     }
 
     #[test]
-    fn status_reports_tokens_cache_and_cost() {
+    fn status_reports_tokens_and_cost() {
         let mut a = app();
-        a.status.tokens = 1234;
+        a.status.tokens = 3400;
         a.status.hit = 900;
         a.status.miss = 100;
+        a.status.output = 50;
         let line = a.status_line(120);
-        assert!(line.contains("1234 tok"), "{line}");
-        assert!(line.contains("cache 90%"), "{line}");
-        assert!(line.contains('$'), "{line}");
+        assert!(line.contains("3.4K tok"), "{line}");
+        let cost = crate::pricing::cost(
+            "deepseek-flash",
+            crate::pricing::now(),
+            900,
+            100,
+            50,
+        )
+        .unwrap();
+        assert!(line.contains(&format!("${cost:.2}")), "{line}");
+        assert!(!line.contains("cache"), "{line}");
+        assert!(!line.contains("normal"), "{line}");
+    }
+
+    #[test]
+    fn status_abbreviates_large_token_counts() {
+        let mut a = app();
+        a.status.tokens = 940;
+        assert!(a.status_line(120).contains("940 tok"));
+        a.status.tokens = 1_200_000;
+        assert!(a.status_line(120).contains("1.2M tok"));
+        assert_eq!(compact_tokens(12_345), "12.3K");
+        assert_eq!(compact_tokens(1_000), "1K");
     }
 
     #[test]
