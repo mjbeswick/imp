@@ -4,6 +4,7 @@
 //! The wire adapters live beside this module and share one internal event
 //! stream, so the session loop never sees a provider's dialect.
 
+pub mod anthropic;
 pub mod openai;
 
 use crate::api::{Event, Message, RequestOptions};
@@ -25,7 +26,10 @@ pub trait Adapter {
 
 /// Pick the adapter for a profile. OpenAI, Ollama, and custom hosts share one.
 pub fn adapter(provider: Provider, base_url: &str, key: &str) -> Box<dyn Adapter> {
-    Box::new(openai::OpenAi::new(base_url, key, provider.caps()))
+    match provider {
+        Provider::Anthropic => Box::new(anthropic::Anthropic::new(base_url, key)),
+        _ => Box::new(openai::OpenAi::new(base_url, key, provider.caps())),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
