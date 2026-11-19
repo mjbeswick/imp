@@ -749,10 +749,11 @@ enum AskMode {
     Custom,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum PickKind {
     Agent,
     Session,
+    Verbosity,
 }
 
 #[derive(Clone)]
@@ -1505,13 +1506,22 @@ impl App {
             other if other == "verbosity" || other.starts_with("verbosity ") => {
                 let level = other.strip_prefix("verbosity").unwrap_or("").trim();
                 match level {
-                    "" => self.push(
-                        Role::Info,
-                        format!(
-                            "verbosity: {}",
-                            if self.verbose { "high" } else { "low" }
-                        ),
-                    ),
+                    "" => {
+                        let items = vec![
+                            PickItem {
+                                label: "low".into(),
+                                value: "low".into(),
+                            },
+                            PickItem {
+                                label: "high".into(),
+                                value: "high".into(),
+                            },
+                        ];
+                        let mut picker = Picker::new("verbosity", items, PickKind::Verbosity);
+                        picker.index = if self.verbose { 1 } else { 0 };
+                        self.pending = Some(Pending::Pick(picker));
+                        self.dirty = true;
+                    }
                     "high" => {
                         self.verbose = true;
                         self.push(Role::Info, "verbosity: high");
@@ -1622,6 +1632,10 @@ impl App {
                                     self.entries.clear();
                                     self.push(Role::Info, format!("resuming {}", choice.value));
                                     let _ = tx.send(Cmd::Resume(choice.value));
+                                }
+                                PickKind::Verbosity => {
+                                    self.verbose = choice.value == "high";
+                                    self.push(Role::Info, format!("verbosity: {}", choice.value));
                                 }
                             }
                         }
@@ -3233,9 +3247,49 @@ mod tests {
         a.run_command("verbosity low", &tx);
         assert!(!a.verbose);
         a.run_command("verbosity", &tx);
-        assert!(a.entries.last().unwrap().text.contains("verbosity: low"));
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Verbosity, "bare verbosity opened no picker");
+        assert_eq!(
+            picker.selected().map(|i| i.value.as_str()),
+            Some("low"),
+            "the current level is not highlighted"
+        );
+        a.handle_key(Key::Down, &tx);
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.verbose, "choosing high did nothing");
+        assert!(a.pending.is_none(), "the picker stayed open");
         a.run_command("verbosity loud", &tx);
         assert!(a.entries.last().unwrap().text.contains("use low or high"));
+    }
+
+    #[test]
+    fn agent_picker_enter_switches_and_esc_does_not() {
+        let mut a = app();
+        open_agent_picker(&mut a);
+        let (tx, rx) = channel();
+        a.handle_key(Key::Down, &tx);
+        a.handle_key(Key::Enter, &tx);
+        match rx.try_recv() {
+            Ok(Cmd::SetAgent(name)) => assert_eq!(name, "reviewer"),
+            _ => panic!("the agent picker sent no switch"),
+        }
+        assert!(a.pending.is_none(), "the picker stayed open");
+        assert_eq!(a.agent, "reviewer");
+
+        open_agent_picker(&mut a);
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.pending.is_none());
+        assert!(rx.try_recv().is_err(), "Esc sent a command");
+        assert_eq!(a.agent, "reviewer", "Esc changed the agent");
+    }
+
+    #[test]
+    fn session_picker_esc_sends_nothing() {
+        let mut a = picker();
+        let (tx, rx) = channel();
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.pending.is_none(), "the picker stayed open");
+        assert!(rx.try_recv().is_err(), "Esc resumed anyway");
     }
 
     #[test]
