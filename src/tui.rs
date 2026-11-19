@@ -3051,7 +3051,14 @@ impl App {
         };
 
         let wall = self.palette.paint(Role::Thinking, "│");
-        let mut block: Vec<String> = vec![edge('╭', '╮', &picker.title, &position)];
+        let title = if matches!(picker.kind, PickKind::Dir | PickKind::Image) {
+            // Browsers name where they are, keeping the deepest part.
+            let room = inner.saturating_sub(picker.title.chars().count() + position.len() + 9);
+            format!("{} {}", picker.title, tail(&tilde(&picker.current), room))
+        } else {
+            picker.title.clone()
+        };
+        let mut block: Vec<String> = vec![edge('╭', '╮', &title, &position)];
         let filter = format!(" › {}", picker.filter);
         block.push(format!("{wall}{}{wall}", self.boxed(&filter, inner, false)));
         block.push(
@@ -3279,6 +3286,16 @@ fn fit(text: &str, cols: usize) -> String {
 const CARET: char = '\u{0}';
 
 /// Keep the end of a row, dropping the left and marking the cut with an ellipsis.
+/// A path with the home directory written as `~`.
+fn tilde(path: &std::path::Path) -> String {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
 fn tail(text: &str, width: usize) -> String {
     let count = text.chars().count();
     if count <= width {
@@ -4868,6 +4885,24 @@ mod tests {
         assert_eq!(picker.current, std::path::PathBuf::from("/"));
         picker.reload();
         assert!(picker.items.iter().all(|i| i.label != "../"), "/ has a parent row");
+    }
+
+    #[test]
+    fn browsers_name_their_directory() {
+        let base = scratch("title");
+        let root = base.join("work");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let mut a = app_at(root.clone());
+        let (tx, _rx) = channel();
+        a.run_command("cd", &tx);
+        highlight(&mut a, &tx, "src/");
+        a.handle_key(Key::Enter, &tx);
+        let frame = strip(&a.frame(200, 30));
+        let start = frame.find("╭─ cd ").expect("title");
+        let top = &frame[start..start + frame[start..].find('╮').unwrap()];
+        assert!(top.contains("/work/src "), "{top}");
+        assert!(top.chars().count() <= 72, "{top}");
+        assert_eq!(tilde(std::path::Path::new(&std::env::var("HOME").unwrap())), "~");
     }
 
     #[test]
