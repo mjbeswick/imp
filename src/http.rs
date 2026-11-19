@@ -17,6 +17,11 @@ const CURLOPT_ERRORBUFFER: u32 = 10_010;
 const CURLOPT_USERAGENT: u32 = 10_018;
 const CURLOPT_ACCEPT_ENCODING: u32 = 10_102;
 const CURLINFO_RESPONSE_CODE: u32 = 0x20_0002;
+const CURLINFO_CONTENT_TYPE: u32 = 0x10_0012;
+const CURLOPT_FOLLOWLOCATION: u32 = 52;
+const CURLOPT_MAXREDIRS: u32 = 68;
+const CURLOPT_PROTOCOLS_STR: u32 = 10_318;
+const CURLOPT_REDIR_PROTOCOLS_STR: u32 = 10_319;
 
 const CURLE_OK: i32 = 0;
 
@@ -50,6 +55,7 @@ fn init() {
 /// A successful response: status plus whatever the callback consumed.
 pub struct Response {
     pub status: u16,
+    pub content_type: String,
 }
 
 /// Headers are ordinary `Name: value` strings; `Content-Type` is added for you.
@@ -62,17 +68,33 @@ pub fn post_stream<F>(
 where
     F: FnMut(&[u8]),
 {
-    request_stream(url, headers, Some(body), 600_000, on_chunk)
+    request_stream(url, headers, Some(body), 600_000, false, on_chunk)
 }
 
 /// One GET, collecting the body. Used for small JSON documents such as a
 /// provider's model list.
 pub fn get(url: &str, headers: &[&str], timeout_ms: u64) -> Result<(u16, String), String> {
     let mut body = Vec::new();
-    let response = request_stream(url, headers, None, timeout_ms, |chunk| {
+    let response = request_stream(url, headers, None, timeout_ms, false, |chunk| {
         body.extend_from_slice(chunk);
     })?;
     Ok((response.status, String::from_utf8_lossy(&body).into_owned()))
+}
+
+/// One GET for the `fetch` tool: redirects followed over http and https,
+/// the body kept up to `cap` bytes. Returns status, content type, and body.
+pub fn fetch(url: &str, timeout_ms: u64, cap: usize) -> Result<(u16, String, String), String> {
+    let mut body = Vec::new();
+    let response = request_stream(url, &[], None, timeout_ms, true, |chunk| {
+        if body.len() < cap {
+            body.extend_from_slice(chunk);
+        }
+    })?;
+    Ok((
+        response.status,
+        response.content_type,
+        String::from_utf8_lossy(&body).into_owned(),
+    ))
 }
 
 fn request_stream<F>(
@@ -80,6 +102,7 @@ fn request_stream<F>(
     headers: &[&str],
     body: Option<&[u8]>,
     timeout_ms: u64,
+    follow: bool,
     mut on_chunk: F,
 ) -> Result<Response, String>
 where
@@ -127,10 +150,25 @@ where
         setopt_str(handle, CURLOPT_USERAGENT, agent.as_ptr());
         setopt_ptr(handle, CURLOPT_ACCEPT_ENCODING, std::ptr::null());
         setopt_ptr(handle, CURLOPT_ERRORBUFFER, errbuf.as_mut_ptr() as *const c_void);
+        if follow {
+            // A fetch may follow redirects, but only ever over http or https.
+            let web = CString::new("http,https").unwrap();
+            setopt_str(handle, CURLOPT_PROTOCOLS_STR, web.as_ptr());
+            setopt_str(handle, CURLOPT_REDIR_PROTOCOLS_STR, web.as_ptr());
+            setopt_long(handle, CURLOPT_FOLLOWLOCATION, 1);
+            setopt_long(handle, CURLOPT_MAXREDIRS, 5);
+        }
 
         let code = curl_easy_perform(handle);
         let mut status: c_long = 0;
         curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &mut status as *mut c_long);
+        let mut kind: *const c_char = std::ptr::null();
+        curl_easy_getinfo(handle, CURLINFO_CONTENT_TYPE, &mut kind as *mut *const c_char);
+        let content_type = if kind.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(kind).to_string_lossy().into_owned()
+        };
 
         curl_slist_free_all(slist);
         curl_easy_cleanup(handle);
@@ -149,6 +187,7 @@ where
 
         Ok(Response {
             status: status as u16,
+            content_type,
         })
     }
 }

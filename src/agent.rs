@@ -49,6 +49,7 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"read","description":"Read files with line numbers, or list a directory. Add several paths in one call.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"},"depth":{"type":"integer","description":"Directory levels, 1 to 3. Default 1."}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
         json!({"type":"function","function":{"name":"write","description":"Create or replace a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}),
+        json!({"type":"function","function":{"name":"fetch","description":"GET one http or https URL from this machine, including the local network. JSON, feeds, and text come back as they are; HTML as its title and text.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}}),
         json!({"type":"function","function":{"name":"search","description":"Search the web, or fetch a page as markdown.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"url":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"memory","description":"Search stored notes, or save a new one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","save"]},"query":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
@@ -857,6 +858,22 @@ impl Session {
                     other => (false, format!("refused: unknown job op {other}")),
                 }
             }
+            "fetch" => {
+                let url = args.get("url").and_then(Value::as_str).unwrap_or("").trim();
+                if !crate::tools::fetchable(url) {
+                    return (false, "refused: fetch takes an http or https URL".into());
+                }
+                match crate::http::fetch(url, 15_000, 2 * 1024 * 1024) {
+                    Ok((status, kind, body)) => {
+                        let html = kind.contains("html") || body.trim_start().starts_with('<') && kind.is_empty();
+                        let body = if html { crate::tools::html_text(&body) } else { body };
+                        let kind = kind.split(';').next().unwrap_or("").trim().to_string();
+                        let text = self.tools.cap(&format!("{status} {kind}\n{body}"));
+                        (status < 400, text)
+                    }
+                    Err(e) => (false, format!("fetch failed: {e}")),
+                }
+            }
             "search" => {
                 if !self.cfg.provider.caps().search {
                     return (false, "search is not available for this provider".into());
@@ -1152,6 +1169,7 @@ pub fn describe(name: &str, args: &Value) -> String {
             flatten(text("path")),
             lines("content")
         ),
+        "fetch" => format!("fetch {}", flatten(text("url"))),
         "search" => {
             if text("op") == "fetch" {
                 format!("fetch {}", flatten(text("url")))
@@ -1754,6 +1772,43 @@ mod tests {
             self.0 = true;
             Some(7)
         }
+    }
+
+    /// One HTTP response from a throwaway local server, for fetch tests.
+    fn serve_once(response: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{addr}/data")
+    }
+
+    #[test]
+    fn fetch_returns_status_type_and_body() {
+        let url = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"moon\":0.92}",
+        );
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Yolo);
+        let (ok, out) = s.run_tool("fetch", &json!({"url": url}), &mut Null);
+        assert!(ok, "{out}");
+        assert_eq!(out, "200 application/json\n{\"moon\":0.92}");
+
+        let page = serve_once(
+            "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<title>Gone</title><p>No such page</p>",
+        );
+        let (ok, out) = s.run_tool("fetch", &json!({"url": page}), &mut Null);
+        assert!(!ok, "{out}");
+        assert!(out.starts_with("404 text/html\nGone"), "{out}");
+
+        let (ok, out) = s.run_tool("fetch", &json!({"url": "file:///etc/passwd"}), &mut Null);
+        assert!(!ok && out.contains("http or https"), "{out}");
     }
 
     #[test]
