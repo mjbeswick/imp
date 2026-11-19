@@ -223,7 +223,7 @@ The system SHALL render a frame only when a key was handled, an event arrived fr
 
 ### Requirement: The interface is one chat column
 
-The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL separate the transcript from the input area with one dim horizontal rule when the terminal has at least 8 rows, SHALL leave one blank row before every user entry except the first, SHALL show one dim welcome row naming the app and the `/` hint while the transcript is empty, leaving the directory to the status line, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
+The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
 
 #### Scenario: Quiet layout
 - **WHEN** the session is idle and the transcript is empty
@@ -395,7 +395,7 @@ The system SHALL persist submitted prompts to a history file, SHALL recall them 
 
 ### Requirement: Help is grouped, aligned, and shared
 
-The system SHALL print help in named sections, SHALL align every description in one output to one shared column two spaces after the longest left entry in any section, capped at 26 columns, SHALL start the description on the next row at that column when an entry is longer than the cap, SHALL wrap a description that does not fit with its continuation under the same column, SHALL keep every row inside the requested width, SHALL show defaults as `(default: X)`, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, and SHALL use the same command table for `--help`, `/help`, and line mode.
+The system SHALL print help in named sections, SHALL show defaults as `(default: X)`, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, and SHALL use the same command table for `--help`, `/help`, and line mode.
 
 #### Scenario: Aligned sections
 - **WHEN** the user runs `imp --help`
@@ -1086,3 +1086,23 @@ The system SHALL report an unknown command or value in the error role with the n
 #### Scenario: Toggle feedback
 - **WHEN** the user runs `/think`
 - **THEN** both front-ends reply `thinking: on` or `thinking: off`
+
+### Requirement: The chat column is spaced
+
+The system SHALL separate the transcript from the input area with one dim horizontal rule when the terminal has at least 8 rows, SHALL leave one blank row before every user entry except the first, and SHALL show one dim welcome row naming the app and the `/` hint while the transcript is empty, leaving the directory to the status line.
+
+#### Scenario: Rule and gap
+- **WHEN** a 24-row screen holds two user entries
+- **THEN** a rule sits directly above the input row and one blank row sits above the second entry
+
+#### Scenario: Welcome row
+- **WHEN** the transcript is empty
+- **THEN** the row above the rule reads `imp · / for commands`
+
+### Requirement: Help shares one description column
+
+The system SHALL align every description in one help output to one column two spaces after the longest left entry in any section, capped at 26 columns, SHALL start the description on the next row at that column when an entry is longer than the cap, SHALL wrap a long description under the same column, and SHALL keep every row inside the requested width.
+
+#### Scenario: One column
+- **WHEN** the user runs `imp --help` at 60 columns
+- **THEN** every description starts in the same column and no row is wider than 60
