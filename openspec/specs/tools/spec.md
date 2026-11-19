@@ -7,11 +7,11 @@ Defines the five built-in tools — shell, read, edit, write, search — their b
 
 ### Requirement: The tool set is small and shell-first
 
-The system SHALL expose `bash`, `read`, `edit`, `write`, `job`, and `ask` as its core tool set, SHALL expose `search` only when the active provider implements the search and fetch endpoints, SHALL NOT expose per-CLI tools such as `gh`, `docker`, `kubectl`, `git`, glob, grep, list, patch, or todo, and SHALL teach specific command-line tools through skills instead.
+The system SHALL expose `bash`, `read`, `edit`, `write`, `job`, `ask`, and `fetch` as its core tool set, SHALL expose `search` only when the active provider implements the search endpoint, SHALL NOT expose per-CLI tools such as `gh`, `docker`, `kubectl`, `git`, glob, grep, list, patch, or todo, and SHALL teach specific command-line tools through skills instead.
 
 #### Scenario: Default prompt
 - **WHEN** a session starts with memory and skills configured
-- **THEN** the request carries the seven tools plus `memory` and `skill_load`, and no per-CLI tool
+- **THEN** the request carries the seven core tools plus `memory` and `skill_load`, and no per-CLI tool
 
 #### Scenario: A CLI is not installed as a tool
 - **WHEN** the model needs `gh`
@@ -22,8 +22,8 @@ The system SHALL expose `bash`, `read`, `edit`, `write`, `job`, and `ask` as its
 - **THEN** it uses `bash` and the task completes without a dedicated tool
 
 #### Scenario: No search capability
-- **WHEN** the provider has no search endpoints
-- **THEN** the tool list omits `search` and the prompt has no search line
+- **WHEN** the provider has no search endpoint
+- **THEN** the tool list omits `search`, keeps `fetch`, and the prompt has no search line
 
 ### Requirement: Asking a yes/no question is one keystroke
 
@@ -259,7 +259,7 @@ The system SHALL classify every tool action before executing it against the live
 
 ### Requirement: Search returns summaries, not pages
 
-The system SHALL provide a `search` tool with a `search` operation that queries the web and returns at most five results containing title, URL, summary, date, and a short snippet, and SHALL NOT request or return page bodies in that operation.
+The system SHALL provide a `search` tool, on providers that implement it, that queries the web and returns at most five results containing title, URL, summary, date, and a short snippet, and SHALL NOT fetch or return page bodies.
 
 #### Scenario: Web question
 - **WHEN** the model searches for a current fact
@@ -271,15 +271,27 @@ The system SHALL provide a `search` tool with a `search` operation that queries 
 
 ### Requirement: Fetch returns page text as markdown
 
-The system SHALL provide a `fetch` operation that returns a single page as markdown, starting with the page title and then the page text, SHALL subject the result to the same 4 KB inline cap and spill rule as other tools, and SHALL NOT prefix it with a summary or a heading outline.
+The system SHALL provide a local `fetch` tool for every provider that makes one GET request over `http` or `https` with a 15 second limit, SHALL return the status line and the body, SHALL return JSON, XML, and text unchanged and HTML as its title and readable text, and SHALL apply the 4 KB cap and spill rule.
 
 #### Scenario: Reading an article
-- **WHEN** the model fetches a URL
-- **THEN** it receives the page title and markdown text, or an error naming why the page could not be read
+- **WHEN** the model fetches an HTML page
+- **THEN** it receives the status line, the page title, and the page text without scripts or tags
 
 #### Scenario: A markdown file
 - **WHEN** the model fetches a `.md` file with headings
-- **THEN** the result begins with its title or first line of text, not with a list of its headings
+- **THEN** the result is the file's text as served, beginning with its first line
+
+#### Scenario: A JSON API
+- **WHEN** the model fetches `https://api.open-meteo.com/v1/forecast?...`
+- **THEN** it receives `200 application/json` and the JSON body unchanged
+
+#### Scenario: Local network
+- **WHEN** the model fetches `http://192.168.0.61:11080/`
+- **THEN** the request is made from this machine and the device answers
+
+#### Scenario: Other schemes
+- **WHEN** the model fetches `file:///etc/passwd`
+- **THEN** it is refused and no request is made
 
 ### Requirement: Search failures are bounded
 
