@@ -2413,9 +2413,9 @@ impl App {
                     self.dirty = true;
                 } else {
                     match crate::config::resolve_root(Some(raw), &self.root) {
+                        // The worker reports the change once it has happened.
                         Ok(path) => {
-                            let _ = tx.send(Cmd::SetRoot(path.clone()));
-                            self.push(Role::Info, format!("cwd: {}", path.display()));
+                            let _ = tx.send(Cmd::SetRoot(path));
                         }
                         Err(e) => self.push(Role::Error, e),
                     }
@@ -3536,6 +3536,11 @@ fn fit(text: &str, cols: usize) -> String {
 const CARET: char = '\u{0}';
 
 /// Keep the end of a row, dropping the left and marking the cut with an ellipsis.
+/// The one line that reports a new session root.
+pub(crate) fn root_report(path: &std::path::Path) -> String {
+    format!("cwd: {} (prompt cache reset)", tilde(path))
+}
+
 /// A path with the home directory written as `~`.
 fn tilde(path: &std::path::Path) -> String {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
@@ -3797,10 +3802,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                 Ok(Cmd::SetRoot(path)) => match worker_session.set_root(path.clone()) {
                     Ok(()) => {
                         let _ = ev_tx.send(Ev::Root(path.clone()));
-                        let _ = ev_tx.send(Ev::Info(format!(
-                            "cwd: {} (prompt cache reset)",
-                            path.display()
-                        )));
+                        let _ = ev_tx.send(Ev::Info(root_report(&path)));
                     }
                     Err(e) => {
                         let _ = ev_tx.send(Ev::Error(e));
@@ -5389,11 +5391,25 @@ mod tests {
         assert!(a.pending.is_none(), "Esc left the browser open");
         assert!(rx.try_recv().is_err(), "Esc changed the root");
 
+        let before = a.entries.len();
         a.run_command("cd .", &tx);
         match rx.try_recv() {
-            Ok(Cmd::SetRoot(path)) => assert!(path.is_dir()),
+            Ok(Cmd::SetRoot(path)) => {
+                assert!(path.is_dir());
+                // The worker's single report is the only cwd line.
+                a.apply(Ev::Info(root_report(&path)));
+            }
             _ => panic!("cd did not send SetRoot"),
         }
+        let lines: Vec<&str> = a.entries[before..]
+            .iter()
+            .filter(|e| e.text.starts_with("cwd:"))
+            .map(|e| e.text.as_str())
+            .collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].ends_with("(prompt cache reset)"), "{lines:?}");
+        let home = std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("Projects");
+        assert_eq!(root_report(&home), "cwd: ~/Projects (prompt cache reset)");
 
         let dir = std::env::temp_dir();
         a.apply(Ev::Root(dir.clone()));

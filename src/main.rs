@@ -465,10 +465,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     } else {
                         match config::resolve_root(Some(raw), &session.tools.root) {
                             Ok(path) => match session.set_root(path.clone()) {
-                                Ok(()) => println!(
-                                    "cwd: {} (prompt cache reset)",
-                                    path.display()
-                                ),
+                                Ok(()) => println!("{}", tui::root_report(&path)),
                                 Err(e) => eprintln!("imp: {e}"),
                             },
                             Err(e) => println!("{e}"),
