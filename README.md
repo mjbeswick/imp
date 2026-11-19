@@ -67,6 +67,7 @@ the same limits as the `bash` tool.
 skills that teach `bash`.
 
 - Results over 4 KB spill to a file; you get a head, a tail, and the path.
+- `read` takes several paths; a directory path lists names to three levels, skipping build and VCS noise.
 - `edit` replaces exact strings, several per call, all or nothing.
 - Long commands run with `background`, then `job wait` (55 s at a time).
 - `search` returns summaries; `fetch` returns one page with its outline.
