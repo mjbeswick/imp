@@ -108,9 +108,14 @@ AGENTS.md                     global, repository root, then session directory
 .claude/CLAUDE.md             fallback when AGENTS.md is absent
 ~/.config/imp/skills/<n>/SKILL.md
 ./.imp/skills/<n>/SKILL.md
+./.agents/skills/<n>/SKILL.md
 ~/.config/imp/agents/<n>.md
 ./.imp/agents/<n>.md
+./.agents/agents/<n>.md
 ```
+
+Project sources shadow global ones by name. `.agents` shadows `.imp`, and an
+explicit `--skills-dir` wins over both.
 
 Agent frontmatter: `description`, `tools`, `model`, `thinking`. Skills use
 `name` and `description`; only the description reaches the prompt until loaded.
