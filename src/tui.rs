@@ -1418,10 +1418,8 @@ impl App {
         self.follow_tail();
 
         if let Some(cmd) = text.strip_prefix('/') {
-            if !cmd.contains(' ') {
-                self.run_command(cmd, tx);
-                return;
-            }
+            self.run_command(cmd, tx);
+            return;
         }
 
         if let Some(rest) = text.strip_prefix('!') {
@@ -3501,6 +3499,16 @@ mod tests {
         let (tx, rx) = channel();
         a.run_command("fork", &tx);
         assert!(matches!(rx.try_recv(), Ok(Cmd::Fork)));
+    }
+
+    #[test]
+    fn slash_commands_with_values_reach_the_parser() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.input = "/cd .".into();
+        a.cursor = a.input.len();
+        a.submit(&tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::SetRoot(_))));
     }
 
     #[test]
