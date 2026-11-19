@@ -6,4 +6,4 @@
 - [x] 1.4 Add the Gemini adapter. Build `contents`, `systemInstruction`, and function declarations; parse candidates, function calls, and usage metadata. Verify: text and function-call fixtures produce the expected events and token counts.
 - [x] 1.5 Gate capabilities. Send only accepted thinking and token fields, omit `search` from the schema and prompt when the provider lacks it, and keep cost unknown off DeepSeek. Verify: OpenAI has no `search` tool or prompt line, Gemini has no DeepSeek fields, and an unknown model shows no cost.
 - [x] 1.6 Document providers. Add the `provider` setting, key variables, and examples to the README and `--help`. Verify: help lists `--provider`, and the README names each provider's key.
-- [ ] 1.7 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 1.7 Run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.

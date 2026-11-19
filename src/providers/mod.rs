@@ -69,17 +69,6 @@ impl Provider {
         })
     }
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::DeepSeek => "deepseek",
-            Self::OpenAi => "openai",
-            Self::Anthropic => "anthropic",
-            Self::Gemini => "gemini",
-            Self::Ollama => "ollama",
-            Self::Custom => "custom",
-        }
-    }
-
     pub fn profile(self) -> Profile {
         match self {
             Self::DeepSeek => Profile {
@@ -190,18 +179,18 @@ mod tests {
 
     #[test]
     fn every_profile_is_known_and_parses_back() {
-        for p in [
-            Provider::DeepSeek,
-            Provider::OpenAi,
-            Provider::Anthropic,
-            Provider::Gemini,
-            Provider::Ollama,
-            Provider::Custom,
+        for (name, p) in [
+            ("deepseek", Provider::DeepSeek),
+            ("openai", Provider::OpenAi),
+            ("anthropic", Provider::Anthropic),
+            ("gemini", Provider::Gemini),
+            ("ollama", Provider::Ollama),
+            ("custom", Provider::Custom),
         ] {
-            assert_eq!(Provider::parse(p.as_str()).unwrap(), p);
+            assert_eq!(Provider::parse(name).unwrap(), p);
             let profile = p.profile();
-            assert!(!profile.base_url.is_empty(), "{} has no base url", p.as_str());
-            assert!(!profile.model.is_empty(), "{} has no model", p.as_str());
+            assert!(!profile.base_url.is_empty(), "{name} has no base url");
+            assert!(!profile.model.is_empty(), "{name} has no model");
         }
     }
 
@@ -216,8 +205,8 @@ mod tests {
         assert!(Provider::DeepSeek.caps().search);
         assert!(Provider::DeepSeek.caps().cache);
         for p in [Provider::OpenAi, Provider::Anthropic, Provider::Gemini] {
-            assert!(!p.caps().search, "{} kept search", p.as_str());
-            assert!(!p.caps().cache, "{} kept cache", p.as_str());
+            assert!(!p.caps().search, "{p:?} kept search");
+            assert!(!p.caps().cache, "{p:?} kept cache");
         }
     }
 
