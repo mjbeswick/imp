@@ -47,7 +47,7 @@ pub fn schema() -> Vec<Value> {
     vec![
         json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."}},"required":["command"]}}}),
         json!({"type":"function","function":{"name":"job","description":"List background jobs, wait for one, or kill one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["list","wait","kill"]},"id":{"type":"integer"},"timeout_s":{"type":"integer","description":"For wait; up to 55 seconds."}},"required":["op"]}}}),
-        json!({"type":"function","function":{"name":"read","description":"Read one or more files with line numbers.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["paths"]}}}),
+        json!({"type":"function","function":{"name":"read","description":"Read files with line numbers, or list a directory. Add several paths in one call.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"},"depth":{"type":"integer","description":"Directory levels, 1 to 3. Default 1."}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
         json!({"type":"function","function":{"name":"write","description":"Create or replace a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}),
         json!({"type":"function","function":{"name":"search","description":"Search the web, or fetch a page as markdown.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"url":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
@@ -649,7 +649,8 @@ impl Session {
                 }
                 let offset = args.get("offset").and_then(Value::as_u64).map(|n| n as usize);
                 let limit = args.get("limit").and_then(Value::as_u64).map(|n| n as usize);
-                let o = self.tools.read(&paths, offset, limit);
+                let depth = args.get("depth").and_then(Value::as_u64).map(|n| n as usize);
+                let o = self.tools.read(&paths, offset, limit, depth);
                 (o.ok, o.text)
             }
             "write" => {
@@ -1090,7 +1091,7 @@ mod tests {
         );
         assert_eq!(s.log.as_ref().unwrap().meta_cwd().unwrap(), dir);
         let outside = outside.join("secret.txt").display().to_string();
-        let out = s.tools.read(&[outside], None, None);
+        let out = s.tools.read(&[outside], None, None, None);
         assert!(!out.ok, "read escaped the new root: {}", out.text);
     }
 

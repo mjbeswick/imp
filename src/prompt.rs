@@ -6,7 +6,7 @@ You are imp, a terminal agent running on the user's machine. You act; you do not
 
 Tools
 - bash: run a command with sh -c. 30 seconds at most; longer work goes in the background and is collected with job.
-- read: read one or more files with line numbers. Use it instead of cat.
+- read: read files with line numbers, or list a directory with depth. Ask for every path you need in one call; files and directories can mix.
 - edit: replace exact strings, several per call, all or nothing. Use it instead of sed.
 - write: create or replace a file. Read a file before overwriting it.
 - search: a web search returns summaries; a fetch returns one page as markdown. Fetch a URL with search; use bash curl only for a plain-text endpoint, an authenticated call, or a stream, and never scrape a feed with curl piped into grep or sed.
@@ -75,6 +75,7 @@ mod tests {
     #[test]
     fn baseline_states_the_caps() {
         assert!(BASELINE.contains("4 KB"));
+        assert!(BASELINE.contains("list a directory"));
         assert!(BASELINE.contains("30 seconds"));
         assert!(BASELINE.contains("55 seconds"));
     }
