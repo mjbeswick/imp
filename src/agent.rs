@@ -308,6 +308,9 @@ impl Session {
                 if !self.agent.allows(name) {
                     return false;
                 }
+                if name == "search" && !self.cfg.provider.caps().search {
+                    return false;
+                }
                 include_tool(
                     name,
                     self.memory.dirs.iter().any(|d| d.exists()),
@@ -835,7 +838,13 @@ impl Session {
                     other => (false, format!("refused: unknown job op {other}")),
                 }
             }
-            "search" => (true, self.search_tool(args)),
+            "search" => {
+                if !self.cfg.provider.caps().search {
+                    return (false, "search is not available for this provider".into());
+                }
+                (true, self.search_tool(args))
+            }
+
             "memory" => {
                 let op = args.get("op").and_then(Value::as_str).unwrap_or("search");
                 match op {
@@ -1572,6 +1581,24 @@ mod tests {
             .collect();
         assert!(names.contains(&"read".to_string()));
         assert!(!names.contains(&"bash".to_string()));
+    }
+
+    #[test]
+    fn a_provider_without_search_omits_the_tool() {
+        let mut cfg = crate::config::Config::default();
+        cfg.set_provider(crate::providers::Provider::OpenAi);
+        let mut s = session(cfg);
+        let names: Vec<String> = s
+            .active_tools()
+            .iter()
+            .map(|t| t["function"]["name"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert!(!names.contains(&"search".to_string()), "{names:?}");
+        assert!(names.contains(&"bash".to_string()));
+
+        let (ok, out) = s.run_tool("search", &json!({"op": "search", "query": "x"}), &mut Null);
+        assert!(!ok, "{out}");
+        assert!(out.contains("not available"), "{out}");
     }
 
     #[test]

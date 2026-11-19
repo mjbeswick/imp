@@ -32,6 +32,14 @@ Style
 
 pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
     let mut prompt = BASELINE.to_string();
+    if !cfg.provider.caps().search {
+        prompt = prompt
+            .lines()
+            .filter(|line| !line.starts_with("- search:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        prompt.push('\n');
+    }
 
     let (instructions, _loaded) = crate::store::load_instructions(root);
     prompt.push_str(&instructions);
@@ -82,6 +90,19 @@ mod tests {
         assert!(!BASELINE.contains("spill"));
         assert!(BASELINE.contains("30 seconds"));
         assert!(BASELINE.contains("55 seconds"));
+    }
+
+    #[test]
+    fn a_provider_without_search_has_no_search_line() {
+        let root = std::env::temp_dir();
+        let text = compose(&root, &crate::config::Config::default());
+        assert!(text.contains("- search:"), "deepseek lost its search line");
+
+        let mut cfg = crate::config::Config::default();
+        cfg.set_provider(crate::providers::Provider::OpenAi);
+        let text = compose(&root, &cfg);
+        assert!(!text.contains("- search:"), "{text}");
+        assert!(text.contains("- bash:"), "the other tools vanished");
     }
 
     #[test]

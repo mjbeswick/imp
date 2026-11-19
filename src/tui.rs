@@ -1944,15 +1944,19 @@ impl App {
         } else {
             String::new()
         };
-        let money = crate::pricing::cost(
-            &self.cfg.model,
-            crate::pricing::now(),
-            self.status.hit,
-            self.status.miss,
-            self.status.output,
-        )
-        .map(|c| format!(" · ${c:.2}"))
-        .unwrap_or_default();
+        let money = if self.cfg.provider == crate::providers::Provider::DeepSeek {
+            crate::pricing::cost(
+                &self.cfg.model,
+                crate::pricing::now(),
+                self.status.hit,
+                self.status.miss,
+                self.status.output,
+            )
+            .map(|c| format!(" · ${c:.2}"))
+            .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let model = if self.status.served.is_empty() || self.status.served == self.cfg.model {
             self.cfg.model.clone()
         } else {
@@ -2912,6 +2916,19 @@ mod tests {
         .unwrap();
         let line = a.status_line(120);
         assert!(line.contains(&format!("${total:.2}")), "{line}");
+    }
+
+    #[test]
+    fn an_unknown_model_shows_tokens_but_no_cost() {
+        let mut a = app();
+        a.cfg.set_provider(crate::providers::Provider::OpenAi);
+        a.status.tokens = 100;
+        a.status.hit = 90;
+        a.status.miss = 10;
+        a.status.output = 5;
+        let line = a.status_line(120);
+        assert!(line.contains("100 tok"), "{line}");
+        assert!(!line.contains('$'), "{line}");
     }
 
     #[test]
