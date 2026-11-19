@@ -266,6 +266,10 @@ pub enum Role {
     Info,
     Add,
     Delete,
+    Border,
+    Success,
+    Code,
+    Link,
 }
 
 pub(crate) struct Palette {
@@ -296,6 +300,21 @@ impl Palette {
         }
     }
 
+    /// The highlighted picker row: user text on the select background.
+    pub(crate) fn select(&self, text: &str) -> String {
+        if !self.on {
+            return text.to_string();
+        }
+        let back = self.theme.rgb(crate::theme::Slot::Select);
+        let bg = if self.truecolor {
+            format!("\x1b[48;2;{};{};{}m", back[0], back[1], back[2])
+        } else {
+            format!("\x1b[48;5;{}m", crate::theme::to_256(back))
+        };
+        // The fg reset inside `paint` keeps the background until the end.
+        format!("{bg}{}\x1b[0m", self.paint(Role::User, text).replace("\x1b[0m", "\x1b[39m"))
+    }
+
     pub(crate) fn theme_name(&self) -> &'static str {
         self.theme.name
     }
@@ -312,7 +331,10 @@ impl Palette {
             Role::Tool => Slot::Tool,
             Role::Error | Role::Delete => Slot::Error,
             Role::Info => Slot::Accent,
-            Role::Add => Slot::Success,
+            Role::Add | Role::Success => Slot::Success,
+            Role::Border => Slot::Border,
+            Role::Code => Slot::Code,
+            Role::Link => Slot::Link,
         };
         let [r, g, b] = self.theme.rgb(slot);
         let fallback = crate::theme::to_256([r, g, b]);
@@ -727,21 +749,6 @@ fn tool_row_text(row: &ToolRow, verbose: bool) -> String {
     text
 }
 
-/// Bold the leading mark after the row has been coloured. Only the weight is
-/// reset, so the row keeps its role colour.
-fn bold_mark(painted: String) -> String {
-    let Some(at) = painted.find(['✓', '✗']) else {
-        return painted;
-    };
-    let mark = painted[at..].chars().next().unwrap_or('?');
-    let mut out = String::with_capacity(painted.len() + 8);
-    out.push_str(&painted[..at]);
-    out.push_str("\x1b[1m");
-    out.push(mark);
-    out.push_str("\x1b[22m");
-    out.push_str(&painted[at + mark.len_utf8()..]);
-    out
-}
 
 pub struct App {
     cfg: Config,
@@ -2993,22 +3000,10 @@ impl App {
         for (role, line) in visible.iter().take(body_rows) {
             screen.push_str("\x1b[2K");
             match line {
-                Line::Text(text) => {
-                    let painted = self.palette.paint(*role, &fit(text, cols));
-                    if self.palette.on && matches!(role, Role::Tool | Role::Error) {
-                        screen.push_str(&bold_mark(painted));
-                    } else {
-                        screen.push_str(&painted);
-                    }
-                }
+                Line::Text(text) => screen.push_str(&self.marked(*role, &fit(text, cols))),
                 Line::Spans(spans) => screen.push_str(&self.paint_spans(*role, spans)),
                 Line::Timed(text, time) => {
-                    let painted = self.palette.paint(*role, text);
-                    if self.palette.on {
-                        screen.push_str(&bold_mark(painted));
-                    } else {
-                        screen.push_str(&painted);
-                    }
+                    screen.push_str(&self.marked(*role, text));
                     let gap = cols.saturating_sub(text.chars().count() + time.chars().count());
                     screen.push_str(&" ".repeat(gap));
                     screen.push_str(&self.palette.paint(Role::Thinking, time));
@@ -3026,7 +3021,7 @@ impl App {
             } else if self.yolo() {
                 Role::Error
             } else {
-                Role::Thinking
+                Role::Border
             };
             screen.push_str(&self.palette.paint(tone, &"─".repeat(cols)));
             screen.push_str("\r\n");
@@ -3054,12 +3049,33 @@ impl App {
         screen
     }
 
+    /// A tool row: the leading `✓` bold in the success colour, `✗` in the
+    /// error colour, and the rest in the row's own role.
+    fn marked(&self, role: Role, text: &str) -> String {
+        let found = text.find(['✓', '✗']);
+        let Some(at) = found.filter(|_| self.palette.on && matches!(role, Role::Tool | Role::Error)) else {
+            return self.palette.paint(role, text);
+        };
+        let mark = text[at..].chars().next().unwrap_or('✓');
+        let tone = if mark == '✓' { Role::Success } else { Role::Error };
+        let rest = &text[at + mark.len_utf8()..];
+        let head = if at == 0 { String::new() } else { self.palette.paint(role, &text[..at]) };
+        // `paint` ends in a full reset, which also ends the bold.
+        format!(
+            "{head}\x1b[1m{}{}",
+            self.palette.paint(tone, &mark.to_string()),
+            self.palette.paint(role, rest)
+        )
+    }
+
     /// Paint one row of styled spans, with a hyperlink around each linked run.
     fn paint_spans(&self, role: Role, spans: &[crate::render::Span]) -> String {
         let mut out = String::new();
         for span in spans {
             let colour = if span.style.code {
-                Role::Tool
+                Role::Code
+            } else if span.link.is_some() {
+                Role::Link
             } else if span.style.dim {
                 Role::Thinking
             } else {
@@ -3172,14 +3188,20 @@ impl App {
         let y = (body.saturating_sub(height)) / 2 + 1;
 
         // An edge with text set into it: `╭─ title ───── 3/40 ─╮`.
-        let edge = |l: char, r: char, left: &str, right: &str| {
-            let left = fit(&format!("─ {left} "), inner);
+        let edge = |l: char, r: char, left: &str, right: &str, tone: Role| {
+            let label = fit(left, inner.saturating_sub(4));
             let right = if right.is_empty() { String::new() } else { format!(" {right} ─") };
-            let used = left.chars().count() + right.chars().count();
+            let used = label.chars().count() + 3 + right.chars().count();
             let right = if used > inner { String::new() } else { right };
-            let fill = inner.saturating_sub(left.chars().count() + right.chars().count());
-            self.palette
-                .paint(Role::Thinking, &format!("{l}{left}{}{right}{r}", "─".repeat(fill)))
+            let fill = inner.saturating_sub(label.chars().count() + 3 + right.chars().count());
+            let line = |t: &str| self.palette.paint(Role::Border, t);
+            format!(
+                "{}{} {}{}",
+                line(&format!("{l}─ ")),
+                self.palette.paint(tone, &label),
+                line(&"─".repeat(fill)),
+                line(&format!("{right}{r}"))
+            )
         };
         let position = if matches.len() > visible {
             format!("{}/{}", picker.index + 1, matches.len())
@@ -3187,7 +3209,7 @@ impl App {
             String::new()
         };
 
-        let wall = self.palette.paint(Role::Thinking, "│");
+        let wall = self.palette.paint(Role::Border, "│");
         let title = if matches!(picker.kind, PickKind::Dir | PickKind::Image) {
             // Browsers name where they are, keeping the deepest part.
             let room = inner.saturating_sub(picker.title.chars().count() + position.len() + 9);
@@ -3195,12 +3217,12 @@ impl App {
         } else {
             picker.title.clone()
         };
-        let mut block: Vec<String> = vec![edge('╭', '╮', &title, &position)];
+        let mut block: Vec<String> = vec![edge('╭', '╮', &title, &position, Role::Assistant)];
         let filter = format!(" › {}", picker.filter);
         block.push(format!("{wall}{}{wall}", self.boxed(&filter, inner, false)));
         block.push(
             self.palette
-                .paint(Role::Thinking, &format!("├{}┤", "─".repeat(inner))),
+                .paint(Role::Border, &format!("├{}┤", "─".repeat(inner))),
         );
 
         for row in 0..visible {
@@ -3219,7 +3241,7 @@ impl App {
                 self.boxed(&text, inner, selected)
             ));
         }
-        block.push(edge('╰', '╯', &picker.footer(), ""));
+        block.push(edge('╰', '╯', &picker.footer(), "", Role::Thinking));
 
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
@@ -3235,7 +3257,7 @@ impl App {
         let pad = inner.saturating_sub(text.chars().count());
         let row = format!("{text}{}", " ".repeat(pad));
         if selected {
-            self.palette.paint(Role::User, &row)
+            self.palette.select(&row)
         } else {
             row
         }
@@ -4380,15 +4402,26 @@ mod tests {
     }
 
     #[test]
-    fn inline_code_is_bold_in_the_tool_colour() {
+    fn inline_code_is_bold_in_the_code_colour() {
         let mut a = colour_app();
         a.push(Role::Assistant, "could not `bash` it");
         let out = a.frame(60, 12);
         assert!(out.contains("\x1b[1m"), "not bold: {out:?}");
-        assert!(
-            out.contains("38;5;108") || out.contains("38;2;127;200;160"),
-            "not the tool colour: {out:?}"
-        );
+        let code = a.palette.paint(Role::Code, "bash");
+        assert!(out.contains(&format!("\x1b[1m{code}")), "not the code colour: {out:?}");
+    }
+
+    #[test]
+    fn the_picker_highlight_has_a_background() {
+        let mut a = colour_app();
+        open_many(&mut a, 3);
+        let out = a.frame(100, 30);
+        let [r, g, b] = a.palette.theme.rgb(crate::theme::Slot::Select);
+        let bg = format!("\x1b[48;2;{r};{g};{b}m");
+        let at = out.find(&bg).expect("no select background");
+        assert!(out[at..].contains("▸ profile 0"), "{out:?}");
+        let border = a.palette.paint(Role::Border, "│");
+        assert!(out.contains(&border), "the frame is not in the border colour");
     }
 
     #[test]
@@ -5488,8 +5521,10 @@ mod tests {
             ms: 1,
         });
         let out = a.frame(80, 12);
-        assert!(out.contains("\x1b[1m✓"), "mark not bold: {out:?}");
-        assert!(out.contains("\x1b[22m"), "bold not closed: {out:?}");
+        let success = a.palette.paint(Role::Success, "✓");
+        assert!(out.contains(&format!("\x1b[1m{success}")), "mark not bold success: {out:?}");
+        let tool = a.palette.paint(Role::Tool, " run `true`");
+        assert!(out.contains(&tool), "summary left the tool colour: {out:?}");
 
         a.palette = Palette {
             on: false,
