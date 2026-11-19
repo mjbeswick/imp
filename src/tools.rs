@@ -289,11 +289,29 @@ fn head_tail(text: &str) -> (String, String) {
 
 /// Delete job logs older than `max_age` under the output directory.
 pub fn prune_out(dir: &std::path::Path, max_age: Duration) {
+    prune_out_with(dir, max_age, 64 * 1024 * 1024);
+}
+
+fn prune_out_with(dir: &std::path::Path, max_age: Duration, max_bytes: u64) {
     let now = std::time::SystemTime::now();
-    for sub in [dir.to_path_buf(), dir.join("jobs")] {
-        let Ok(entries) = std::fs::read_dir(&sub) else {
-            continue;
-        };
+
+    // Legacy spill files from the disk-spill era. Nothing reads these names now.
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let legacy = path
+                .file_name()
+                .map(|n| n.to_string_lossy().starts_with("out-"))
+                .unwrap_or(false);
+            if legacy && path.is_file() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    let jobs = dir.join("jobs");
+    let mut logs: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&jobs) {
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_file() {
@@ -311,7 +329,20 @@ pub fn prune_out(dir: &std::path::Path, max_age: Duration) {
                 .unwrap_or(false);
             if stale {
                 let _ = std::fs::remove_file(&path);
+            } else {
+                logs.push((modified, meta.len(), path));
             }
+        }
+    }
+
+    let mut total: u64 = logs.iter().map(|(_, len, _)| *len).sum();
+    logs.sort_by_key(|(modified, _, _)| *modified);
+    for (_, len, path) in logs {
+        if total <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(len);
         }
     }
 }
@@ -895,6 +926,35 @@ mod tests {
         prune_out(&out, Duration::from_secs(7 * 86_400));
         assert!(!old.exists(), "old log kept");
         assert!(fresh.exists(), "fresh log removed");
+    }
+
+    #[test]
+    fn prune_removes_legacy_spill_files() {
+        let (_t, d) = tools();
+        let out = d.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let legacy = out.join("out-1234-1");
+        std::fs::write(&legacy, "x").unwrap();
+        prune_out(&out, Duration::from_secs(7 * 86_400));
+        assert!(!legacy.exists(), "legacy spill kept");
+    }
+
+    #[test]
+    fn prune_caps_the_job_log_size() {
+        let (_t, d) = tools();
+        let out = d.join("out");
+        std::fs::create_dir_all(out.join("jobs")).unwrap();
+        let old = out.join("jobs/a.log");
+        let new = out.join("jobs/b.log");
+        std::fs::write(&old, "12345678").unwrap();
+        std::fs::write(&new, "abcdefgh").unwrap();
+        let file = std::fs::File::options().write(true).open(&old).unwrap();
+        let when = std::time::SystemTime::now() - Duration::from_secs(3_600);
+        file.set_times(std::fs::FileTimes::new().set_modified(when))
+            .unwrap();
+        prune_out_with(&out, Duration::from_secs(7 * 86_400), 8);
+        assert!(!old.exists(), "oldest log survived the cap");
+        assert!(new.exists(), "newest log was dropped");
     }
 
     #[test]
