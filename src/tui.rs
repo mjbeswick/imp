@@ -1698,10 +1698,30 @@ impl App {
 
     /// The picker for a command argument, the composer prefix it mirrors, and
     /// the text that starts as its filter.
+    /// The value a picker of this kind should open on.
+    fn current_value(&self, kind: PickKind) -> String {
+        match kind {
+            PickKind::Agent => self.agent.clone(),
+            PickKind::Model => self.cfg.model.clone(),
+            PickKind::Theme => self.palette.theme_name().to_string(),
+            PickKind::Verbosity => if self.verbose { "high" } else { "low" }.into(),
+            PickKind::Provider => self.cfg.active_name.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// A value picker that opens with the current entry highlighted.
+    fn value_picker(&self, title: impl Into<String>, items: Vec<PickItem>, kind: PickKind) -> Picker {
+        let mut picker = Picker::new(title, items, kind);
+        let current = self.current_value(kind);
+        picker.index = picker.items.iter().position(|i| i.value == current).unwrap_or(0);
+        picker
+    }
+
     fn argument_picker(&self, word: &str, rest: &str) -> Option<(Picker, String, String)> {
         let simple = |title: &str, items: Vec<PickItem>, kind: PickKind| {
             (
-                Picker::new(title, items, kind),
+                self.value_picker(title, items, kind),
                 format!("/{word} "),
                 rest.to_string(),
             )
@@ -1719,7 +1739,7 @@ impl App {
                 let verb = rest.split_whitespace().next().unwrap_or("");
                 match verb {
                     "" => Some((
-                        Picker::new("provider", self.provider_items(), PickKind::Provider),
+                        self.value_picker("provider", self.provider_items(), PickKind::Provider),
                         "/provider ".into(),
                         String::new(),
                     )),
@@ -2230,17 +2250,9 @@ impl App {
             other if other == "theme" || other.starts_with("theme ") => {
                 let rest = other.strip_prefix("theme").unwrap_or("").trim();
                 if rest.is_empty() {
-                    let names: Vec<String> = crate::theme::names()
-                        .into_iter()
-                        .map(|n| {
-                            if n == self.palette.theme_name() {
-                                format!("*{n}")
-                            } else {
-                                n.to_string()
-                            }
-                        })
-                        .collect();
-                    self.push(Role::Info, names.join("  "));
+                    let picker = self.value_picker("theme", self.theme_items(), PickKind::Theme);
+                    self.pending = Some(Pending::Pick(picker));
+                    self.dirty = true;
                 } else if crate::theme::by_name(rest).is_some() {
                     let _ = crate::theme::save(rest);
                     self.palette = Palette::detect(&self.cfg);
@@ -2353,7 +2365,14 @@ impl App {
             }
             other if other == "provider" || other.starts_with("provider ") => {
                 let rest = other.strip_prefix("provider").unwrap_or("").trim();
-                self.provider_command(rest, tx);
+                if rest.is_empty() {
+                    let picker =
+                        self.value_picker("provider", self.provider_items(), PickKind::Provider);
+                    self.pending = Some(Pending::Pick(picker));
+                    self.dirty = true;
+                } else {
+                    self.provider_command(rest, tx);
+                }
             }
             other => self.push(Role::Info, crate::help::unknown(other)),
         }
@@ -2527,8 +2546,9 @@ impl App {
                     Key::Char(c) if picker.prefix.is_some() => {
                         picker.filter_push(c);
                         self.mirror_picker(&picker);
-                        if picker.kind == PickKind::Command && picker.filter.contains(' ') {
-                            // The word is done; open its value list if it has one.
+                        if picker.filter.contains(' ') {
+                            // The word is done: open the next value list, or
+                            // hand free text such as `add work` to the composer.
                             self.pending = None;
                             self.sync_menu();
                             return;
@@ -4669,6 +4689,38 @@ mod tests {
         a.handle_key(Key::Esc, &tx);
         assert!(a.pending.is_none());
         assert_eq!(a.input, "/theme gru", "Esc discarded the typed text");
+    }
+
+    #[test]
+    fn bare_theme_and_provider_open_pickers_on_the_current_entry() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.run_command("theme", &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Theme);
+        let current = a.palette.theme_name();
+        assert_eq!(picker.items[picker.index].value, current);
+        a.pending = None;
+        a.run_command("provider", &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Provider);
+        assert_eq!(picker.items[picker.index].value, a.cfg.active_name);
+    }
+
+    #[test]
+    fn a_space_in_a_value_filter_hands_the_line_back() {
+        let (mut a, _path) = provider_app();
+        let (tx, _rx) = channel();
+        for c in "/provider add work".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert!(a.pending.is_none(), "a picker kept the free text");
+        assert_eq!(a.input, "/provider add work");
+        a.handle_key(Key::Enter, &tx);
+        assert!(
+            matches!(a.pending, Some(Pending::ProviderForm { .. })),
+            "Enter did not start the provider form"
+        );
     }
 
     #[test]
