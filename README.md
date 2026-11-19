@@ -137,6 +137,18 @@ wins when set.
 Keys come from the provider's variable and are never written to the config by
 the agent.
 
+### Themes
+
+`/theme` picks one of eleven: `default`, `default-light`, `solarized-dark`,
+`solarized-light`, `gruvbox-dark`, `gruvbox-light`, `catppuccin-mocha`,
+`catppuccin-latte`, `tokyo-night`, `nord`, and `mono`, which turns colour off.
+The choice is saved. Until you choose, imp picks `default` or `default-light`
+from the terminal background, read from `COLORFGBG` or asked of the terminal.
+
+Each theme colours eleven roles: replies, your messages, muted text, borders,
+accents, tool rows, success, errors, inline code, links, and the highlighted
+picker row. Terminals without truecolor get the nearest 256-colour match.
+
 ### Providers
 
 `provider` chooses a profile. `base_url`, `model`, and `api_key` override it.
