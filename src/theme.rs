@@ -239,9 +239,53 @@ fn state_path() -> PathBuf {
     crate::config::dirs_state().join("imp").join("theme")
 }
 
-pub fn load() -> &'static Theme {
+/// The terminal background, once guessed. Light when true.
+static LIGHT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Record what the chat learned from the terminal itself.
+pub fn set_light(light: bool) {
+    let _ = LIGHT.set(light);
+}
+
+/// The saved theme name, if it names a real theme.
+pub fn saved() -> Option<&'static Theme> {
     let name = std::fs::read_to_string(state_path()).unwrap_or_default();
-    by_name(name.trim()).unwrap_or(&THEMES[0])
+    by_name(name.trim())
+}
+
+pub fn load() -> &'static Theme {
+    let light = LIGHT.get().copied().or_else(|| {
+        std::env::var("COLORFGBG").ok().and_then(|v| light_from_colorfgbg(&v))
+    });
+    pick(saved(), light.unwrap_or(false))
+}
+
+/// A saved choice wins; otherwise the default that suits the background.
+fn pick(saved: Option<&'static Theme>, light: bool) -> &'static Theme {
+    saved.unwrap_or_else(|| {
+        let name = if light { "default-light" } else { "default" };
+        by_name(name).unwrap_or(&THEMES[0])
+    })
+}
+
+/// `COLORFGBG` is `fg;bg`; background 7 or 15 is a light terminal.
+pub fn light_from_colorfgbg(value: &str) -> Option<bool> {
+    let bg: u8 = value.rsplit(';').next()?.trim().parse().ok()?;
+    Some(matches!(bg, 7 | 15))
+}
+
+/// An OSC 11 reply, `ESC ] 11 ; rgb:RRRR/GGGG/BBBB`, as light or dark.
+pub fn light_from_osc(reply: &[u8]) -> Option<bool> {
+    let text = String::from_utf8_lossy(reply);
+    let rgb = text.split("rgb:").nth(1)?;
+    let mut parts = rgb.split('/');
+    let mut channel = || {
+        let hex: String = parts.next()?.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        let max = 16f64.powi(hex.len() as i32) - 1.0;
+        Some(u32::from_str_radix(&hex, 16).ok()? as f64 / max)
+    };
+    let (r, g, b) = (channel()?, channel()?, channel()?);
+    Some(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5)
 }
 
 pub fn by_name(name: &str) -> Option<&'static Theme> {
@@ -297,6 +341,21 @@ mod tests {
             let luma = |[r, g, b]: [u8; 3]| r as u32 * 3 + g as u32 * 6 + b as u32;
             assert_eq!(luma(text) < 1280, t.light, "{} text vs light flag", t.name);
         }
+    }
+
+    #[test]
+    fn the_background_picks_the_default() {
+        assert_eq!(pick(None, true).name, "default-light");
+        assert_eq!(pick(None, false).name, "default");
+        assert_eq!(pick(by_name("nord"), true).name, "nord");
+        assert_eq!(light_from_colorfgbg("0;15"), Some(true));
+        assert_eq!(light_from_colorfgbg("15;0"), Some(false));
+        assert_eq!(light_from_colorfgbg("15;default;7"), Some(true));
+        assert_eq!(light_from_colorfgbg("junk"), None);
+        assert_eq!(light_from_osc(b"\x1b]11;rgb:ffff/ffff/ffff\x07"), Some(true));
+        assert_eq!(light_from_osc(b"\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\"), Some(false));
+        assert_eq!(light_from_osc(b"\x1b]11;rgb:fd/f6/e3\x07"), Some(true));
+        assert_eq!(light_from_osc(b"\x1b]11;rgb:ff"), None);
     }
 
     #[test]

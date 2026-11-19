@@ -134,6 +134,38 @@ extern "C" {
     fn signal(sig: std::ffi::c_int, handler: usize) -> usize;
     fn tcgetattr(fd: c_int, termios: *mut Termios) -> c_int;
     fn tcsetattr(fd: c_int, action: c_int, termios: *const Termios) -> c_int;
+    fn read(fd: c_int, buf: *mut u8, len: usize) -> isize;
+}
+
+/// Ask the terminal for its background with OSC 11, waiting at most about
+/// 100 ms. Runs in raw mode, before the input thread starts.
+fn query_light() -> Option<bool> {
+    let mut saved = std::mem::MaybeUninit::<Termios>::uninit();
+    if unsafe { tcgetattr(0, saved.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let saved = unsafe { saved.assume_init() };
+    let mut timed = saved;
+    timed.cc[flags::VMIN] = 0;
+    timed.cc[flags::VTIME] = 1;
+    unsafe { tcsetattr(0, TCSANOW, &timed) };
+    let ask = b"\x1b]11;?\x07";
+    unsafe { write(1, ask.as_ptr(), ask.len()) };
+    let start = Instant::now();
+    let mut reply = Vec::new();
+    let mut buf = [0u8; 64];
+    while start.elapsed() < Duration::from_millis(100) {
+        let n = unsafe { read(0, buf.as_mut_ptr(), buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        reply.extend_from_slice(&buf[..n as usize]);
+        if reply.ends_with(b"\x07") || reply.ends_with(b"\x1b\\") {
+            break;
+        }
+    }
+    unsafe { tcsetattr(0, TCSANOW, &saved) };
+    crate::theme::light_from_osc(&reply)
 }
 
 /// Put the terminal back the way it was found. Safe to call more than once.
@@ -3605,6 +3637,14 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
     let _raw = RawMode::enter();
     if std::env::var_os("IMP_FORCE_PANIC").is_some() {
         panic!("forced panic for the terminal-guard test");
+    }
+    // Only a first run needs the guess; a saved theme or COLORFGBG answers it.
+    let hinted = std::env::var("COLORFGBG")
+        .ok()
+        .and_then(|v| crate::theme::light_from_colorfgbg(&v))
+        .is_some();
+    if crate::theme::saved().is_none() && !hinted {
+        crate::theme::set_light(query_light().unwrap_or(false));
     }
     let mut app = App::new(
         cfg,
