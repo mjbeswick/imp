@@ -109,7 +109,7 @@ the same limits as the `bash` tool.
 
 ## Tools
 
-`bash` · `read` · `edit` · `write` · `search` · `job` · `ask`, plus `memory` and
+`bash` · `read` · `edit` · `write` · `fetch` · `search` · `job` · `ask`, plus `memory` and
 `skill_load` when configured. No per-CLI tools: `gh`, `jq`, `rg` and friends are
 skills that teach `bash`.
 
@@ -117,8 +117,10 @@ skills that teach `bash`.
 - `read` takes several paths; a directory path lists names to three levels, skipping build and VCS noise.
 - `edit` replaces exact strings, several per call, all or nothing.
 - Long commands run with `background`, then `job wait` (55 s at a time).
-- `search` returns summaries; `fetch` returns one page with its outline. Both
-  exist only on DeepSeek.
+- `fetch` makes one GET from your machine, local network included: JSON, feeds,
+  and text as they are, HTML as text. The first fetch from a site asks once per
+  session; `strict` asks every time and `yolo` never.
+- `search` returns summaries with URLs. It exists only on DeepSeek.
 
 ## Configuration
 
@@ -192,8 +194,8 @@ Or put `provider=openai` in the config. `IMP_PROVIDER` does the same.
 Key order is config `api_key`, then `IMP_API_KEY`, then the profile's variable.
 A missing key names the variable it looked for.
 
-Only DeepSeek implements the `search` and `fetch` endpoints, so other providers
-get no search tool and no search line in the prompt. Prices are DeepSeek-only:
+Only DeepSeek implements the `search` endpoint, so other providers get no
+search tool and no search line in the prompt; `fetch` works everywhere. Prices are DeepSeek-only:
 other providers show tokens and no cost.
 
 ### Permissions

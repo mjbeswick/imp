@@ -50,7 +50,7 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
         json!({"type":"function","function":{"name":"write","description":"Create or replace a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}),
         json!({"type":"function","function":{"name":"fetch","description":"GET one http or https URL from this machine, including the local network. JSON, feeds, and text come back as they are; HTML as its title and text.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}}),
-        json!({"type":"function","function":{"name":"search","description":"Search the web, or fetch a page as markdown.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"url":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
+        json!({"type":"function","function":{"name":"search","description":"Search the web; results are summaries with URLs. Read a page with fetch.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search"]},"query":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"memory","description":"Search stored notes, or save a new one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","save"]},"query":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
         json!({"type":"function","function":{"name":"ask","description":"Ask the user a question. Offer options for a choice; omit them for free text. Use only when blocked on a decision you cannot make yourself.","parameters":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"},"description":"Two to six short choices."}},"required":["question"]}}}),
@@ -979,7 +979,6 @@ impl Session {
         let op = args.get("op").and_then(Value::as_str).unwrap_or("search");
         let url = match op {
             "search" => format!("{}/v1/tools/search", self.cfg.base_url),
-            "fetch" => format!("{}/v1/tools/fetch", self.cfg.base_url),
             other => return format!("unknown search op {other}"),
         };
         let body = match op {
@@ -994,13 +993,7 @@ impl Session {
                     "need_content": false
                 })
             }
-            _ => {
-                let u = args.get("url").and_then(Value::as_str).unwrap_or("");
-                if u.is_empty() {
-                    return "fetch needs a url".into();
-                }
-                serde_json::json!({ "url": u })
-            }
+            _ => unreachable!("only search reaches here"),
         };
 
         let auth = format!("Authorization: Bearer {}", self.cfg.api_key);
@@ -1042,10 +1035,7 @@ impl Session {
                     self.tools.cap(&out)
                 }
             }
-            _ => match page_text(&v) {
-                Some(text) => self.tools.cap(&text),
-                None => "the page had no readable content".into(),
-            },
+            _ => unreachable!("only search reaches here"),
         }
     }
 
@@ -1120,20 +1110,6 @@ pub fn include_tool(name: &str, has_memory: bool, has_skills: bool) -> bool {
     }
 }
 
-/// The page as the model should read it: title, then body, nothing in front.
-fn page_text(v: &Value) -> Option<String> {
-    let content = v["content"].as_str().unwrap_or("");
-    if content.is_empty() {
-        return None;
-    }
-    let title = v["title"].as_str().unwrap_or("").trim();
-    Some(if title.is_empty() {
-        content.to_string()
-    } else {
-        format!("{title}\n\n{content}")
-    })
-}
-
 pub fn summarise(text: &str) -> String {
     let flat = text.replace('\n', " ");
     let mut s: String = flat.chars().take(120).collect();
@@ -1182,13 +1158,7 @@ pub fn describe(name: &str, args: &Value) -> String {
             lines("content")
         ),
         "fetch" => format!("fetch {}", flatten(text("url"))),
-        "search" => {
-            if text("op") == "fetch" {
-                format!("fetch {}", flatten(text("url")))
-            } else {
-                format!("search {:?}", flatten(text("query")))
-            }
-        }
+        "search" => format!("search {:?}", flatten(text("query"))),
         "memory" => {
             let what = if text("title").is_empty() {
                 text("query")
@@ -1432,11 +1402,7 @@ mod tests {
                 json!({"path": "a.rs", "edits": [{"old": "a", "new": "b"}]}),
                 "edit a.rs (1 changes)",
             ),
-            (
-                "search",
-                json!({"op": "fetch", "url": "https://x/y.md"}),
-                "fetch https://x/y.md",
-            ),
+            ("fetch", json!({"url": "https://x/y.md"}), "fetch https://x/y.md"),
             ("search", json!({"op": "search", "query": "woking"}), "search \"woking\""),
             ("skill_load", json!({"name": "config"}), "load skill config"),
             ("ask", json!({"question": "where?"}), "ask \"where?\""),
@@ -1470,19 +1436,6 @@ mod tests {
             out.contains("outside the session directory"),
             "no reason given: {out}"
         );
-    }
-
-    #[test]
-    fn a_fetch_starts_with_the_page_not_its_headings() {
-        let v = serde_json::json!({
-            "title": "Steno",
-            "content": "# One\n\nbody text\n\n## Two\n\nmore"
-        });
-        let text = page_text(&v).expect("a page");
-        assert!(text.starts_with("Steno"), "{text}");
-        assert!(!text.contains("outline:"), "{text}");
-        assert!(text.contains("body text"), "{text}");
-        assert!(page_text(&serde_json::json!({"content": ""})).is_none());
     }
 
     #[test]
@@ -1671,6 +1624,7 @@ mod tests {
             .collect();
         assert!(!names.contains(&"search".to_string()), "{names:?}");
         assert!(names.contains(&"bash".to_string()));
+        assert!(names.contains(&"fetch".to_string()), "fetch must work on every provider");
 
         let (ok, out) = s.run_tool("search", &json!({"op": "search", "query": "x"}), &mut Null);
         assert!(!ok, "{out}");

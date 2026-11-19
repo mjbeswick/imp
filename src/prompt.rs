@@ -9,7 +9,8 @@ Tools
 - read: read files with line numbers, or list a directory with depth. Ask for every path you need in one call; files and directories can mix.
 - edit: replace exact strings, several per call, all or nothing. Use it instead of sed.
 - write: create or replace a file. Read a file before overwriting it.
-- search: a web search returns summaries; a fetch returns one page as markdown. Fetch a URL with search; use bash curl only for a plain-text endpoint, an authenticated call, or a stream, and never scrape a feed with curl piped into grep or sed.
+- search: a web search returns summaries with URLs. Read a result with fetch.
+- fetch: GET one http or https URL from this machine, the local network included. JSON, feeds, and text come back as they are; HTML as its title and text. Use it instead of curl for every plain GET; keep bash curl for posts, authenticated calls, and streams, and never scrape a feed with curl piped into grep or sed.
 - job: list, wait for, or kill a background job. Waiting is capped at 55 seconds.
 - memory: search stored notes before guessing; save a note only when asked.
 - skill_load: load a skill by name before using a tool you do not know well.
@@ -71,7 +72,7 @@ mod tests {
     #[test]
     fn baseline_names_every_tool() {
         for tool in [
-            "bash", "read", "edit", "write", "search", "job", "memory", "skill_load", "ask",
+            "bash", "read", "edit", "write", "search", "fetch", "job", "memory", "skill_load", "ask",
         ] {
             assert!(
                 BASELINE.contains(tool),
@@ -136,7 +137,7 @@ mod tests {
 
     #[test]
     fn baseline_prefers_fetch_over_curl() {
-        assert!(BASELINE.contains("Fetch a URL with search"), "no fetch rule");
+        assert!(BASELINE.contains("Use it instead of curl"), "no fetch rule");
         assert!(BASELINE.contains("curl"), "no curl limit");
     }
 
