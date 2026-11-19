@@ -17,7 +17,7 @@
     { "action": "shell", "resource": "rm -rf /Users/michael/Projects/.workspaces/*", "effect": "allow" },
 
     // Keep the state files and traversal out of the allow above.
-    { "action": "shell", "resource": "rm -rf */.workspaces/.apply-state*", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf *.apply-state*", "effect": "deny" },
     { "action": "shell", "resource": "rm -rf *..*", "effect": "deny" }
   ],
 
