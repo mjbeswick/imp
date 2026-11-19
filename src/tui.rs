@@ -3292,13 +3292,18 @@ impl App {
         } else {
             format!("{} ({})", self.cfg.model, self.status.served)
         };
-        fit(
-            &format!(
-                "{model} · {} tok{money}{unseen}{thinking}",
-                compact_tokens(self.status.tokens),
-            ),
-            cols,
-        )
+        let left = format!(
+            "{model} · {} tok{money}{unseen}{thinking}",
+            compact_tokens(self.status.tokens),
+        );
+        // The directory sits at the right edge, and goes first when narrow.
+        let right = tilde(&self.root);
+        let gap = cols.saturating_sub(left.chars().count() + right.chars().count());
+        if gap >= 2 {
+            format!("{left}{}{right}", " ".repeat(gap))
+        } else {
+            fit(&left, cols)
+        }
     }
 }
 
@@ -4171,6 +4176,19 @@ mod tests {
         assert!(!strip(&a.frame(80, 24)).contains("/ for commands"));
         let narrow = strip(&app().frame(30, 24));
         assert!(narrow.contains("/ for commands"), "{narrow:?}");
+    }
+
+    #[test]
+    fn the_status_line_ends_with_the_directory_when_it_fits() {
+        let a = app();
+        let root = tilde(&a.root);
+        let wide = a.status_line(100);
+        assert!(wide.ends_with(&root), "{wide}");
+        assert_eq!(wide.chars().count(), 100, "{wide}");
+        assert!(wide.starts_with("deepseek-flash · "), "{wide}");
+        let narrow = a.status_line(40);
+        assert!(!narrow.contains(&root), "{narrow}");
+        assert!(narrow.starts_with("deepseek-flash"), "{narrow}");
     }
 
     #[test]
