@@ -326,7 +326,6 @@ impl Palette {
     }
 }
 
-
 extern "C" {
     fn isatty(fd: c_int) -> c_int;
 }
@@ -518,8 +517,15 @@ pub enum Ev {
         output: u64,
         model: Option<String>,
     },
-    Confirm { what: String, reply: Sender<bool> },
-    Question { q: String, opts: Vec<String>, reply: Sender<Option<String>> },
+    Confirm {
+        what: String,
+        reply: Sender<bool>,
+    },
+    Question {
+        q: String,
+        opts: Vec<String>,
+        reply: Sender<Option<String>>,
+    },
     Stop(String),
     Done(Option<String>),
 }
@@ -538,12 +544,22 @@ impl Hooks for WorkerHooks {
         let ev = match event {
             Ui::Content(t) => Ev::Token(t),
             Ui::Reasoning(t) => Ev::Think(t),
-            Ui::ToolStart { name, summary, args } => Ev::ToolStart {
+            Ui::ToolStart {
+                name,
+                summary,
+                args,
+            } => Ev::ToolStart {
                 name,
                 summary,
                 args,
             },
-            Ui::ToolEnd { ok, preview, output, detail, ms } => Ev::ToolEnd {
+            Ui::ToolEnd {
+                ok,
+                preview,
+                output,
+                detail,
+                ms,
+            } => Ev::ToolEnd {
                 ok,
                 preview,
                 output,
@@ -717,8 +733,6 @@ pub struct App {
     body_rows: usize,
     max_top: usize,
     unseen: usize,
-    menu_open: bool,
-    menu_index: usize,
     pending: Option<Pending>,
     pending_since: Option<Instant>,
     bell_pending: bool,
@@ -738,10 +752,25 @@ pub struct App {
 
 enum Pending {
     Pick(Picker),
-    Confirm { what: String, reply: Sender<bool> },
-    Prompt { label: String, value: String, rename_id: String },
-    ConfirmDelete { id: String },
-    Question { q: String, opts: Vec<String>, reply: Sender<Option<String>>, mode: AskMode, typed: String },
+    Confirm {
+        what: String,
+        reply: Sender<bool>,
+    },
+    Prompt {
+        label: String,
+        value: String,
+        rename_id: String,
+    },
+    ConfirmDelete {
+        id: String,
+    },
+    Question {
+        q: String,
+        opts: Vec<String>,
+        reply: Sender<Option<String>>,
+        mode: AskMode,
+        typed: String,
+    },
 }
 
 enum AskMode {
@@ -756,12 +785,16 @@ enum PickKind {
     Verbosity,
     Dir,
     Image,
+    Command,
 }
 
 #[derive(Clone)]
 struct PickItem {
     label: String,
     value: String,
+    /// Single-key actions for this row, shown in the footer and run while the
+    /// filter is empty.
+    actions: Vec<(char, &'static str)>,
 }
 
 /// The one picker: a title, a filter, a scrolling list, and a selection.
@@ -776,11 +809,29 @@ struct Picker {
     root: std::path::PathBuf,
 }
 
+/// Every slash command as a picker row.
+fn command_items() -> Vec<PickItem> {
+    COMMANDS
+        .iter()
+        .map(|(name, _)| PickItem {
+            label: name.to_string(),
+            value: name.to_string(),
+            actions: Vec::new(),
+        })
+        .collect()
+}
+
 /// Rows the picker shows at once. Paging moves by the same amount.
 const PICK_ROWS: usize = 8;
 
 impl Picker {
-    fn new(title: impl Into<String>, items: Vec<PickItem>, kind: PickKind) -> Self {
+    fn new(title: impl Into<String>, mut items: Vec<PickItem>, kind: PickKind) -> Self {
+        if kind == PickKind::Session {
+            // Every session row offers the same list actions.
+            for item in items.iter_mut() {
+                item.actions = vec![('n', "new"), ('r', "rename"), ('d', "delete")];
+            }
+        }
         Self {
             title: title.into(),
             filter: String::new(),
@@ -835,15 +886,58 @@ impl Picker {
         true
     }
 
-    /// Indices of the items matching the filter, in list order.
+    /// Indices of the items matching the filter, prefix matches first.
     fn matches(&self) -> Vec<usize> {
         let needle = self.filter.to_lowercase();
-        self.items
+        let mut out: Vec<usize> = self
+            .items
             .iter()
             .enumerate()
             .filter(|(_, item)| needle.is_empty() || item.label.to_lowercase().contains(&needle))
             .map(|(i, _)| i)
-            .collect()
+            .collect();
+        out.sort_by_key(|&i| {
+            !self.items[i]
+                .label
+                .trim_start_matches('/')
+                .to_lowercase()
+                .starts_with(&needle)
+        });
+        out
+    }
+
+    /// The action a row declares for this key, if any.
+    fn action(&self, key: char) -> Option<&'static str> {
+        self.selected().and_then(|item| {
+            item.actions
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, label)| *label)
+        })
+    }
+
+    /// One hint line naming the keys that work here.
+    fn footer(&self) -> String {
+        let mut parts: Vec<String> = match self.kind {
+            PickKind::Dir => vec![
+                "Enter open".into(),
+                "Tab choose".into(),
+                "← up".into(),
+                "Esc close".into(),
+            ],
+            PickKind::Image => vec![
+                "Enter open or attach".into(),
+                "← up".into(),
+                "Esc close".into(),
+            ],
+            _ => vec!["Enter choose".into(), "Esc close".into()],
+        };
+        if let Some(item) = self.items.first() {
+            for (key, label) in &item.actions {
+                parts.push(format!("{key} {label}"));
+            }
+        }
+        parts.join(" · ")
     }
 
     fn selected(&self) -> Option<&PickItem> {
@@ -913,11 +1007,13 @@ fn browse_items(dir: &std::path::Path, root: &std::path::Path, images: bool) -> 
             out.push(PickItem {
                 label: format!("{name}/"),
                 value: path.display().to_string(),
+                actions: Vec::new(),
             });
         } else if images && is_image_name(&name) {
             out.push(PickItem {
                 label: name,
                 value: path.display().to_string(),
+                actions: Vec::new(),
             });
         }
     }
@@ -973,8 +1069,6 @@ impl App {
             body_rows: 1,
             max_top: 0,
             unseen: 0,
-            menu_open: false,
-            menu_index: 0,
             pending: None,
             pending_since: None,
             bell_pending: false,
@@ -1042,7 +1136,11 @@ impl App {
                 }
                 self.push(Role::Thinking, t);
             }
-            Ev::ToolStart { name, summary, args } => {
+            Ev::ToolStart {
+                name,
+                summary,
+                args,
+            } => {
                 let _ = name;
                 self.tool = Some(ToolRow {
                     index: self.entries.len(),
@@ -1161,31 +1259,6 @@ impl App {
         }
     }
 
-    fn menu_matches(&self) -> Vec<(&'static str, &'static str)> {
-        let Some(rest) = self.input.strip_prefix('/') else {
-            return Vec::new();
-        };
-        if rest.contains(' ') {
-            return Vec::new();
-        }
-        let mut exact: Vec<_> = COMMANDS
-            .iter()
-            .filter(|(n, _)| n.trim_start_matches('/').starts_with(rest))
-            .copied()
-            .collect();
-        let others: Vec<_> = COMMANDS
-            .iter()
-            .filter(|(n, _)| {
-                let name = n.trim_start_matches('/');
-                !name.starts_with(rest) && name.contains(rest)
-            })
-            .copied()
-            .collect();
-        exact.extend(others);
-        exact.truncate(8);
-        exact
-    }
-
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
         // Ctrl+C means exit, whatever is on screen. Esc cancels a turn and n or
         // Esc refuses a prompt, so nothing else needs this key.
@@ -1199,48 +1272,6 @@ impl App {
                 self.pending_since = None;
             }
             return;
-        }
-
-        if self.menu_open {
-            let menu = self.menu_matches();
-            match key {
-                Key::Up => {
-                    self.menu_index = self.menu_index.saturating_sub(1);
-                    self.dirty = true;
-                    return;
-                }
-                Key::Down => {
-                    if self.menu_index + 1 < menu.len() {
-                        self.menu_index += 1;
-                    }
-                    self.dirty = true;
-                    return;
-                }
-                Key::Tab => {
-                    if let Some((name, _)) = menu.get(self.menu_index) {
-                        self.input = name.to_string();
-                        self.cursor = self.input.len();
-                    }
-                    self.menu_open = false;
-                    self.dirty = true;
-                    return;
-                }
-                Key::Esc => {
-                    self.menu_open = false;
-                    self.dirty = true;
-                    return;
-                }
-                Key::Enter => {
-                    if let Some((name, _)) = menu.get(self.menu_index) {
-                        self.input = name.to_string();
-                        self.cursor = self.input.len();
-                    }
-                    self.menu_open = false;
-                    self.submit(tx);
-                    return;
-                }
-                _ => {}
-            }
         }
 
         match key {
@@ -1338,17 +1369,7 @@ impl App {
                     self.dirty = true;
                 }
             }
-            Key::Tab => {
-                self.sync_menu();
-                if self.menu_open {
-                    let menu = self.menu_matches();
-                    if let Some((name, _)) = menu.get(self.menu_index) {
-                        self.input = name.to_string();
-                        self.cursor = self.input.len();
-                    }
-                }
-                self.dirty = true;
-            }
+            Key::Tab => self.sync_menu(),
             Key::Esc => {
                 if self.status.streaming {
                     self.cancel.store(true, Ordering::Relaxed);
@@ -1401,8 +1422,13 @@ impl App {
     }
 
     fn sync_menu(&mut self) {
-        self.menu_open = self.input.starts_with('/') && !self.input.contains(' ');
-        self.menu_index = 0;
+        // A bare command word gets the overlay. Once a space appears the user
+        // is typing a value, so the overlay stays closed.
+        if self.input.starts_with('/') && !self.input.contains(' ') {
+            let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+            picker.filter = self.input.trim_start_matches('/').to_string();
+            self.pending = Some(Pending::Pick(picker));
+        }
         self.dirty = true;
     }
 
@@ -1413,7 +1439,6 @@ impl App {
         let text = self.input.trim().to_string();
         self.input.clear();
         self.cursor = 0;
-        self.menu_open = false;
         self.hist_pos = None;
         self.follow_tail();
 
@@ -1475,6 +1500,7 @@ impl App {
                             .map(|name| PickItem {
                                 label: name.clone(),
                                 value: name.clone(),
+                                actions: Vec::new(),
                             })
                             .collect();
                         let mut picker = Picker::new("agent", items, PickKind::Agent);
@@ -1511,6 +1537,7 @@ impl App {
                     .map(|m| PickItem {
                         label: crate::store::format_session(&m, now),
                         value: m.id,
+                        actions: Vec::new(),
                     })
                     .collect();
                 options.truncate(20);
@@ -1530,7 +1557,10 @@ impl App {
                 let _ = tx.send(Cmd::SetThinking(self.cfg.thinking));
                 self.push(
                     Role::Info,
-                    format!("thinking {} for the next turn", if self.cfg.thinking { "on" } else { "off" }),
+                    format!(
+                        "thinking {} for the next turn",
+                        if self.cfg.thinking { "on" } else { "off" }
+                    ),
                 );
             }
             "new" => {
@@ -1613,10 +1643,12 @@ impl App {
                             PickItem {
                                 label: "low".into(),
                                 value: "low".into(),
+                                actions: Vec::new(),
                             },
                             PickItem {
                                 label: "high".into(),
                                 value: "high".into(),
+                                actions: Vec::new(),
                             },
                         ];
                         let mut picker = Picker::new("verbosity", items, PickKind::Verbosity);
@@ -1644,7 +1676,11 @@ impl App {
 
     fn answer(&mut self, pending: Pending, key: Key, tx: &Sender<Cmd>) {
         match pending {
-            Pending::Prompt { label, mut value, rename_id } => {
+            Pending::Prompt {
+                label,
+                mut value,
+                rename_id,
+            } => {
                 match key {
                     Key::Esc => {
                         self.push(Role::Info, "rename cancelled");
@@ -1657,16 +1693,28 @@ impl App {
                     }
                     Key::Char(c) => {
                         value.push(c);
-                        self.pending = Some(Pending::Prompt { label, value, rename_id });
+                        self.pending = Some(Pending::Prompt {
+                            label,
+                            value,
+                            rename_id,
+                        });
                         self.dirty = true;
                     }
                     Key::Backspace => {
                         value.pop();
-                        self.pending = Some(Pending::Prompt { label, value, rename_id });
+                        self.pending = Some(Pending::Prompt {
+                            label,
+                            value,
+                            rename_id,
+                        });
                         self.dirty = true;
                     }
                     _ => {
-                        self.pending = Some(Pending::Prompt { label, value, rename_id });
+                        self.pending = Some(Pending::Prompt {
+                            label,
+                            value,
+                            rename_id,
+                        });
                     }
                 }
                 return;
@@ -1688,40 +1736,68 @@ impl App {
                     Key::Down => picker.move_by(1),
                     Key::PageUp => picker.move_by(-(PICK_ROWS as isize)),
                     Key::PageDown => picker.move_by(PICK_ROWS as isize),
-                    Key::Backspace => picker.filter_pop(),
-                    Key::Char('n') if picker.kind == PickKind::Session && picker.filter.is_empty() => {
-                        let _ = tx.send(Cmd::NewSession);
-                        self.entries.clear();
-                        self.push(Role::Info, "new conversation");
-                        self.dirty = true;
-                        return;
-                    }
-                    Key::Char('r') if picker.kind == PickKind::Session && picker.filter.is_empty() => {
-                        if let Some(choice) = picker.selected() {
-                            let id = choice.value.clone();
-                            self.pending = Some(Pending::Prompt {
-                                label: format!("new title for {id}"),
-                                value: String::new(),
-                                rename_id: id,
-                            });
-                        } else {
-                            self.pending = Some(Pending::Pick(picker));
+                    Key::Backspace => {
+                        if picker.kind == PickKind::Command && picker.filter.is_empty() {
+                            // Backspacing the slash leaves command editing.
+                            self.input.clear();
+                            self.cursor = 0;
+                            self.dirty = true;
+                            return;
                         }
-                        self.dirty = true;
-                        return;
+                        picker.filter_pop();
+                        if picker.kind == PickKind::Command {
+                            self.input = format!("/{}", picker.filter);
+                            self.cursor = self.input.len();
+                        }
                     }
-                    Key::Char('d') if picker.kind == PickKind::Session && picker.filter.is_empty() => {
-                        if let Some(choice) = picker.selected() {
-                            self.pending = Some(Pending::ConfirmDelete {
-                                id: choice.value.clone(),
-                            });
-                        } else {
-                            self.pending = Some(Pending::Pick(picker));
+                    Key::Char(c) if picker.kind == PickKind::Command => {
+                        picker.filter_push(c);
+                        self.input = format!("/{}", picker.filter);
+                        self.cursor = self.input.len();
+                        if self.input.contains(' ') {
+                            // A value is being typed; the command word is done.
+                            self.dirty = true;
+                            return;
+                        }
+                    }
+                    Key::Char(c) if picker.filter.is_empty() && picker.action(c).is_some() => {
+                        match picker.action(c) {
+                            Some("new") => {
+                                let _ = tx.send(Cmd::NewSession);
+                                self.entries.clear();
+                                self.push(Role::Info, "new conversation");
+                            }
+                            Some("rename") => {
+                                if let Some(choice) = picker.selected() {
+                                    let id = choice.value.clone();
+                                    self.pending = Some(Pending::Prompt {
+                                        label: format!("new title for {id}"),
+                                        value: String::new(),
+                                        rename_id: id,
+                                    });
+                                }
+                            }
+                            Some("delete") => {
+                                if let Some(choice) = picker.selected() {
+                                    self.pending = Some(Pending::ConfirmDelete {
+                                        id: choice.value.clone(),
+                                    });
+                                }
+                            }
+                            _ => {}
                         }
                         self.dirty = true;
                         return;
                     }
                     Key::Char(c) => picker.filter_push(c),
+                    Key::Tab if picker.kind == PickKind::Command => {
+                        if let Some(choice) = picker.selected() {
+                            self.input = choice.value.clone();
+                            self.cursor = self.input.len();
+                        }
+                        self.dirty = true;
+                        return;
+                    }
                     Key::Tab if picker.kind == PickKind::Dir => {
                         if let Some(choice) = picker.selected().cloned() {
                             if choice.label.ends_with('/') {
@@ -1738,6 +1814,20 @@ impl App {
                     }
                     Key::Left if matches!(picker.kind, PickKind::Dir | PickKind::Image) => {
                         picker.parent();
+                    }
+                    Key::Enter if picker.kind == PickKind::Command => {
+                        match picker.selected() {
+                            Some(choice) => {
+                                self.input = choice.value.clone();
+                                self.cursor = self.input.len();
+                                self.submit(tx);
+                            }
+                            None => {
+                                self.pending = Some(Pending::Pick(picker));
+                                self.dirty = true;
+                            }
+                        }
+                        return;
                     }
                     Key::Enter => {
                         let Some(choice) = picker.selected().cloned() else {
@@ -1769,6 +1859,7 @@ impl App {
                                     return;
                                 }
                             }
+                            PickKind::Command => {}
                             PickKind::Image => {
                                 if choice.label.ends_with('/') {
                                     picker.current = std::path::PathBuf::from(&choice.value);
@@ -1811,91 +1902,95 @@ impl App {
                 let _ = reply.send(yes);
                 self.dirty = true;
             }
-            Pending::Question { q, opts, reply, mode, mut typed } => {
-                match mode {
-                    AskMode::Choose => match key {
-                        Key::Char('e') => {
-                            self.pending = Some(Pending::Question {
-                                q,
-                                opts,
-                                reply,
-                                mode: AskMode::Custom,
-                                typed,
-                            });
+            Pending::Question {
+                q,
+                opts,
+                reply,
+                mode,
+                mut typed,
+            } => match mode {
+                AskMode::Choose => match key {
+                    Key::Char('e') => {
+                        self.pending = Some(Pending::Question {
+                            q,
+                            opts,
+                            reply,
+                            mode: AskMode::Custom,
+                            typed,
+                        });
+                        self.dirty = true;
+                    }
+                    Key::Esc => {
+                        let _ = reply.send(None);
+                        self.dirty = true;
+                    }
+                    Key::Char('y') | Key::Char('Y') if opts.len() == 2 => {
+                        let _ = reply.send(Some(opts[0].clone()));
+                        self.dirty = true;
+                    }
+                    Key::Char('n') | Key::Char('N') if opts.len() == 2 => {
+                        let _ = reply.send(Some(opts[1].clone()));
+                        self.dirty = true;
+                    }
+                    Key::Char(c) if c.is_ascii_digit() => {
+                        let n = c.to_digit(10).unwrap_or(0) as usize;
+                        if n >= 1 && n <= opts.len() {
+                            let _ = reply.send(Some(opts[n - 1].clone()));
                             self.dirty = true;
                         }
-                        Key::Esc => {
-                            let _ = reply.send(None);
-                            self.dirty = true;
-                        }
-                        Key::Char('y') | Key::Char('Y') if opts.len() == 2 => {
-                            let _ = reply.send(Some(opts[0].clone()));
-                            self.dirty = true;
-                        }
-                        Key::Char('n') | Key::Char('N') if opts.len() == 2 => {
-                            let _ = reply.send(Some(opts[1].clone()));
-                            self.dirty = true;
-                        }
-                        Key::Char(c) if c.is_ascii_digit() => {
-                            let n = c.to_digit(10).unwrap_or(0) as usize;
-                            if n >= 1 && n <= opts.len() {
-                                let _ = reply.send(Some(opts[n - 1].clone()));
-                                self.dirty = true;
-                            }
-                        }
-                        _ => {
-                            self.pending = Some(Pending::Question {
-                                q,
-                                opts,
-                                reply,
-                                mode: AskMode::Choose,
-                                typed,
-                            });
-                        }
-                    },
-                    AskMode::Custom => match key {
-                        Key::Esc => {
-                            let _ = reply.send(None);
-                            self.dirty = true;
-                        }
-                        Key::Enter => {
-                            let _ = reply.send(Some(typed.clone()));
-                            self.dirty = true;
-                        }
-                        Key::Char(c) => {
-                            typed.push(c);
-                            self.pending = Some(Pending::Question {
-                                q,
-                                opts,
-                                reply,
-                                mode: AskMode::Custom,
-                                typed,
-                            });
-                            self.dirty = true;
-                        }
-                        Key::Backspace => {
-                            typed.pop();
-                            self.pending = Some(Pending::Question {
-                                q,
-                                opts,
-                                reply,
-                                mode: AskMode::Custom,
-                                typed,
-                            });
-                            self.dirty = true;
-                        }
-                        _ => {
-                            self.pending = Some(Pending::Question {
-                                q,
-                                opts,
-                                reply,
-                                mode: AskMode::Custom,
-                                typed,
-                            });
-                        }
-                    },
-                }
-            }
+                    }
+                    _ => {
+                        self.pending = Some(Pending::Question {
+                            q,
+                            opts,
+                            reply,
+                            mode: AskMode::Choose,
+                            typed,
+                        });
+                    }
+                },
+                AskMode::Custom => match key {
+                    Key::Esc => {
+                        let _ = reply.send(None);
+                        self.dirty = true;
+                    }
+                    Key::Enter => {
+                        let _ = reply.send(Some(typed.clone()));
+                        self.dirty = true;
+                    }
+                    Key::Char(c) => {
+                        typed.push(c);
+                        self.pending = Some(Pending::Question {
+                            q,
+                            opts,
+                            reply,
+                            mode: AskMode::Custom,
+                            typed,
+                        });
+                        self.dirty = true;
+                    }
+                    Key::Backspace => {
+                        typed.pop();
+                        self.pending = Some(Pending::Question {
+                            q,
+                            opts,
+                            reply,
+                            mode: AskMode::Custom,
+                            typed,
+                        });
+                        self.dirty = true;
+                    }
+                    _ => {
+                        self.pending = Some(Pending::Question {
+                            q,
+                            opts,
+                            reply,
+                            mode: AskMode::Custom,
+                            typed,
+                        });
+                    }
+                },
+            },
         }
     }
 
@@ -1932,12 +2027,8 @@ impl App {
 
     /// One frame as bytes. No terminal access, so it can be tested.
     pub fn frame(&mut self, cols: usize, rows: usize) -> String {
-        let menu = if self.menu_open { self.menu_matches() } else { Vec::new() };
-        let menu_rows = menu.len().min(6);
-        let composer = self.composer(cols, rows.saturating_sub(1 + menu_rows).max(1));
-        let body_rows = rows
-            .saturating_sub(1 + menu_rows + composer.len())
-            .max(1);
+        let composer = self.composer(cols, rows.saturating_sub(1).max(1));
+        let body_rows = rows.saturating_sub(1 + composer.len()).max(1);
 
         let markdown = self.cfg.links.supported();
         let mut lines: Vec<(Role, Line)> = Vec::new();
@@ -1948,7 +2039,10 @@ impl App {
                 }
                 continue;
             }
-            for (i, part) in wrap(&entry.text, cols.saturating_sub(2)).into_iter().enumerate() {
+            for (i, part) in wrap(&entry.text, cols.saturating_sub(2))
+                .into_iter()
+                .enumerate()
+            {
                 let prefix = if i == 0 {
                     match entry.role {
                         Role::User => "> ",
@@ -2002,18 +2096,6 @@ impl App {
             screen.push_str("\r\n");
         }
 
-        for (i, (name, desc)) in menu.iter().take(6).enumerate() {
-            let line = fit(&format!(" {name:<10} {desc}"), cols);
-            let painted = if i == self.menu_index {
-                self.palette.paint(Role::User, &line)
-            } else {
-                line
-            };
-            screen.push_str("\x1b[2K");
-            screen.push_str(&painted);
-            screen.push_str("\r\n");
-        }
-
         screen.push_str("\x1b[2K\x1b[J");
         screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
         screen.push_str("\x1b[?7h");
@@ -2026,7 +2108,6 @@ impl App {
 
         screen
     }
-
 
     /// Paint one row of styled spans, with a hyperlink around each linked run.
     fn paint_spans(&self, role: Role, spans: &[crate::render::Span]) -> String {
@@ -2068,7 +2149,13 @@ impl App {
                 }
                 Pending::ConfirmDelete { id } => format!("delete {id}? y/N"),
                 Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
-                Pending::Question { q, opts, mode, typed, .. } => {
+                Pending::Question {
+                    q,
+                    opts,
+                    mode,
+                    typed,
+                    ..
+                } => {
                     let mut text = format!("{q}   ");
                     for (i, o) in opts.iter().enumerate() {
                         text.push_str(&format!("[{}] {o}  ", i + 1));
@@ -2106,29 +2193,27 @@ impl App {
         let inner = width.saturating_sub(2);
         let matches = picker.matches();
         let visible = matches.len().min(PICK_ROWS).max(1);
-        let height = visible + 4;
-        let body = self
-            .body_rows
-            .clamp(1, rows.saturating_sub(1).max(1));
+        let height = visible + 5;
+        let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
 
         let wall = self.palette.paint(Role::Thinking, "│");
         let mut block: Vec<String> = Vec::new();
-        block.push(self.palette.paint(
-            Role::Thinking,
-            &format!("┌{}┐", "─".repeat(inner)),
-        ));
+        block.push(
+            self.palette
+                .paint(Role::Thinking, &format!("┌{}┐", "─".repeat(inner))),
+        );
 
         let mut head = format!(" {}  filter: {}", picker.title, picker.filter);
         if matches.len() > visible {
             head.push_str(&format!("  {}/{}", picker.index + 1, matches.len()));
         }
         block.push(format!("{wall}{}{wall}", self.boxed(&head, inner, false)));
-        block.push(self.palette.paint(
-            Role::Thinking,
-            &format!("├{}┤", "─".repeat(inner)),
-        ));
+        block.push(
+            self.palette
+                .paint(Role::Thinking, &format!("├{}┤", "─".repeat(inner))),
+        );
 
         for row in 0..visible {
             let at = picker.offset + row;
@@ -2150,10 +2235,14 @@ impl App {
             ));
         }
 
-        block.push(self.palette.paint(
-            Role::Thinking,
-            &format!("└{}┘", "─".repeat(inner)),
+        block.push(format!(
+            "{wall}{}{wall}",
+            self.boxed(&picker.footer(), inner, false)
         ));
+        block.push(
+            self.palette
+                .paint(Role::Thinking, &format!("└{}┘", "─".repeat(inner))),
+        );
 
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
@@ -2376,7 +2465,6 @@ fn verb(what: &str) -> &'static str {
     }
 }
 
-
 fn previous_boundary(s: &str, mut i: usize) -> usize {
     if i == 0 {
         return 0;
@@ -2520,8 +2608,11 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         let _ = ev_tx.send(Ev::Info(format!("agent: {applied}")));
                         let _ = &mut hooks;
                     } else {
-                        let names: Vec<String> =
-                            worker_session.roster.iter().map(|a| a.name.clone()).collect();
+                        let names: Vec<String> = worker_session
+                            .roster
+                            .iter()
+                            .map(|a| a.name.clone())
+                            .collect();
                         let _ = ev_tx.send(Ev::Error(format!(
                             "no agent {name}; available: {}",
                             names.join(", ")
@@ -2610,7 +2701,10 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                 }
                 Ok(Cmd::Yolo) => {
                     let line = worker_session.toggle_yolo();
-                    let _ = ev_tx.send(Ev::Info(format!("{line} ({})", worker_session.cfg.permissions.as_str())));
+                    let _ = ev_tx.send(Ev::Info(format!(
+                        "{line} ({})",
+                        worker_session.cfg.permissions.as_str()
+                    )));
                 }
                 Ok(Cmd::Reload) => {
                     match worker_session.reload() {
@@ -2629,7 +2723,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
                         cancel: worker_session.cancel.clone(),
-                    waited: Duration::ZERO,
+                        waited: Duration::ZERO,
                     };
                     if let Err(e) = worker_session.compact(&mut hooks) {
                         let _ = ev_tx.send(Ev::Error(e));
@@ -2824,10 +2918,7 @@ mod tests {
 
     /// A unique empty directory for a browser fixture.
     fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "imp-picker-{tag}-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("imp-picker-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.canonicalize().unwrap()
@@ -2868,7 +2959,10 @@ mod tests {
         a.handle_key(Key::Up, &tx);
         assert_eq!(a.input, "aa\nbbb", "Up left the composer");
         assert_eq!(a.cursor, 2, "Up did not land on the row above");
-        assert!(a.hist_pos.is_none(), "Up recalled history from the last row");
+        assert!(
+            a.hist_pos.is_none(),
+            "Up recalled history from the last row"
+        );
     }
 
     #[test]
@@ -2901,7 +2995,11 @@ mod tests {
         let (tx, _cmds) = channel();
         a.handle_key(Key::Esc, &tx);
         assert!(a.pending.is_none(), "the prompt stayed open");
-        assert_eq!(rx.try_recv().ok(), Some(false), "the prompt was not refused");
+        assert_eq!(
+            rx.try_recv().ok(),
+            Some(false),
+            "the prompt was not refused"
+        );
         assert!(!a.quit, "Esc quit the whole interface");
     }
 
@@ -2913,10 +3011,7 @@ mod tests {
             what: "run `ls`".into(),
             reply,
         });
-        assert!(
-            a.frame(80, 12).contains('\u{7}'),
-            "no bell on a new prompt"
-        );
+        assert!(a.frame(80, 12).contains('\u{7}'), "no bell on a new prompt");
         a.bell_pending = false;
         assert!(
             !a.frame(80, 12).contains('\u{7}'),
@@ -3032,7 +3127,10 @@ mod tests {
         a.push(Role::User, "hello");
         a.push(Role::Assistant, "hi");
         let out = a.frame(80, 10);
-        assert!(!out.replace("\r\n", "").contains('\n'), "bare line feed in frame");
+        assert!(
+            !out.replace("\r\n", "").contains('\n'),
+            "bare line feed in frame"
+        );
     }
 
     #[test]
@@ -3048,7 +3146,8 @@ mod tests {
             ok: true,
             preview: "exit 0".into(),
             output: "total 8\nfoo".into(),
-            detail: String::new(), ms: 4,
+            detail: String::new(),
+            ms: 4,
         });
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('o'), &tx);
@@ -3103,7 +3202,10 @@ mod tests {
         let row = &out[out.rfind("\x1b[2K").expect("status row")..];
         let erase = row.find("\x1b[J").expect("nothing clears below the status");
         let text = row.find('·').expect("no status text");
-        assert!(erase < text, "erase below runs after the status text: {row:?}");
+        assert!(
+            erase < text,
+            "erase below runs after the status text: {row:?}"
+        );
     }
     fn composer_draws_one_row_per_line() {
         let mut a = app();
@@ -3125,7 +3227,10 @@ mod tests {
         a.cursor = a.input.len();
         let out = a.frame(60, 12);
         assert!(out.contains("  row 12"), "last row missing: {out:?}");
-        assert!(!out.contains("row 1\r\n"), "composer ignored its row budget");
+        assert!(
+            !out.contains("row 1\r\n"),
+            "composer ignored its row budget"
+        );
     }
 
     #[test]
@@ -3152,11 +3257,23 @@ mod tests {
 
     #[test]
     fn colour_roles_use_256_and_truecolor() {
-        let plain = Palette { on: true, truecolor: false, theme: &crate::theme::THEMES[0] };
+        let plain = Palette {
+            on: true,
+            truecolor: false,
+            theme: &crate::theme::THEMES[0],
+        };
         assert!(plain.paint(Role::Error, "x").contains("38;5;"));
-        let rgb = Palette { on: true, truecolor: true, theme: &crate::theme::THEMES[0] };
+        let rgb = Palette {
+            on: true,
+            truecolor: true,
+            theme: &crate::theme::THEMES[0],
+        };
         assert!(rgb.paint(Role::Error, "x").contains("38;2;"));
-        let off = Palette { on: false, truecolor: true, theme: &crate::theme::THEMES[0] };
+        let off = Palette {
+            on: false,
+            truecolor: true,
+            theme: &crate::theme::THEMES[0],
+        };
         assert_eq!(off.paint(Role::Error, "x"), "x");
     }
 
@@ -3212,14 +3329,8 @@ mod tests {
         a.status.output = 50;
         let line = a.status_line(120);
         assert!(line.contains("3.4K tok"), "{line}");
-        let cost = crate::pricing::cost(
-            "deepseek-flash",
-            crate::pricing::now(),
-            900,
-            100,
-            50,
-        )
-        .unwrap();
+        let cost =
+            crate::pricing::cost("deepseek-flash", crate::pricing::now(), 900, 100, 50).unwrap();
         assert!(line.contains(&format!("${cost:.2}")), "{line}");
         assert!(!line.contains("cache"), "{line}");
         assert!(!line.contains("normal"), "{line}");
@@ -3256,14 +3367,8 @@ mod tests {
         assert_eq!(a.status.hit, 1300);
         assert_eq!(a.status.miss, 300);
         assert_eq!(a.status.output, 75);
-        let total = crate::pricing::cost(
-            "deepseek-flash",
-            crate::pricing::now(),
-            1300,
-            300,
-            75,
-        )
-        .unwrap();
+        let total =
+            crate::pricing::cost("deepseek-flash", crate::pricing::now(), 1300, 300, 75).unwrap();
         let line = a.status_line(120);
         assert!(line.contains(&format!("${total:.2}")), "{line}");
     }
@@ -3302,7 +3407,10 @@ mod tests {
         assert!(!a.wants_render(false), "an idle screen queued a frame");
         assert!(a.wants_render(true), "a key did not queue a frame");
         a.dirty = true;
-        assert!(a.wants_render(false), "a dirty screen did not queue a frame");
+        assert!(
+            a.wants_render(false),
+            "a dirty screen did not queue a frame"
+        );
     }
 
     #[test]
@@ -3333,10 +3441,7 @@ mod tests {
         assert_eq!(a.root, std::env::temp_dir(), "constructor root ignored");
 
         a.run_command("cwd", &tx);
-        assert_eq!(
-            a.entries.last().unwrap().text,
-            a.root.display().to_string()
-        );
+        assert_eq!(a.entries.last().unwrap().text, a.root.display().to_string());
 
         a.run_command("cd", &tx);
         assert_eq!(
@@ -3528,7 +3633,8 @@ mod tests {
             ok: true,
             preview: "total 8".into(),
             output: "total 8\nfoo".into(),
-            detail: String::new(), ms: 4,
+            detail: String::new(),
+            ms: 4,
         });
         let text = &a.entries[1].text;
         assert!(text.contains("args:"), "{text:?}");
@@ -3538,7 +3644,11 @@ mod tests {
         assert!(!a.verbose);
         a.run_command("verbosity", &tx);
         let picker = open_picker(&a);
-        assert_eq!(picker.kind, PickKind::Verbosity, "bare verbosity opened no picker");
+        assert_eq!(
+            picker.kind,
+            PickKind::Verbosity,
+            "bare verbosity opened no picker"
+        );
         assert_eq!(
             picker.selected().map(|i| i.value.as_str()),
             Some("low"),
@@ -3594,7 +3704,8 @@ mod tests {
             ok: false,
             preview: "Changes: render-on-change".into(),
             output: "Changes: render-on-change".into(),
-            detail: String::new(), ms: 7,
+            detail: String::new(),
+            ms: 7,
         });
         let text = &a.entries[0].text;
         assert!(text.contains("\nChanges: render-on-change"), "{text:?}");
@@ -3624,9 +3735,14 @@ mod tests {
 
         a.palette = Palette {
             on: false,
-            truecolor: false, theme: &crate::theme::THEMES[0] };
+            truecolor: false,
+            theme: &crate::theme::THEMES[0],
+        };
         let plain = a.frame(80, 12);
-        assert!(!plain.contains("\x1b[1m"), "bold with colour off: {plain:?}");
+        assert!(
+            !plain.contains("\x1b[1m"),
+            "bold with colour off: {plain:?}"
+        );
     }
 
     #[test]
@@ -3680,6 +3796,7 @@ mod tests {
             vec![PickItem {
                 label: "abc123  3m  old title  4 msgs".into(),
                 value: "abc123".into(),
+                actions: Vec::new(),
             }],
             PickKind::Session,
         )));
@@ -3726,6 +3843,87 @@ mod tests {
     }
 
     #[test]
+    fn a_row_shortcut_runs_only_while_the_filter_is_empty() {
+        let mut a = picker();
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Char('r'), &tx);
+        assert!(
+            matches!(a.pending, Some(Pending::Prompt { .. })),
+            "r did not rename the highlighted session"
+        );
+
+        let mut a = picker();
+        a.handle_key(Key::Char('x'), &tx);
+        a.handle_key(Key::Char('r'), &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.filter, "xr", "r bypassed the filter");
+        assert!(matches!(a.pending, Some(Pending::Pick(_))));
+    }
+
+    #[test]
+    fn the_footer_names_the_row_actions() {
+        let mut a = picker();
+        let frame = strip(&a.frame(80, 24));
+        assert!(frame.contains("Enter choose"), "{frame}");
+        assert!(frame.contains("Esc close"), "{frame}");
+        assert!(frame.contains("n new"), "{frame}");
+        assert!(frame.contains("r rename"), "{frame}");
+        assert!(frame.contains("d delete"), "{frame}");
+    }
+
+    #[test]
+    fn slash_autocomplete_uses_the_picker() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Char('/'), &tx);
+        assert_eq!(open_picker(&a).kind, PickKind::Command);
+
+        a.handle_key(Key::Char('c'), &tx);
+        a.handle_key(Key::Char('o'), &tx);
+        {
+            let picker = open_picker(&a);
+            let labels: Vec<&str> = picker
+                .matches()
+                .iter()
+                .map(|&i| picker.items[i].label.as_str())
+                .collect();
+            assert_eq!(labels.first().copied(), Some("/compact"), "{labels:?}");
+            assert!(!labels.contains(&"/help"), "{labels:?}");
+        }
+
+        a.handle_key(Key::Tab, &tx);
+        assert!(a.pending.is_none(), "Tab left the overlay open");
+        assert_eq!(a.input, "/compact", "Tab did not complete the command");
+
+        let (tx, rx) = channel();
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Compact)));
+        assert!(a.input.is_empty(), "the input did not clear");
+    }
+
+    #[test]
+    fn slash_autocomplete_runs_and_dismisses() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.handle_key(Key::Char('/'), &tx);
+        a.handle_key(Key::Char('h'), &tx);
+        a.handle_key(Key::Char('e'), &tx);
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.pending.is_none(), "Enter left the overlay open");
+        assert!(a.input.is_empty(), "the input did not clear");
+        assert!(a.entries.iter().any(|e| e.text.contains("/help")));
+
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Char('/'), &tx);
+        a.handle_key(Key::Char('c'), &tx);
+        a.handle_key(Key::Char('o'), &tx);
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.pending.is_none(), "Esc left the overlay open");
+        assert_eq!(a.input, "/co", "Esc discarded the typed text");
+    }
+
+    #[test]
     fn choosing_a_session_sends_resume() {
         let mut a = app();
         a.pending = Some(Pending::Pick(Picker::new(
@@ -3733,6 +3931,7 @@ mod tests {
             vec![PickItem {
                 label: "abc123  title  3 msgs".into(),
                 value: "abc123".into(),
+                actions: Vec::new(),
             }],
             PickKind::Session,
         )));
@@ -3796,6 +3995,7 @@ mod tests {
             .map(|i| PickItem {
                 label: format!("profile {i}"),
                 value: format!("p{i}"),
+                actions: Vec::new(),
             })
             .collect();
         a.pending = Some(Pending::Pick(Picker::new("agent", items, PickKind::Agent)));
@@ -3829,7 +4029,8 @@ mod tests {
     }
 
     #[test]
-    fn picker_esc_cancels_without_changing_anything() {        let mut a = app();
+    fn picker_esc_cancels_without_changing_anything() {
+        let mut a = app();
         open_agent_picker(&mut a);
         let (tx, rx) = channel();
         a.handle_key(Key::Char('w'), &tx);
@@ -3853,6 +4054,7 @@ mod tests {
             .map(|i| PickItem {
                 label: format!("profile {i}"),
                 value: format!("p{i}"),
+                actions: Vec::new(),
             })
             .collect();
         a.pending = Some(Pending::Pick(Picker::new("agent", items, PickKind::Agent)));
@@ -3863,7 +4065,9 @@ mod tests {
         let mut a = app();
         open_many(&mut a, 3);
         let frame = a.frame(50, 24);
-        let start = frame.find('┌').unwrap_or_else(|| panic!("no overlay in {frame:?}"));
+        let start = frame
+            .find('┌')
+            .unwrap_or_else(|| panic!("no overlay in {frame:?}"));
         let end = frame[start..]
             .find('┐')
             .map(|at| start + at)
@@ -3881,7 +4085,7 @@ mod tests {
         let mut a = app();
         open_many(&mut a, 40);
         let frame = a.frame(100, 30);
-        let rows = frame.matches("H│").count().saturating_sub(1);
+        let rows = frame.matches("H│▸").count() + frame.matches("H│  ").count();
         assert_eq!(rows, 8, "wrong number of item rows in {frame:?}");
         assert!(strip(&frame).contains("profile 0"), "{frame:?}");
 
@@ -3891,7 +4095,8 @@ mod tests {
         }
         let scrolled = strip(&a.frame(100, 30));
         assert!(!scrolled.contains("profile 0"), "the window did not scroll");
-        assert!(scrolled.contains("profile 8"), "{scrolled:?}");    }
+        assert!(scrolled.contains("profile 8"), "{scrolled:?}");
+    }
 
     #[test]
     fn closing_the_picker_leaves_no_border() {
@@ -4083,6 +4288,7 @@ mod tests {
             vec![PickItem {
                 label: "one".into(),
                 value: "one".into(),
+                actions: Vec::new(),
             }],
             PickKind::Session,
         )));
@@ -4144,5 +4350,4 @@ mod tests {
         assert_eq!(std::mem::size_of::<Termios>(), 60);
         assert_eq!(std::mem::align_of::<Termios>(), 4);
     }
-
 }
