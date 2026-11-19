@@ -1857,6 +1857,12 @@ impl App {
         screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
         screen.push_str("\x1b[?7h");
 
+        if let Some(overlay) = self.overlay(cols, rows) {
+            screen.push_str("\x1b[?7l");
+            screen.push_str(&overlay);
+            screen.push_str("\x1b[?7h");
+        }
+
         screen
     }
 
@@ -1890,21 +1896,12 @@ impl App {
     }
 
     /// A single row for an open question or confirmation, if any.
+    ///
+    /// The picker draws as an overlay instead, so it has no composer row.
     fn pending_row(&self, cols: usize) -> Option<String> {
         if let Some(pending) = &self.pending {
             let text = match pending {
-                Pending::Pick(picker) => {
-                    let shown: Vec<String> = picker
-                        .matches()
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &item)| {
-                            let marker = if i == picker.index { "▸" } else { " " };
-                            format!("{marker}{}. {}", i + 1, picker.items[item].label)
-                        })
-                        .collect();
-                    format!("{}: {}", picker.title, shown.join("  "))
-                }
+                Pending::Pick(_) => return None,
                 Pending::Confirm { what, .. } => {
                     format!("{} y/N  ({}s)", verb(what), self.seconds_left())
                 }
@@ -1930,6 +1927,90 @@ impl App {
             return Some(self.palette.paint(Role::Info, &fit(&text, cols)));
         }
         None
+    }
+
+    /// The picker as a centred bordered block, drawn after the normal frame.
+    ///
+    /// Absolute cursor addressing paints the rectangle without disturbing the
+    /// transcript, and the next full frame replaces it, leaving no residue.
+    fn overlay(&self, cols: usize, rows: usize) -> Option<String> {
+        let picker = match &self.pending {
+            Some(Pending::Pick(picker)) => picker,
+            _ => return None,
+        };
+        let width = (cols * 80 / 100).max(40).min(cols);
+        if width < 4 || rows < 5 {
+            return None;
+        }
+        let inner = width.saturating_sub(2);
+        let matches = picker.matches();
+        let visible = matches.len().min(PICK_ROWS).max(1);
+        let height = visible + 4;
+        let body = self
+            .body_rows
+            .clamp(1, rows.saturating_sub(1).max(1));
+        let x = (cols.saturating_sub(width)) / 2 + 1;
+        let y = (body.saturating_sub(height)) / 2 + 1;
+
+        let wall = self.palette.paint(Role::Thinking, "│");
+        let mut block: Vec<String> = Vec::new();
+        block.push(self.palette.paint(
+            Role::Thinking,
+            &format!("┌{}┐", "─".repeat(inner)),
+        ));
+
+        let mut head = format!(" {}  filter: {}", picker.title, picker.filter);
+        if matches.len() > visible {
+            head.push_str(&format!("  {}/{}", picker.index + 1, matches.len()));
+        }
+        block.push(format!("{wall}{}{wall}", self.boxed(&head, inner, false)));
+        block.push(self.palette.paint(
+            Role::Thinking,
+            &format!("├{}┤", "─".repeat(inner)),
+        ));
+
+        for row in 0..visible {
+            let at = picker.offset + row;
+            let text = if matches.is_empty() {
+                "  no matches".to_string()
+            } else {
+                match matches.get(at) {
+                    Some(&item) => {
+                        let marker = if at == picker.index { "▸" } else { " " };
+                        format!("{marker} {}", picker.items[item].label)
+                    }
+                    None => String::new(),
+                }
+            };
+            let selected = !matches.is_empty() && at == picker.index;
+            block.push(format!(
+                "{wall}{}{wall}",
+                self.boxed(&text, inner, selected)
+            ));
+        }
+
+        block.push(self.palette.paint(
+            Role::Thinking,
+            &format!("└{}┘", "─".repeat(inner)),
+        ));
+
+        let mut out = String::new();
+        for (i, line) in block.iter().enumerate() {
+            out.push_str(&format!("\x1b[{};{}H{line}", y + i, x));
+        }
+        Some(out)
+    }
+
+    /// Fit one row of text to the interior width and pad it with spaces.
+    fn boxed(&self, text: &str, inner: usize, selected: bool) -> String {
+        let text = fit(text, inner);
+        let pad = inner.saturating_sub(text.chars().count());
+        let row = format!("{text}{}", " ".repeat(pad));
+        if selected {
+            self.palette.paint(Role::User, &row)
+        } else {
+            row
+        }
     }
 
     /// The input area: one painted row per newline in the input.
@@ -3404,6 +3485,66 @@ mod tests {
         open_agent_picker(&mut a);
         let picker = open_picker(&a);
         assert_eq!(picker.selected().map(|i| i.label.as_str()), Some("writer"));
+    }
+
+    fn open_many(a: &mut App, count: usize) {
+        let items = (0..count)
+            .map(|i| PickItem {
+                label: format!("profile {i}"),
+                value: format!("p{i}"),
+            })
+            .collect();
+        a.pending = Some(Pending::Pick(Picker::new("agent", items, PickKind::Agent)));
+    }
+
+    #[test]
+    fn overlay_is_forty_columns_in_a_narrow_terminal() {
+        let mut a = app();
+        open_many(&mut a, 3);
+        let frame = a.frame(50, 24);
+        let start = frame.find('┌').unwrap_or_else(|| panic!("no overlay in {frame:?}"));
+        let end = frame[start..]
+            .find('┐')
+            .map(|at| start + at)
+            .unwrap_or_else(|| panic!("no top border in {frame:?}"));
+        assert_eq!(
+            frame[start..end].chars().count() + 1,
+            40,
+            "wrong box width: {:?}",
+            &frame[start..end]
+        );
+    }
+
+    #[test]
+    fn overlay_shows_eight_rows_and_scrolls() {
+        let mut a = app();
+        open_many(&mut a, 40);
+        let frame = a.frame(100, 30);
+        let rows = frame.matches("H│").count().saturating_sub(1);
+        assert_eq!(rows, 8, "wrong number of item rows in {frame:?}");
+        assert!(strip(&frame).contains("profile 0"), "{frame:?}");
+
+        let (tx, _rx) = channel();
+        for _ in 0..8 {
+            a.handle_key(Key::Down, &tx);
+        }
+        let scrolled = strip(&a.frame(100, 30));
+        assert!(!scrolled.contains("profile 0"), "the window did not scroll");
+        assert!(scrolled.contains("profile 8"), "{scrolled:?}");    }
+
+    #[test]
+    fn closing_the_picker_leaves_no_border() {
+        let mut a = app();
+        a.push(Role::User, "a transcript row");
+        let before = a.frame(80, 20);
+        open_many(&mut a, 40);
+        let open = a.frame(80, 20);
+        assert!(open.contains('┌'), "the picker did not draw");
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Esc, &tx);
+        let after = a.frame(80, 20);
+        assert!(!after.contains('┌'), "border residue after close");
+        assert_eq!(before, after, "closing the picker changed the frame");
     }
 
     fn long_app() -> App {
