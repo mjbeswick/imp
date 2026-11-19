@@ -400,6 +400,10 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     }
                 }
                 "cwd" => println!("{}", session.tools.root.display()),
+                "fork" => match session.fork() {
+                    Ok((new_id, old_id)) => println!("fork: {new_id} (from {old_id})"),
+                    Err(e) => println!("{e}"),
+                },
                 other if other == "image" || other.starts_with("image ") => {
                     let raw = other.strip_prefix("image").unwrap_or("").trim();
                     if raw.is_empty() {

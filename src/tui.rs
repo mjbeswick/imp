@@ -459,6 +459,7 @@ pub enum Cmd {
     SetThinking(bool),
     SetAgent(String),
     ShowAgent,
+    Fork,
     SetRoot(std::path::PathBuf),
     Compact,
     Resume(String),
@@ -1273,6 +1274,9 @@ impl App {
                 self.push(Role::Info, "new conversation");
             }
             "cwd" => self.push(Role::Info, self.root.display().to_string()),
+            "fork" => {
+                let _ = tx.send(Cmd::Fork);
+            }
             other if other == "image" || other.starts_with("image ") => {
                 let raw = other.strip_prefix("image").unwrap_or("").trim();
                 if raw.is_empty() {
@@ -2085,6 +2089,17 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         )));
                     }
                 }
+                Ok(Cmd::Fork) => match worker_session.fork() {
+                    Ok((new_id, old_id)) => {
+                        if let Ok(mut slot) = session_id.lock() {
+                            *slot = new_id.clone();
+                        }
+                        let _ = ev_tx.send(Ev::Info(format!("fork: {new_id} (from {old_id})")));
+                    }
+                    Err(e) => {
+                        let _ = ev_tx.send(Ev::Error(e));
+                    }
+                },
                 Ok(Cmd::ShowAgent) => {
                     let _ = ev_tx.send(Ev::Info(crate::agent::describe_agent(
                         &worker_session.agent,
@@ -2889,6 +2904,14 @@ mod tests {
         }
         a.run_command("agent current", &tx);
         assert!(matches!(rx.try_recv(), Ok(Cmd::ShowAgent)));
+    }
+
+    #[test]
+    fn fork_command_sends_the_fork() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("fork", &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Fork)));
     }
 
     #[test]

@@ -56,7 +56,7 @@ Up/Down history · Tab complete · PgUp/PgDn scroll
 /think     thinking toggle       /yolo      prompt-free for this session
 /verbosity tool detail: low|high /cwd       show the session directory
 /cd        change the directory  /image     attach an image by path
-/quit      leave
+/fork      copy the session     /quit      leave
 ```
 
 `/image <path>` or pasting an image path attaches PNG, JPEG, GIF, or WebP up to

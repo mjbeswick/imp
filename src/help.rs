@@ -15,6 +15,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/cwd", "show the session directory"),
     ("/cd", "change the session directory"),
     ("/image", "attach an image by path"),
+    ("/fork", "copy the session and continue there"),
     ("/quit", "leave"),
 ];
 
@@ -231,7 +232,7 @@ mod tests {
     #[test]
     fn commands_lists_every_command() {
         let text = commands();
-        assert_eq!(COMMANDS.len(), 13);
+        assert_eq!(COMMANDS.len(), 14);
         for (name, _) in COMMANDS {
             assert!(text.contains(name), "missing {name}");
         }
