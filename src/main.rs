@@ -95,7 +95,6 @@ fn run() -> Result<(), String> {
 
     let sessions_dir = config::dirs_state().join("imp").join("sessions");
     let launch = std::env::current_dir().map_err(|e| e.to_string())?;
-    let root = choose_root(cwd.as_deref(), &launch)?;
 
     if list {
         let now = std::time::SystemTime::now()
@@ -122,6 +121,21 @@ fn run() -> Result<(), String> {
         return Err("DEEPSEEK_API_KEY is not set".into());
     }
 
+    let existing = match &resume {
+        Some(id) => store::Log::open(&sessions_dir, id),
+        None if continue_last => store::Log::latest(&sessions_dir),
+        None => None,
+    };
+    let recorded = existing.as_ref().and_then(|l| l.meta_cwd());
+    let (root, gone) = resume_root(cwd.as_deref(), recorded, &launch)?;
+    if let Some(path) = gone {
+        eprintln!(
+            "imp: session directory {} is gone; using {}",
+            path.display(),
+            launch.display()
+        );
+    }
+
     let out_dir = config::dirs_state().join("imp").join("out");
     let system = system_prompt(&root, &cfg);
     let tui_cfg = cfg.clone();
@@ -146,11 +160,6 @@ fn run() -> Result<(), String> {
     ));
     let mut session = Session::new(cfg, root.clone(), out_dir, system, agent, roster, cols);
 
-    let existing = match &resume {
-        Some(id) => store::Log::open(&sessions_dir, id),
-        None if continue_last => store::Log::latest(&sessions_dir),
-        None => None,
-    };
     match existing {
         Some(log) => {
             let id = log.id.clone();
@@ -198,25 +207,24 @@ fn resume_line(id: &str) -> String {
     format!("imp: resume with imp -r {id}")
 }
 
-/// The session root: `--cwd` when given, resolved against the launch
-/// directory, otherwise the launch directory itself.
-fn choose_root(cwd: Option<&str>, launch: &std::path::Path) -> Result<PathBuf, String> {
-    let Some(raw) = cwd else {
-        return Ok(launch.to_path_buf());
-    };
-    let given = PathBuf::from(raw);
-    let path = if given.is_absolute() {
-        given
-    } else {
-        launch.join(given)
-    };
-    let resolved = path
-        .canonicalize()
-        .map_err(|_| format!("--cwd {}: not a directory", path.display()))?;
-    if !resolved.is_dir() {
-        return Err(format!("--cwd {}: not a directory", path.display()));
+/// Choose the root for a run: an explicit `--cwd` wins, then the directory
+/// recorded with the session, then the launch directory. The second value is a
+/// recorded directory that no longer exists, for the caller to report.
+fn resume_root(
+    cwd: Option<&str>,
+    recorded: Option<PathBuf>,
+    launch: &std::path::Path,
+) -> Result<(PathBuf, Option<PathBuf>), String> {
+    if let Some(raw) = cwd {
+        let root = config::resolve_root(Some(raw), launch)
+            .map_err(|e| format!("--cwd {e}"))?;
+        return Ok((root, None));
     }
-    Ok(resolved)
+    match recorded {
+        Some(path) if path.is_dir() => Ok((path, None)),
+        Some(path) => Ok((launch.to_path_buf(), Some(path))),
+        None => Ok((launch.to_path_buf(), None)),
+    }
 }
 
 fn terminal_width() -> usize {
@@ -354,6 +362,24 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 "sessions" => {
                     for m in store::Log::list(&sessions_dir) {
                         println!("{:<12} {:<40} {:>5} msgs", m.id, m.title, m.messages);
+                    }
+                }
+                "cwd" => println!("{}", session.tools.root.display()),
+                other if other == "cd" || other.starts_with("cd ") => {
+                    let raw = other[2..].trim();
+                    if raw.is_empty() {
+                        println!("cd <path>");
+                    } else {
+                        match config::resolve_root(Some(raw), &session.tools.root) {
+                            Ok(path) => match session.set_root(path.clone()) {
+                                Ok(()) => println!(
+                                    "cwd: {} (prompt cache reset)",
+                                    path.display()
+                                ),
+                                Err(e) => eprintln!("imp: {e}"),
+                            },
+                            Err(e) => println!("{e}"),
+                        }
                     }
                 }
                 other if other == "verbosity" || other.starts_with("verbosity ") => {
@@ -512,10 +538,30 @@ mod tests {
     #[test]
     fn cwd_resolves_against_the_launch_directory() {
         let launch = std::env::temp_dir();
-        let root = choose_root(Some("."), &launch).unwrap();
+        let root = config::resolve_root(Some("."), &launch).unwrap();
         assert_eq!(root, launch.canonicalize().unwrap());
-        assert!(choose_root(Some("/nope/imp-missing"), &launch).is_err());
-        assert_eq!(choose_root(None, &launch).unwrap(), launch);
+        assert!(config::resolve_root(Some("/nope/imp-missing"), &launch).is_err());
+        assert_eq!(config::resolve_root(None, &launch).unwrap(), launch);
+    }
+
+    #[test]
+    fn resume_root_prefers_explicit_then_recorded() {
+        let launch = std::env::temp_dir();
+        let recorded = std::env::temp_dir().join(format!("imp-rec-{}", std::process::id()));
+        std::fs::create_dir_all(&recorded).unwrap();
+
+        let (root, gone) = resume_root(None, Some(recorded.clone()), &launch).unwrap();
+        assert_eq!(root, recorded);
+        assert!(gone.is_none());
+
+        let (root, _) = resume_root(Some("."), Some(recorded.clone()), &launch).unwrap();
+        assert_eq!(root, launch.canonicalize().unwrap());
+
+        let missing = launch.join("imp-recorded-missing");
+        let (root, gone) = resume_root(None, Some(missing.clone()), &launch).unwrap();
+        assert_eq!(root, launch);
+        assert_eq!(gone, Some(missing));
+        let _ = std::fs::remove_dir(recorded);
     }
 
     #[test]
