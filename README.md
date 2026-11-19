@@ -46,6 +46,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab pick directory · Left up · Esc cancel
+Ctrl+O expand the last tool call · Ctrl+D leaves line mode
 ```
 
 ### Commands
@@ -63,17 +64,22 @@ Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab 
 /rename    rename this session   /quit      leave
 ```
 
-A bare `/agent`, `/sessions`, `/verbosity`, or `/model` opens a centred picker
-over the transcript, and typing `/agent `, `/model `, `/theme `,
-`/verbosity `, `/provider `, `/cd `, or `/image ` opens the same picker with
-that command's values. The filter has the cursor: type to narrow, move with
-Up/Down or PgUp/PgDn, choose with Enter, and cancel with Esc. A typed value
-still applies directly, and `/stash`, `/rename`, and a typed path keep the
-composer.
+`/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` are
+value commands. Bare, each opens a centred picker on the current entry, marked
+`current`; a typed value such as `/theme mono` or `/sessions 51280befc` applies
+directly. Line mode prints the same values as aligned rows. The filter has the
+cursor: type to narrow, move with Up/Down or PgUp/PgDn, choose with Enter, and
+cancel with Esc. A space hands the line back to the composer, so
+`/provider add work` types straight through.
+
+Tab in the command list completes the highlighted command: a value command
+opens its picker, `/stash` and `/rename` get a space for their text, and any
+other command waits for Enter.
 
 Command rows show the command on the left and its description on the right.
 Bare `/cd` browses directories from the session root, with Enter to open one,
-Tab to select it, and Left to go up, including above the root. Bare `/image`
+Tab to select it, and Left or the `../` row to go up, including above the root.
+The picker title names the directory being browsed. Bare `/image`
 browses directories and PNG, JPEG, GIF, and WebP files, and Enter attaches the
 highlighted image.
 
@@ -86,7 +92,7 @@ models, fetched live with a built-in catalog as the immediate and fallback
 list, plus the current model, the provider default, and recent choices.
 Nothing is written to the config.
 
-`/provider` lists built-in and custom profiles. `add <name>`, `edit <name>`,
+Bare `/provider` picks from built-in and custom profiles. `add <name>`, `edit <name>`,
 `delete <name>`, and `use <name>` manage custom profiles in a managed
 `# >>> providers` block in the config file; comments and other keys survive,
 and the active profile cannot be deleted.

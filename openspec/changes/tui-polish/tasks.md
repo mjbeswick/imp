@@ -39,4 +39,4 @@
 
 ## 6. Finish
 
-- [ ] 6.1 Update `README.md` where a sample changed and run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 6.1 Update `README.md` where a sample changed and run the checks. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
