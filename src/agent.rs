@@ -1064,6 +1064,36 @@ mod tests {
         )
     }
 
+    #[test]
+    fn set_root_reloads_and_records_the_directory() {
+        let mut s = session(crate::config::Config::default());
+        let dir = tmp();
+        std::fs::write(
+            dir.join("AGENTS.md"),
+            "instructions from the new root",
+        )
+        .unwrap();
+        let outside = tmp();
+        std::fs::write(outside.join("secret.txt"), "x").unwrap();
+        let log = crate::store::Log::create(&tmp(), &s.tools.root, "deepseek-flash");
+        s.attach_log(log);
+
+        s.set_root(dir.clone()).unwrap();
+
+        assert_eq!(s.tools.root, dir);
+        assert!(
+            s.history
+                .first()
+                .map(|m| m.content.contains("instructions from the new root"))
+                .unwrap_or(false),
+            "prompt did not reload"
+        );
+        assert_eq!(s.log.as_ref().unwrap().meta_cwd().unwrap(), dir);
+        let outside = outside.join("secret.txt").display().to_string();
+        let out = s.tools.read(&[outside], None, None);
+        assert!(!out.ok, "read escaped the new root: {}", out.text);
+    }
+
     use crate::transport::{text_reply, tool_reply, Fake, Script};
     use std::sync::Arc;
 
