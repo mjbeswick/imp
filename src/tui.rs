@@ -304,20 +304,18 @@ impl Palette {
         if !self.on {
             return text.to_string();
         }
-        let index = match role {
-            Role::User => 0,
-            Role::Assistant => 1,
-            Role::Thinking => 2,
-            Role::Tool => 3,
-            Role::Error => 4,
-            Role::Info => 5,
-            Role::Add | Role::Delete => 0,
+        use crate::theme::Slot;
+        let slot = match role {
+            Role::User => Slot::User,
+            Role::Assistant => Slot::Text,
+            Role::Thinking => Slot::Muted,
+            Role::Tool => Slot::Tool,
+            Role::Error | Role::Delete => Slot::Error,
+            Role::Info => Slot::Accent,
+            Role::Add => Slot::Success,
         };
-        let ([r, g, b], fallback) = match role {
-            Role::Add => self.theme.add,
-            Role::Delete => self.theme.delete,
-            _ => (self.theme.rgb[index], self.theme.ansi[index]),
-        };
+        let [r, g, b] = self.theme.rgb(slot);
+        let fallback = crate::theme::to_256([r, g, b]);
         if self.truecolor {
             format!("\x1b[38;2;{r};{g};{b}m{text}\x1b[0m")
         } else {
@@ -4042,13 +4040,20 @@ mod tests {
     fn colour_app() -> App {
         let mut cfg = Config::default();
         cfg.color = ColorMode::Always;
-        App::new(
+        let mut a = App::new(
             cfg,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
             std::env::temp_dir(),
             "default".into(),
-        )
+        );
+        // Pin the palette: the saved theme on this machine must not matter.
+        a.palette = Palette {
+            on: true,
+            truecolor: true,
+            theme: crate::theme::by_name("default").unwrap(),
+        };
+        a
     }
 
     #[test]
@@ -4975,7 +4980,7 @@ mod tests {
             .iter()
             .map(|&i| picker.items[i].label.as_str())
             .collect();
-        assert_eq!(labels, vec!["gruvbox-dark"], "{labels:?}");
+        assert_eq!(labels, vec!["gruvbox-dark", "gruvbox-light"], "{labels:?}");
 
         a.handle_key(Key::Esc, &tx);
         assert!(a.pending.is_none());
