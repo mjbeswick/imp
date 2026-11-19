@@ -5,6 +5,7 @@
 //! stream, so the session loop never sees a provider's dialect.
 
 pub mod anthropic;
+pub mod gemini;
 pub mod openai;
 
 use crate::api::{Event, Message, RequestOptions};
@@ -28,6 +29,7 @@ pub trait Adapter {
 pub fn adapter(provider: Provider, base_url: &str, key: &str) -> Box<dyn Adapter> {
     match provider {
         Provider::Anthropic => Box::new(anthropic::Anthropic::new(base_url, key)),
+        Provider::Gemini => Box::new(gemini::Gemini::new(base_url, key)),
         _ => Box::new(openai::OpenAi::new(base_url, key, provider.caps())),
     }
 }
