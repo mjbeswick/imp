@@ -49,3 +49,11 @@ fn an_unknown_option_points_to_help() {
     assert!(err.contains("unknown option --bogus; try imp --help"), "{err}");
     assert!(!out.status.success());
 }
+
+#[test]
+fn a_bang_line_on_the_deny_list_is_refused() {
+    // `mkfs` is deny-listed; `echo` keeps the probe harmless if it ran.
+    let (out, _) = run("!echo mkfs-probe\n/quit\n");
+    assert!(out.contains("refused"), "{out}");
+    assert!(!out.contains("  mkfs-probe"), "it ran: {out}");
+}

@@ -1889,6 +1889,14 @@ impl App {
     }
 
     fn run_local(&mut self, command: &str) {
+        // Typed means approved, but the deny list still holds.
+        let mode = self.cfg.live_permissions();
+        if let crate::perm::Decision::Deny(why) =
+            crate::perm::classify_command(command, mode, self.cfg.allow_sudo)
+        {
+            self.push(Role::Error, format!("$ {command}: {why}"));
+            return;
+        }
         // Same runner as the bash tool, one implementation of the limits.
         let mut tools = crate::tools::Tools::new(
             self.root.clone(),
@@ -6218,6 +6226,16 @@ mod tests {
     fn wrap_keeps_blank_lines() {
         assert_eq!(wrap("a\n\nb", 20).len(), 3);
     }
+    #[test]
+    fn a_typed_command_on_the_deny_list_is_refused() {
+        let mut a = app();
+        a.run_local("echo mkfs-probe");
+        let last = a.entries.last().unwrap();
+        assert_eq!(last.role, Role::Error);
+        assert!(last.text.contains("refused"), "{}", last.text);
+        assert!(!last.text.contains("\nmkfs-probe"), "it ran: {}", last.text);
+    }
+
     #[test]
     fn a_shell_draft_shows_a_dollar_prompt() {
         let mut a = app();

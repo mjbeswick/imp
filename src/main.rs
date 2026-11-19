@@ -601,6 +601,14 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
         }
         if let Some(command) = text.strip_prefix('!') {
             // Same runner as the chat: local, never sent to the model.
+            // Typed means approved, but the deny list still holds.
+            let mode = session.cfg.live_permissions();
+            if let perm::Decision::Deny(why) =
+                perm::classify_command(command, mode, session.cfg.allow_sudo)
+            {
+                println!("{}", cli.palette.paint(tui::Role::Error, &format!("$ {command}: {why}")));
+                continue;
+            }
             let cancel = std::sync::atomic::AtomicBool::new(false);
             let done = session.tools.bash(command, &cancel);
             let role = if done.ok { tui::Role::Tool } else { tui::Role::Error };
