@@ -137,6 +137,7 @@ fn run() -> Result<(), String> {
     }
 
     let out_dir = config::dirs_state().join("imp").join("out");
+    tools::prune_out(&out_dir, std::time::Duration::from_secs(7 * 24 * 3600));
     let system = system_prompt(&root, &cfg);
     let tui_cfg = cfg.clone();
     let roster = store::load_agents(&cfg, &root);
@@ -331,6 +332,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         .find(|m| m.role == api::Role::System)
                         .cloned();
                     session.history.clear();
+                    session.tools.clear_buffers();
                     if let Some(m) = system {
                         session.history.push(m);
                     }

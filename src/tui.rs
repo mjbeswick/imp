@@ -2051,6 +2051,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                     );
                     worker_session.reset();
                     worker_session.attach_log(log);
+                    worker_session.tools.clear_buffers();
                     if let (Some(log), Ok(mut slot)) = (&worker_session.log, session_id.lock()) {
                         *slot = log.id.clone();
                     }
@@ -2114,6 +2115,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         .filter(|m| m.role == crate::api::Role::System)
                         .cloned();
                     worker_session.history.clear();
+                    worker_session.tools.clear_buffers();
                     if let Some(m) = system {
                         worker_session.history.push(m);
                     }
