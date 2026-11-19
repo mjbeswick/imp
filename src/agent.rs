@@ -148,11 +148,11 @@ impl Session {
             history.push(Message::system(agent.instructions.clone()));
         }
         let job_dir = out_dir.join("jobs");
-        let jail = crate::perm::jail_enabled(cfg.permissions);
+        let jail = crate::perm::jail_enabled(cfg.live_permissions());
         let memory = Memory::discover(&cfg, &root);
         let skills = crate::store::load_skills(&cfg, &root);
         Self {
-            launch_permissions: cfg.permissions,
+            launch_permissions: cfg.live_permissions(),
             cfg,
             tools: {
                 let mut t = Tools::new(root, out_dir);
@@ -657,14 +657,20 @@ impl Session {
         Ok(())
     }
 
+    /// Apply an exact mode, including the path jail.
+    pub fn set_permissions(&mut self, mode: Permissions) {
+        self.cfg.set_permissions(mode);
+        self.tools.jail = crate::perm::jail_enabled(mode);
+    }
+
     /// Switch between the launch mode and `yolo` for this session only.
     pub fn toggle_yolo(&mut self) -> &'static str {
-        let next = if self.cfg.permissions == Permissions::Yolo {
+        let next = if self.cfg.live_permissions() == Permissions::Yolo {
             self.launch_permissions
         } else {
             Permissions::Yolo
         };
-        self.cfg.permissions = next;
+        self.cfg.set_permissions(next);
         self.tools.jail = crate::perm::jail_enabled(next);
         if next == Permissions::Yolo {
             "yolo for this session · deny list still applies · path jail off"
@@ -718,7 +724,7 @@ impl Session {
                     return (false, "refused: bash needs a command".into());
                 };
                 if let Some(rule) =
-                    perm::shell_touches_self_config(cmd, self.cfg.permissions)
+                    perm::shell_touches_self_config(cmd, self.cfg.live_permissions())
                 {
                     match rule {
                         Decision::Deny(why) => return (false, why),
@@ -735,7 +741,7 @@ impl Session {
                         return (code == 0, format!("exit {code}\n(ran attached to the terminal)"));
                     }
                 }
-                match perm::classify_command(cmd, self.cfg.permissions, self.cfg.allow_sudo) {
+                match perm::classify_command(cmd, self.cfg.live_permissions(), self.cfg.allow_sudo) {
                     Decision::Deny(why) => return (false, why),
                     Decision::Ask => {
                         if !hooks.confirm(&format!("run `{cmd}`")) {
@@ -1002,7 +1008,7 @@ impl Session {
 
     fn allowed_write(&mut self, path: &str, hooks: &mut dyn Hooks) -> bool {
         if let Ok(resolved) = self.tools.resolve(path) {
-            match crate::perm::self_config(&resolved, self.cfg.permissions) {
+            match crate::perm::self_config(&resolved, self.cfg.live_permissions()) {
                 Some(crate::perm::Decision::Deny(why)) => return {
                     hooks.ui(Ui::Error(why));
                     false
@@ -1020,7 +1026,7 @@ impl Session {
             .resolve(path)
             .map(|p| p.starts_with(&self.tools.root))
             .unwrap_or(false);
-        match perm::classify_write(inside, self.cfg.permissions) {
+        match perm::classify_write(inside, self.cfg.live_permissions()) {
             Decision::Allow => true,
             Decision::Ask => hooks.confirm(&format!("write {path}")),
             Decision::Deny(_) => false,
@@ -1478,7 +1484,7 @@ mod tests {
             Script::Ok(tool_reply("c1", "bash", "{\"command\":\"true\"}")),
             Script::Ok(text_reply("done")),
         ]);
-        s.cfg.permissions = crate::config::Permissions::Strict;
+        s.cfg.set_permissions(crate::config::Permissions::Strict);
 
         struct Slow {
             waited: std::time::Duration,
@@ -1988,11 +1994,61 @@ mod tests {
         session.resume_id(&sessions, &log.id).unwrap();
         assert!(session.history.iter().all(|m| m.tool_call_id.is_none()));
     }
+    #[derive(Default)]
+    struct CountingHooks {
+        confirms: usize,
+    }
+
+    impl Hooks for CountingHooks {
+        fn ui(&mut self, _: Ui) {}
+        fn confirm(&mut self, _: &str) -> bool {
+            self.confirms += 1;
+            true
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_live_mode_change_applies_to_the_next_tool_call() {
+        let d = tmp();
+        let mut cfg = crate::config::Config::default();
+        cfg.set_permissions(Permissions::Normal);
+        let mut s = Session::new(
+            cfg,
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            roster(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        );
+        let mut hooks = CountingHooks::default();
+
+        // A second clone of the config stands in for the App's copy.
+        let ui = s.cfg.clone();
+        ui.mode
+            .store(Permissions::Yolo.code(), std::sync::atomic::Ordering::Relaxed);
+        let args = json!({"command": "mkdir imp-yolo-live"});
+        let (ok, out) = s.run_tool("bash", &args, &mut hooks);
+        assert!(ok, "{out}");
+        assert_eq!(hooks.confirms, 0, "yolo still asked for confirmation");
+
+        s.cfg.set_permissions(Permissions::Normal);
+        let args = json!({"command": "mkdir imp-yolo-ask"});
+        let (ok, _) = s.run_tool("bash", &args, &mut hooks);
+        assert!(ok);
+        assert_eq!(hooks.confirms, 1, "normal did not ask");
+        let _ = std::fs::remove_dir(d.join("imp-yolo-live"));
+        let _ = std::fs::remove_dir(d.join("imp-yolo-ask"));
+    }
+
     #[test]
     fn yolo_toggles_back_to_the_launch_mode() {
         let d = tmp();
         let mut cfg = crate::config::Config::default();
-        cfg.permissions = Permissions::Strict;
+        cfg.set_permissions(Permissions::Strict);
         let mut s = Session::new(
             cfg,
             d.clone(),

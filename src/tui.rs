@@ -495,7 +495,7 @@ pub enum Cmd {
     Compact,
     Resume(String),
     Reload,
-    Yolo,
+    SetPermissions(crate::config::Permissions),
     Rename(String, String),
     Delete(String),
     NewSession,
@@ -761,6 +761,8 @@ pub struct App {
     models_path: std::path::PathBuf,
     /// The provider's models, catalog first and then whatever it reported.
     available_models: Vec<String>,
+    /// The mode the session launched in, restored by a second `/yolo`.
+    launch_permissions: crate::config::Permissions,
     /// Messages parked for this session, never persisted.
     stash: Vec<String>,
     bell_pending: bool,
@@ -1142,6 +1144,7 @@ impl App {
     ) -> Self {
         let palette = Palette::detect(&cfg);
         let provider = cfg.provider;
+        let launch_permissions = cfg.live_permissions();
         let history = load_history();
         let agents = crate::store::load_agents(&cfg, &root)
             .into_iter()
@@ -1168,6 +1171,7 @@ impl App {
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
             available_models: crate::providers::catalog(provider),
+            launch_permissions,
             stash: Vec::new(),
             bell_pending: false,
             status: Status {
@@ -2126,7 +2130,19 @@ impl App {
                 }
             }
             "yolo" => {
-                let _ = tx.send(Cmd::Yolo);
+                let next = if self.cfg.live_permissions() == crate::config::Permissions::Yolo {
+                    self.launch_permissions
+                } else {
+                    crate::config::Permissions::Yolo
+                };
+                self.cfg.set_permissions(next);
+                let _ = tx.send(Cmd::SetPermissions(next));
+                let line = if next == crate::config::Permissions::Yolo {
+                    "yolo for this session · deny list still applies · path jail off"
+                } else {
+                    "back to the session mode · prompts return"
+                };
+                self.push(Role::Info, format!("{line} ({})", next.as_str()));
             }
             "reload" => {
                 let _ = tx.send(Cmd::Reload);
@@ -3457,12 +3473,8 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                     }
                     let _ = ev_tx.send(Ev::Done(None));
                 }
-                Ok(Cmd::Yolo) => {
-                    let line = worker_session.toggle_yolo();
-                    let _ = ev_tx.send(Ev::Info(format!(
-                        "{line} ({})",
-                        worker_session.cfg.permissions.as_str()
-                    )));
+                Ok(Cmd::SetPermissions(mode)) => {
+                    worker_session.set_permissions(mode);
                 }
                 Ok(Cmd::Reload) => {
                     match worker_session.reload() {
@@ -4297,6 +4309,28 @@ mod tests {
         assert!(!a.resized(80, 24));
         assert!(a.resized(81, 24));
         assert!(a.resized(80, 25));
+    }
+
+    #[test]
+    fn yolo_changes_the_shared_mode_immediately() {
+        let mut a = app();
+        a.status.streaming = true;
+        let (tx, rx) = channel();
+        assert_eq!(
+            a.cfg.live_permissions(),
+            crate::config::Permissions::Normal
+        );
+        a.run_command("yolo", &tx);
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Yolo);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Cmd::SetPermissions(crate::config::Permissions::Yolo))
+        ));
+        a.run_command("yolo", &tx);
+        assert_eq!(
+            a.cfg.live_permissions(),
+            crate::config::Permissions::Normal
+        );
     }
 
     #[test]

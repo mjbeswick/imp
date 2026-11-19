@@ -76,7 +76,9 @@ fn run() -> Result<(), String> {
                 cfg.max_steps = config::parse_max_steps(&next(&args, &mut i, "--max-steps")?)?
             }
             "--permissions" => {
-                cfg.permissions = config::Permissions::parse(&next(&args, &mut i, "--permissions")?)?
+                let mode =
+                    config::Permissions::parse(&next(&args, &mut i, "--permissions")?)?;
+                cfg.set_permissions(mode);
             }
             "--agent" => agent_name = Some(next(&args, &mut i, "--agent")?),
             "-c" | "--continue" => continue_last = true,

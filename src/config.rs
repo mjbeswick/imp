@@ -2,6 +2,8 @@
 
 use crate::providers::Provider;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU8;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Permissions {
@@ -27,6 +29,23 @@ impl Permissions {
             Self::Normal => "normal",
             Self::Strict => "strict",
             Self::Yolo => "yolo",
+        }
+    }
+
+    /// A stable byte for the shared mode.
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Normal => 0,
+            Self::Strict => 1,
+            Self::Yolo => 2,
+        }
+    }
+
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Strict,
+            2 => Self::Yolo,
+            _ => Self::Normal,
         }
     }
 }
@@ -110,6 +129,8 @@ pub struct Config {
     pub model: String,
     pub base_url: String,
     pub permissions: Permissions,
+    /// The live mode, shared with the worker so a change applies mid-turn.
+    pub mode: Arc<AtomicU8>,
     pub allow_sudo: bool,
     pub prune_at: u32,
     pub compact_at: u32,
@@ -133,6 +154,7 @@ impl Default for Config {
             model: profile.model.into(),
             base_url: profile.base_url.into(),
             permissions: Permissions::Normal,
+            mode: Arc::new(AtomicU8::new(Permissions::Normal.code())),
             allow_sudo: false,
             prune_at: 45_000,
             compact_at: 60_000,
@@ -195,7 +217,7 @@ impl Config {
             "api_key" => self.api_key = value.to_string(),
             "model" => self.model = value.to_string(),
             "base_url" => self.base_url = value.trim_end_matches('/').to_string(),
-            "permissions" => self.permissions = Permissions::parse(value)?,
+            "permissions" => self.set_permissions(Permissions::parse(value)?),
             "allow_sudo" => self.allow_sudo = parse_bool(value)?,
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
@@ -211,6 +233,18 @@ impl Config {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Set the mode in one place so the shared byte cannot drift.
+    pub fn set_permissions(&mut self, mode: Permissions) {
+        self.permissions = mode;
+        self.mode
+            .store(mode.code(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The mode as of this read, not as of the session's start.
+    pub fn live_permissions(&self) -> Permissions {
+        Permissions::from_code(self.mode.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     /// Select the profile named in `provider=`: a built-in or a custom one.
@@ -688,6 +722,19 @@ mod tests {
             cfg.resolve_key_env(env(&[])).unwrap();
             assert!(cfg.api_key.is_empty());
         }
+    }
+
+    #[test]
+    fn a_cloned_config_shares_the_live_mode() {
+        let cfg = Config::default();
+        let clone = cfg.clone();
+        cfg.mode
+            .store(Permissions::Yolo.code(), std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(clone.live_permissions(), Permissions::Yolo);
+        clone
+            .mode
+            .store(Permissions::Strict.code(), std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(cfg.live_permissions(), Permissions::Strict);
     }
 
     #[test]
