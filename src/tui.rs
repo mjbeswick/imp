@@ -3023,7 +3023,13 @@ impl App {
             screen.push_str("\x1b[2K");
             // The rule takes the accent while a question waits below it.
             let asking = self.pending.is_some() && !matches!(self.pending, Some(Pending::Pick(_)));
-            let tone = if asking { Role::Info } else { Role::Thinking };
+            let tone = if asking {
+                Role::Info
+            } else if self.yolo() {
+                Role::Error
+            } else {
+                Role::Thinking
+            };
             screen.push_str(&self.palette.paint(tone, &"─".repeat(cols)));
             screen.push_str("\r\n");
         }
@@ -3278,7 +3284,13 @@ impl App {
         let prefix = row.get(..2).unwrap_or(row);
         let body = row.get(2..).unwrap_or("");
         let fitted = tail(body, cols.saturating_sub(2));
-        self.palette.paint(Role::User, prefix) + &fitted.replace(CARET, "\x1b[7m \x1b[0m")
+        let tone = if self.yolo() { Role::Error } else { Role::User };
+        self.palette.paint(tone, prefix) + &fitted.replace(CARET, "\x1b[7m \x1b[0m")
+    }
+
+    /// Yolo is shown by colour alone: the prompt glyph and the rule.
+    fn yolo(&self) -> bool {
+        self.cfg.live_permissions() == crate::config::Permissions::Yolo
     }
 
     /// Row and byte column of the caret within the input.
@@ -4257,6 +4269,27 @@ mod tests {
         let frame = plain.frame(80, 20);
         assert!(frame.contains("▌ new title: "), "{frame:?}");
         assert!(!frame.contains("\x1b[38"), "colour with colour off: {frame:?}");
+    }
+
+    #[test]
+    fn yolo_paints_the_prompt_and_rule_in_the_error_colour() {
+        let mut a = colour_app();
+        let (tx, _rx) = channel();
+        let error = a.palette.paint(Role::Error, "> ");
+        let rule = a.palette.paint(Role::Error, &"─".repeat(80));
+        let normal = a.frame(80, 20);
+        assert!(!normal.contains(&error) && !normal.contains(&rule), "{normal:?}");
+        a.run_command("yolo", &tx);
+        let yolo = a.frame(80, 20);
+        assert!(yolo.contains(&error), "glyph: {yolo:?}");
+        assert!(yolo.contains(&rule), "rule: {yolo:?}");
+        a.run_command("yolo", &tx);
+        assert!(!a.frame(80, 20).contains(&error), "yolo colour stayed");
+
+        let mut plain = app();
+        let before = plain.frame(80, 20);
+        plain.cfg.set_permissions(crate::config::Permissions::Yolo);
+        assert_eq!(plain.frame(80, 20), before, "no-colour frame changed");
     }
 
     #[test]

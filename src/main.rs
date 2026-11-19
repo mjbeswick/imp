@@ -312,7 +312,10 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
     let mut stash: Vec<String> = Vec::new();
     loop {
         if tty {
-            print!("{}", cli.palette.paint(tui::Role::User, "> "));
+            // Yolo shows by colour alone.
+            let yolo = session.cfg.live_permissions() == config::Permissions::Yolo;
+            let tone = if yolo { tui::Role::Error } else { tui::Role::User };
+            print!("{}", cli.palette.paint(tone, "> "));
             out.flush().ok();
         }
         let line = match read_entry(&mut stdin.lock()).map_err(|e| e.to_string())? {
