@@ -1,6 +1,6 @@
 # Tasks
 
-- [ ] 1.1 Add provider profiles and key resolution. Parse `provider`, default base/model/key variable, `IMP_PROVIDER`, and `--provider`; resolve config, `IMP_API_KEY`, then the provider variable; name the missing variable on failure. Verify: each profile yields its endpoint and key, Ollama needs none, and a missing Anthropic key names `ANTHROPIC_API_KEY`.
+- [x] 1.1 Add provider profiles and key resolution. Parse `provider`, default base/model/key variable, `IMP_PROVIDER`, and `--provider`; resolve config, `IMP_API_KEY`, then the provider variable; name the missing variable on failure. Verify: each profile yields its endpoint and key, Ollama needs none, and a missing Anthropic key names `ANTHROPIC_API_KEY`.
 - [ ] 1.2 Introduce the adapter trait and move the existing OpenAI/DeepSeek path behind it. Endpoint, headers, body, and chunk parser become methods; DeepSeek-only fields come from capabilities. Verify: all existing stream fixtures still pass and the DeepSeek body is unchanged.
 - [ ] 1.3 Add the Anthropic adapter. Translate system messages, content blocks, tools, and tool results; parse its SSE events and map stop reasons. Verify: a text fixture, a tool fixture, and a thinking fixture each produce the expected events.
 - [ ] 1.4 Add the Gemini adapter. Build `contents`, `systemInstruction`, and function declarations; parse candidates, function calls, and usage metadata. Verify: text and function-call fixtures produce the expected events and token counts.

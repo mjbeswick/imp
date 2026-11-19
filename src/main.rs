@@ -9,6 +9,7 @@ mod jobs;
 mod perm;
 mod pricing;
 mod prompt;
+mod providers;
 mod render;
 mod store;
 mod theme;
@@ -68,6 +69,9 @@ fn run() -> Result<(), String> {
     while i < args.len() {
         match args[i].as_str() {
             "--model" => cfg.model = next(&args, &mut i, "--model")?,
+            "--provider" => {
+                cfg.set_provider(providers::Provider::parse(&next(&args, &mut i, "--provider")?)?)
+            }
             "--max-steps" => {
                 cfg.max_steps = config::parse_max_steps(&next(&args, &mut i, "--max-steps")?)?
             }
@@ -123,9 +127,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    if cfg.api_key.is_empty() {
-        return Err("DEEPSEEK_API_KEY is not set".into());
-    }
+    cfg.resolve_key_env(|k| std::env::var(k).ok())?;
 
     let existing = match &resume {
         Some(id) => store::Log::open(&sessions_dir, id),

@@ -1,5 +1,6 @@
 //! Configuration: plain `key=value` file, environment wins.
 
+use crate::providers::Provider;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +89,7 @@ impl ColorMode {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub provider: Provider,
     pub api_key: String,
     pub model: String,
     pub base_url: String,
@@ -105,10 +107,12 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let profile = Provider::DeepSeek.profile();
         Self {
+            provider: Provider::DeepSeek,
             api_key: String::new(),
-            model: "deepseek-flash".into(),
-            base_url: "https://api.deepseek.com".into(),
+            model: profile.model.into(),
+            base_url: profile.base_url.into(),
             permissions: Permissions::Normal,
             allow_sudo: false,
             prune_at: 45_000,
@@ -152,6 +156,7 @@ impl Config {
 
     fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
+            "provider" => self.set_provider(Provider::parse(value)?),
             "api_key" => self.api_key = value.to_string(),
             "model" => self.model = value.to_string(),
             "base_url" => self.base_url = value.trim_end_matches('/').to_string(),
@@ -171,10 +176,49 @@ impl Config {
         Ok(())
     }
 
+    /// Select a profile. Model and base URL left at the old profile's defaults
+    /// move with it; explicit values stay put.
+    pub fn set_provider(&mut self, next: Provider) {
+        let old = self.provider.profile();
+        if self.model == old.model {
+            self.model = next.profile().model.to_string();
+        }
+        if self.base_url == old.base_url {
+            self.base_url = next.profile().base_url.to_string();
+        }
+        self.provider = next;
+    }
+
+    /// Fill the key in order: config `api_key`, `IMP_API_KEY`, then the
+    /// provider's own variable. Providers that need none are left alone.
+    pub fn resolve_key_env(
+        &mut self,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<(), String> {
+        let filled = |v: String| !v.trim().is_empty();
+        if filled(self.api_key.clone()) {
+            return Ok(());
+        }
+        if let Some(v) = lookup("IMP_API_KEY").filter(|v| filled(v.clone())) {
+            self.api_key = v;
+            return Ok(());
+        }
+        match self.provider.profile().key_var {
+            Some(var) => match lookup(var).filter(|v| filled(v.clone())) {
+                Some(v) => {
+                    self.api_key = v;
+                    Ok(())
+                }
+                None => Err(format!("{var} is not set")),
+            },
+            None => Ok(()),
+        }
+    }
+
     pub fn apply_env(&mut self, lookup: impl Fn(&str) -> Option<String>) -> Result<(), String> {
         let set = |k: &str| lookup(k);
-        if let Some(v) = set("DEEPSEEK_API_KEY") {
-            self.api_key = v;
+        if let Some(v) = set("IMP_PROVIDER") {
+            self.set_provider(Provider::parse(&v)?);
         }
         if let Some(v) = set("IMP_MAX_STEPS") {
             self.max_steps = parse_max_steps(&v)?;
@@ -378,6 +422,100 @@ mod tests {
     fn base_url_trailing_slash_is_trimmed() {
         let cfg = Config::from_str("base_url=https://example.test/\n").unwrap();
         assert_eq!(cfg.base_url, "https://example.test");
+    }
+
+    #[test]
+    fn provider_profiles_supply_defaults() {
+        let openai = Config::from_str("provider=openai\n").unwrap();
+        assert_eq!(openai.provider, Provider::OpenAi);
+        assert_eq!(openai.base_url, "https://api.openai.com/v1");
+        assert_eq!(openai.model, "gpt-4.1-mini");
+
+        let anthropic = Config::from_str("provider=anthropic\n").unwrap();
+        assert_eq!(anthropic.base_url, "https://api.anthropic.com");
+
+        let gemini = Config::from_str("provider=gemini\n").unwrap();
+        assert_eq!(gemini.base_url, "https://generativelanguage.googleapis.com");
+
+        let ollama = Config::from_str("provider=ollama\n").unwrap();
+        assert_eq!(ollama.base_url, "http://localhost:11434/v1");
+        assert!(ollama.provider.profile().key_var.is_none());
+    }
+
+    #[test]
+    fn explicit_model_and_base_beat_the_profile() {
+        let cfg = Config::from_str(
+            "provider=openai\nmodel=mine\nbase_url=https://example.test/v1/\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.model, "mine");
+        assert_eq!(cfg.base_url, "https://example.test/v1");
+    }
+
+    #[test]
+    fn a_profile_switch_keeps_an_explicit_model() {
+        let mut cfg = Config::from_str("model=mine\n").unwrap();
+        cfg.set_provider(Provider::Ollama);
+        assert_eq!(cfg.model, "mine");
+        assert_eq!(cfg.base_url, "http://localhost:11434/v1");
+
+        let mut fresh = Config::default();
+        fresh.set_provider(Provider::Ollama);
+        assert_eq!(fresh.model, "llama3.2");
+    }
+
+    #[test]
+    fn imp_provider_env_selects_the_profile() {
+        let mut cfg = Config::default();
+        cfg.apply_env(env(&[("IMP_PROVIDER", "gemini")])).unwrap();
+        assert_eq!(cfg.provider, Provider::Gemini);
+        assert_eq!(cfg.model, "gemini-2.5-pro");
+        cfg.apply_env(env(&[("IMP_PROVIDER", "nowhere")]))
+            .expect_err("an unknown provider must be refused");
+    }
+
+    #[test]
+    fn key_order_is_config_then_imp_then_provider() {
+        let mut cfg = Config::from_str("api_key=from-config\n").unwrap();
+        cfg.resolve_key_env(env(&[
+            ("IMP_API_KEY", "from-imp"),
+            ("DEEPSEEK_API_KEY", "from-provider"),
+        ]))
+        .unwrap();
+        assert_eq!(cfg.api_key, "from-config");
+
+        let mut cfg = Config::default();
+        cfg.resolve_key_env(env(&[
+            ("IMP_API_KEY", "from-imp"),
+            ("DEEPSEEK_API_KEY", "from-provider"),
+        ]))
+        .unwrap();
+        assert_eq!(cfg.api_key, "from-imp");
+
+        let mut cfg = Config::default();
+        cfg.resolve_key_env(env(&[("DEEPSEEK_API_KEY", "from-provider")]))
+            .unwrap();
+        assert_eq!(cfg.api_key, "from-provider");
+    }
+
+    #[test]
+    fn a_missing_key_names_its_variable() {
+        let mut cfg = Config::from_str("provider=anthropic\n").unwrap();
+        let err = cfg.resolve_key_env(env(&[])).unwrap_err();
+        assert!(err.contains("ANTHROPIC_API_KEY"), "{err}");
+
+        let mut cfg = Config::from_str("provider=deepseek\n").unwrap();
+        let err = cfg.resolve_key_env(env(&[])).unwrap_err();
+        assert!(err.contains("DEEPSEEK_API_KEY"), "{err}");
+    }
+
+    #[test]
+    fn local_profiles_need_no_key() {
+        for name in ["ollama", "custom"] {
+            let mut cfg = Config::from_str(&format!("provider={name}\n")).unwrap();
+            cfg.resolve_key_env(env(&[])).unwrap();
+            assert!(cfg.api_key.is_empty());
+        }
     }
 
     #[test]
