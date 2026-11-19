@@ -3092,7 +3092,18 @@ impl App {
             let text = match pending {
                 Pending::Pick(_) => return None,
                 Pending::Confirm { what, .. } => {
-                    format!("{} y/N  ({}s)", verb(what), self.seconds_left())
+                    // A labelled row hides the command, so the question names it.
+                    let shown = self.tool.as_ref().is_none_or(|row| {
+                        let command = what.split('`').nth(1).unwrap_or(what);
+                        row.summary.contains(command)
+                    });
+                    let ask = if shown {
+                        verb(what).to_string()
+                    } else {
+                        // Leave room for the answer hint and the countdown.
+                        format!("{}?", fit(what, cols.saturating_sub(18)))
+                    };
+                    format!("{ask} y/N  ({}s)", self.seconds_left())
                 }
                 Pending::ConfirmDelete { id, title, .. } if title.is_empty() => {
                     format!("delete {id}? y/N")
@@ -4121,6 +4132,20 @@ mod tests {
             !a.frame(80, 12).contains('\u{7}'),
             "the same prompt rings twice"
         );
+    }
+
+    #[test]
+    fn a_labelled_call_names_its_command_when_confirming() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "count files".into(),
+            args: "{}".into(),
+        });
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm { what: "run `find . | wc -l`".into(), reply });
+        let frame = strip(&a.frame(80, 20));
+        assert!(frame.contains("run `find . | wc -l`? y/N"), "{frame:?}");
     }
 
     #[test]

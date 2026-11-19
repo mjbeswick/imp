@@ -44,7 +44,7 @@ pub enum Ui {
 
 pub fn schema() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."}},"required":["command"]}}}),
+        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."},"description":{"type":"string","description":"A few words on what it does, shown to the user instead of a long command."}},"required":["command"]}}}),
         json!({"type":"function","function":{"name":"job","description":"List background jobs, wait for one, or kill one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["list","wait","kill"]},"id":{"type":"integer"},"timeout_s":{"type":"integer","description":"For wait; up to 55 seconds."}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"read","description":"Read files with line numbers, or list a directory. Add several paths in one call.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"},"depth":{"type":"integer","description":"Directory levels, 1 to 3. Default 1."}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
@@ -1124,6 +1124,8 @@ pub fn describe(name: &str, args: &Value) -> String {
     let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
     let lines = |key: &str| text(key).lines().count();
     match name {
+        // A label reads better than a long pipeline; the command stays in Ctrl+O.
+        "bash" if !text("description").trim().is_empty() => flatten(text("description")),
         "bash" => format!("run `{}`", flatten(text("command"))),
         "job" => match args.get("id").and_then(Value::as_u64) {
             Some(id) => format!("job {} {id}", text("op")),
@@ -1383,6 +1385,12 @@ mod tests {
     fn tool_summaries_name_the_work() {
         let cases = [
             ("bash", json!({"command": "ls -la"}), "run `ls -la`"),
+            (
+                "bash",
+                json!({"command": "find . | wc -l", "description": "count files"}),
+                "count files",
+            ),
+            ("bash", json!({"command": "ls", "description": " "}), "run `ls`"),
             ("read", json!({"paths": ["a.rs", "b.rs"]}), "read a.rs, b.rs"),
             (
                 "write",
