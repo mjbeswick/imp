@@ -4293,7 +4293,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn ctrl_o_expands_the_last_tool_call() {
         let mut a = app();
         a.apply(Ev::ToolStart {
@@ -4366,6 +4365,7 @@ mod tests {
             "erase below runs after the status text: {row:?}"
         );
     }
+    #[test]
     fn composer_draws_one_row_per_line() {
         let mut a = app();
         a.input = "line one\nline two".into();
