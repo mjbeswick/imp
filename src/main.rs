@@ -54,7 +54,7 @@ fn run() -> Result<(), String> {
     }
 
     let mut cfg = config::Config::load(&config::Config::config_path())?;
-    let mut prompt: Option<String> = None;
+    let mut prompt_words: Vec<String> = Vec::new();
     let mut mode = "auto";
     let mut agent_name: Option<String> = None;
     let mut resume: Option<String> = None;
@@ -92,10 +92,12 @@ fn run() -> Result<(), String> {
             other if other.starts_with('-') && other.len() > 1 => {
                 return Err(format!("unknown option {other}"))
             }
-            other => prompt = Some(other.to_string()),
+            other => prompt_words.push(other.to_string()),
         }
         i += 1;
     }
+
+    let prompt = prompt_from(&prompt_words);
 
     let sessions_dir = config::dirs_state().join("imp").join("sessions");
     let launch = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -556,6 +558,14 @@ fn system_prompt(root: &std::path::Path, cfg: &config::Config) -> String {
     prompt::compose(root, cfg)
 }
 
+fn prompt_from(words: &[String]) -> Option<String> {
+    if words.is_empty() {
+        None
+    } else {
+        Some(words.join(" "))
+    }
+}
+
 fn next(args: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
     *i += 1;
     args.get(*i)
@@ -574,6 +584,16 @@ mod tests {
         assert!(!wants_chat("auto", false));
         assert!(wants_chat("chat", false));
         assert!(!wants_chat("cli", true));
+    }
+
+    #[test]
+    fn positional_words_join_into_one_prompt() {
+        let words = ["find", "the", "biggest", "file"].map(str::to_string);
+        assert_eq!(
+            prompt_from(&words).as_deref(),
+            Some("find the biggest file")
+        );
+        assert_eq!(prompt_from(&[]), None);
     }
 
     #[test]
