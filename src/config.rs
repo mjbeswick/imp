@@ -96,6 +96,7 @@ pub struct Config {
     pub prune_at: u32,
     pub compact_at: u32,
     pub max_tokens: u32,
+    pub max_steps: usize,
     pub thinking: bool,
     pub color: ColorMode,
     pub links: Links,
@@ -113,6 +114,7 @@ impl Default for Config {
             prune_at: 45_000,
             compact_at: 60_000,
             max_tokens: 8192,
+            max_steps: 24,
             thinking: false,
             color: ColorMode::Auto,
             links: Links::Auto,
@@ -158,6 +160,7 @@ impl Config {
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
             "max_tokens" => self.max_tokens = parse_u32(key, value)?,
+            "max_steps" => self.max_steps = parse_max_steps(value)?,
             "thinking" => self.thinking = parse_bool(value)?,
             "links" => self.links = Links::parse(value)?,
             "color" => self.color = ColorMode::parse(value)?,
@@ -172,6 +175,9 @@ impl Config {
         let set = |k: &str| lookup(k);
         if let Some(v) = set("DEEPSEEK_API_KEY") {
             self.api_key = v;
+        }
+        if let Some(v) = set("IMP_MAX_STEPS") {
+            self.max_steps = parse_max_steps(&v)?;
         }
         if let Some(v) = set("IMP_MODEL") {
             self.model = v;
@@ -273,6 +279,19 @@ fn parse_u32(key: &str, s: &str) -> Result<u32, String> {
         .map_err(|_| format!("{key} must be a number, got {s:?}"))
 }
 
+/// Parse the per-turn tool-step limit. Below 1 is refused; above 1000 is
+/// clamped.
+pub fn parse_max_steps(s: &str) -> Result<usize, String> {
+    let n: i64 = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("max_steps must be a number, got {s:?}"))?;
+    if n < 1 {
+        return Err("max_steps must be at least 1".into());
+    }
+    Ok((n as usize).min(1000))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +361,17 @@ mod tests {
         let mut cfg = Config::default();
         cfg.apply_env(env(&[("NO_COLOR", "1")])).unwrap();
         assert_eq!(cfg.color, ColorMode::Never);
+    }
+
+    #[test]
+    fn max_steps_parses_and_bounds() {
+        let cfg = Config::from_str("max_steps=5\n").unwrap();
+        assert_eq!(cfg.max_steps, 5);
+        assert!(Config::from_str("max_steps=0\n").is_err());
+        assert_eq!(parse_max_steps("5000").unwrap(), 1000);
+        let mut cfg = Config::default();
+        cfg.apply_env(env(&[("IMP_MAX_STEPS", "2")])).unwrap();
+        assert_eq!(cfg.max_steps, 2);
     }
 
     #[test]
