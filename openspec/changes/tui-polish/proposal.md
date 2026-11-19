@@ -14,8 +14,7 @@ one row, and the session list loses its columns when a title is long.
   `-c`, and the session picker. The picker title stops saying "after restart".
 - A dim rule separates the transcript from the composer. Each user turn after
   the first starts after one blank row.
-- An empty transcript shows one dim welcome row: name, directory, and the
-  `/` hint.
+- An empty transcript shows one dim welcome row: the name and the `/` hint.
 - The status line keeps the model first and adds the session directory,
   right-aligned, dropped first when the row is narrow.
 - Tool durations are dim and right-aligned: milliseconds under one second,

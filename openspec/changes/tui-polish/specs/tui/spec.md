@@ -4,7 +4,7 @@
 
 ### Requirement: The interface is one chat column
 
-The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL separate the transcript from the input area with one dim horizontal rule when the terminal has at least 8 rows, SHALL leave one blank row before every user entry except the first, SHALL show one dim welcome row naming the app, the session directory, and the `/` hint while the transcript is empty, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
+The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL separate the transcript from the input area with one dim horizontal rule when the terminal has at least 8 rows, SHALL leave one blank row before every user entry except the first, SHALL show one dim welcome row naming the app and the `/` hint while the transcript is empty, leaving the directory to the status line, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
 
 #### Scenario: Quiet layout
 - **WHEN** the session is idle and the transcript is empty

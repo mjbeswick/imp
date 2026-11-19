@@ -43,6 +43,7 @@
 - [x] 7.2 Narrow the value-command requirement: `/sessions` lists newest first with no current marker, and `/provider` subcommands run only in the chat. Verify: `openspec validate --all --strict` passes.
 - [x] 7.3 Restore the misplaced `#[test]` on the composer row test. Verify: `composer_draws_one_row_per_line` runs and passes.
 - [x] 7.4 Place a tool duration after the whole summary when the summary has several lines. Verify: a test with a two-line summary.
+- [ ] 7.5 Drop the directory from the welcome row; the status line already shows it. Verify: the empty-screen frame test finds `imp · / for commands` and the directory once.
 
 ## 6. Finish
 

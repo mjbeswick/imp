@@ -31,8 +31,8 @@
   thinking role. It is part of the composer block, so body height falls by one.
 - `frame` pushes one empty row before every user entry except the first.
 - When `entries` is empty, the bottom body row shows
-  ` imp · {root} · / for commands` in the thinking role, with `root` shortened
-  by `~` for the home directory and cut from the left when narrow.
+  `imp · / for commands` in the thinking role. The directory stays on the
+  status line only, so it is not shown twice.
 - Below 8 rows the rule is dropped so the transcript keeps space.
 
 ### Status line
