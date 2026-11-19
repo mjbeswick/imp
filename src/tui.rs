@@ -325,6 +325,8 @@ pub enum Key {
     Right,
     Home,
     End,
+    PageUp,
+    PageDown,
     Ctrl(char),
     Unknown,
 }
@@ -394,6 +396,11 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
                 b'H' => Key::Home,
                 b'F' => Key::End,
                 b'Z' => Key::BackTab,
+                b'~' => match params {
+                    b"5" => Key::PageUp,
+                    b"6" => Key::PageDown,
+                    _ => Key::Unknown,
+                },
                 b'u' => disambiguated(params),
                 _ => Key::Unknown,
             };
@@ -648,7 +655,11 @@ pub struct App {
     cursor: usize,
     history: Vec<String>,
     hist_pos: Option<usize>,
-    scroll: usize,
+    follow: bool,
+    top: usize,
+    body_rows: usize,
+    max_top: usize,
+    unseen: usize,
     menu_open: bool,
     menu_index: usize,
     pending: Option<Pending>,
@@ -717,7 +728,11 @@ impl App {
             cursor: 0,
             history,
             hist_pos: None,
-            scroll: 0,
+            follow: true,
+            top: 0,
+            body_rows: 1,
+            max_top: 0,
+            unseen: 0,
             menu_open: false,
             menu_index: 0,
             pending: None,
@@ -745,8 +760,17 @@ impl App {
             role,
             text: text.into(),
         });
-        self.scroll = 0;
         self.dirty = true;
+    }
+
+    /// Return to the newest row after the user has scrolled away.
+    fn follow_tail(&mut self) {
+        self.follow = true;
+        self.top = 0;
+    }
+
+    fn page(&self) -> usize {
+        self.body_rows.saturating_sub(1).max(1)
     }
 
     fn apply(&mut self, ev: Ev) {
@@ -954,15 +978,18 @@ impl App {
             }
             Key::Ctrl('l') => {
                 self.entries.clear();
+                self.follow_tail();
                 self.dirty = true;
             }
             Key::Char(c) => {
+                self.follow_tail();
                 self.input.insert(self.cursor, c);
                 self.cursor += c.len_utf8();
                 self.sync_menu();
             }
             Key::Backspace => {
                 if self.cursor > 0 {
+                    self.follow_tail();
                     let prev = previous_boundary(&self.input, self.cursor);
                     self.input.replace_range(prev..self.cursor, "");
                     self.cursor = prev;
@@ -989,6 +1016,18 @@ impl App {
             }
             Key::End => {
                 self.cursor = self.input.len();
+                self.dirty = true;
+            }
+            Key::PageUp => {
+                self.follow = false;
+                self.top = self.top.saturating_sub(self.page());
+                self.dirty = true;
+            }
+            Key::PageDown => {
+                self.top = self.top.saturating_add(self.page());
+                if self.top >= self.max_top {
+                    self.follow_tail();
+                }
                 self.dirty = true;
             }
             Key::Up => {
@@ -1044,6 +1083,7 @@ impl App {
             }
             Key::Enter => self.submit(tx),
             Key::Newline => {
+                self.follow_tail();
                 self.input.insert(self.cursor, '\n');
                 self.cursor += 1;
                 self.dirty = true;
@@ -1080,7 +1120,7 @@ impl App {
         self.cursor = 0;
         self.menu_open = false;
         self.hist_pos = None;
-        self.scroll = 0;
+        self.follow_tail();
 
         if let Some(cmd) = text.strip_prefix('/') {
             if !cmd.contains(' ') {
@@ -1407,7 +1447,7 @@ impl App {
     }
 
     /// One frame as bytes. No terminal access, so it can be tested.
-    pub fn frame(&self, cols: usize, rows: usize) -> String {
+    pub fn frame(&mut self, cols: usize, rows: usize) -> String {
         let menu = if self.menu_open { self.menu_matches() } else { Vec::new() };
         let menu_rows = menu.len().min(6);
         let composer = self.composer(cols, rows.saturating_sub(1 + menu_rows).max(1));
@@ -1440,9 +1480,16 @@ impl App {
         }
 
         let total = lines.len();
-        let scroll = self.scroll.min(total.saturating_sub(1));
-        let end = total.saturating_sub(scroll);
-        let start = end.saturating_sub(body_rows);
+        let max_top = total.saturating_sub(body_rows);
+        self.body_rows = body_rows;
+        self.max_top = max_top;
+        if self.follow {
+            self.top = max_top;
+        }
+        self.top = self.top.min(max_top);
+        self.unseen = total.saturating_sub(self.top + body_rows);
+        let start = self.top;
+        let end = (start + body_rows).min(total);
         let visible = &lines[start..end];
 
         let mut screen = String::from("\x1b[?7l\x1b[H");
@@ -1651,6 +1698,11 @@ impl App {
             "·".into()
         };
         let thinking = if self.cfg.thinking { " · think" } else { "" };
+        let unseen = if self.unseen > 0 {
+            format!(" · ↑ {}", self.unseen)
+        } else {
+            String::new()
+        };
         let money = crate::pricing::cost(
             &self.cfg.model,
             crate::pricing::now(),
@@ -1662,7 +1714,7 @@ impl App {
         .unwrap_or_default();
         fit(
             &format!(
-                " {spin} {} · {} tok{money}{thinking}",
+                " {spin} {} · {} tok{money}{unseen}{thinking}",
                 self.cfg.model,
                 compact_tokens(self.status.tokens),
             ),
@@ -2272,7 +2324,7 @@ mod tests {
 
     #[test]
     fn frame_shows_status_and_prompt() {
-        let a = app();
+        let mut a = app();
         let out = a.frame(100, 20);
         assert!(out.contains("deepseek-flash"));
         assert!(out.contains("> "));
@@ -2350,7 +2402,7 @@ mod tests {
 
     #[test]
     fn frame_clears_below_the_status_row_before_drawing_it() {
-        let a = app();
+        let mut a = app();
         let out = a.frame(40, 10);
         let row = &out[out.rfind("\x1b[2K").expect("status row")..];
         let erase = row.find("\x1b[J").expect("nothing clears below the status");
@@ -2608,16 +2660,79 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scroll_detaches_from_the_tail() {
+    fn long_app() -> App {
         let mut a = app();
         for i in 0..40 {
             a.push(Role::User, format!("line {i}"));
         }
+        a
+    }
+
+    #[test]
+    fn scroll_detaches_from_the_tail() {
+        let mut a = long_app();
+        let (tx, _cmds) = channel();
         let tail = a.frame(60, 8);
-        a.scroll = 10;
+        a.handle_key(Key::PageUp, &tx);
         let earlier = a.frame(60, 8);
-        assert_ne!(tail, earlier);
+        assert_ne!(tail, earlier, "PgUp drew the same rows");
+        assert!(!a.follow, "PgUp did not detach");
+        assert!(
+            a.status_line(120).contains("↑"),
+            "no unseen count: {}",
+            a.status_line(120)
+        );
+    }
+
+    #[test]
+    fn a_detached_view_holds_when_output_arrives() {
+        let mut a = long_app();
+        let (tx, _cmds) = channel();
+        a.frame(60, 8);
+        a.handle_key(Key::PageUp, &tx);
+        let before = a.frame(60, 8);
+        a.push(Role::User, "brand new line");
+        let after = a.frame(60, 8);
+        assert!(!after.contains("brand new line"), "view jumped to the tail");
+        assert!(before.contains("line 29"), "{before:?}");
+        assert!(after.contains("line 29"), "rows moved: {after:?}");
+        assert!(a.unseen > 5, "unseen count did not grow: {}", a.unseen);
+    }
+
+    #[test]
+    fn pgdn_at_the_newest_row_resumes_following() {
+        let mut a = long_app();
+        let (tx, _cmds) = channel();
+        a.frame(60, 8);
+        a.handle_key(Key::PageUp, &tx);
+        a.frame(60, 8);
+        a.handle_key(Key::PageDown, &tx);
+        let out = a.frame(60, 8);
+        assert!(a.follow, "PgDn did not resume following");
+        assert!(out.contains("line 39"), "newest row missing: {out:?}");
+        assert!(!a.status_line(120).contains("↑"));
+    }
+
+    #[test]
+    fn typing_resumes_following() {
+        let mut a = long_app();
+        let (tx, _cmds) = channel();
+        a.frame(60, 8);
+        a.handle_key(Key::PageUp, &tx);
+        a.handle_key(Key::Char('x'), &tx);
+        let out = a.frame(60, 8);
+        assert!(a.follow, "editing did not resume following");
+        assert!(out.contains("line 39"), "{out:?}");
+    }
+
+    #[test]
+    fn decodes_page_keys() {
+        let mut buf = b"\x1b[5~\x1b[6~".to_vec();
+        let keys = decode(&mut buf);
+        assert_eq!(keys.len(), 2);
+        assert!(matches!(keys[0], Key::PageUp));
+        assert!(matches!(keys[1], Key::PageDown));
+        assert!(buf.is_empty(), "page sequences leaked as text");
     }
 
     #[test]
