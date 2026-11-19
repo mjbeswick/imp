@@ -7,7 +7,7 @@ Defines the five built-in tools — shell, read, edit, write, search — their b
 
 ### Requirement: The tool set is small and shell-first
 
-The system SHALL expose exactly `bash`, `read`, `edit`, `write`, `search`, `job`, and `ask` as its tool set, SHALL NOT expose per-CLI tools such as `gh`, `docker`, `kubectl`, `git`, glob, grep, list, patch, or todo, and SHALL teach specific command-line tools through skills instead.
+The system SHALL expose `bash`, `read`, `edit`, `write`, `job`, and `ask` as its core tool set, SHALL expose `search` only when the active provider implements the search and fetch endpoints, SHALL NOT expose per-CLI tools such as `gh`, `docker`, `kubectl`, `git`, glob, grep, list, patch, or todo, and SHALL teach specific command-line tools through skills instead.
 
 #### Scenario: Default prompt
 - **WHEN** a session starts with memory and skills configured
@@ -20,6 +20,10 @@ The system SHALL expose exactly `bash`, `read`, `edit`, `write`, `search`, `job`
 #### Scenario: File discovery without a glob tool
 - **WHEN** the model needs to find files by pattern
 - **THEN** it uses `bash` and the task completes without a dedicated tool
+
+#### Scenario: No search capability
+- **WHEN** the provider has no search endpoints
+- **THEN** the tool list omits `search` and the prompt has no search line
 
 ### Requirement: Asking a yes/no question is one keystroke
 
