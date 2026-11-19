@@ -2971,11 +2971,8 @@ impl App {
         }
 
         if self.entries.is_empty() {
-            // A quiet hint until the first message: where, and how to begin.
-            let hint = " · / for commands";
-            let root = tail(&tilde(&self.root), cols.saturating_sub(6 + hint.len()));
-            let welcome = format!("imp · {root}{hint}");
-            lines.push((Role::Thinking, Line::Text(welcome)));
+            // A quiet hint until the first message. The status line says where.
+            lines.push((Role::Thinking, Line::Text("imp · / for commands".into())));
         }
 
         let total = lines.len();
@@ -4220,9 +4217,9 @@ mod tests {
     #[test]
     fn an_empty_transcript_shows_a_welcome_row() {
         let mut a = app();
-        let frame = strip(&a.frame(80, 24));
-        let want = format!("imp · {} · / for commands", tilde(&a.root));
-        assert!(frame.contains(&want), "{want} not in {frame:?}");
+        let frame = strip(&a.frame(120, 24));
+        assert!(frame.contains("imp · / for commands"), "{frame:?}");
+        assert_eq!(frame.matches(tilde(&a.root).as_str()).count(), 1, "{frame:?}");
         a.push(Role::User, "hello");
         assert!(!strip(&a.frame(80, 24)).contains("/ for commands"));
         let narrow = strip(&app().frame(30, 24));
