@@ -140,6 +140,15 @@ wins when set.
 Keys come from the provider's variable and are never written to the config by
 the agent.
 
+### Replies
+
+Replies render as markdown: headings, emphasis, inline and fenced code, lists,
+quotes, rules, links, and tables. Tables are drawn with box lines and shrink
+their widest columns to fit; a table that cannot fit shows each row as
+`header: value` lines. Line mode prints the markdown as written. Control
+characters and escape sequences from the model or a tool are removed before
+anything is shown.
+
 ### Mouse
 
 The chat captures the mouse wheel, so it scrolls the conversation rather than

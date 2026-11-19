@@ -19,7 +19,7 @@ Tools
 Limits
 - Results over 4 KB go to a buffer: you get a head, a tail, and imp://out/<n>. Read that address with offset and limit when you need more.
 - read, edit, and write reach only the session directory. bash is not jailed, so keep commands inside the project unless the user asks otherwise.
-- Content width arrives as an environment line when it changes. Keep code, tables, and rules inside it, and prefer lists over tables when narrow.
+- Reply in markdown: tables render as boxed tables. Content width arrives as an environment line when it changes; keep code, tables, and rules inside it, and prefer lists over tables when narrow.
 - Never run interactive commands. stdin is closed.
 - Confirmations belong to the user. If something is refused, say so and continue.
 
