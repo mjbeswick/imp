@@ -57,6 +57,23 @@ pub fn schema() -> Vec<Value> {
     ]
 }
 
+pub fn describe_agent(agent: &Agent, cfg: &Config) -> String {
+    let tools = agent
+        .tools
+        .as_ref()
+        .map(|t| t.join(", "))
+        .unwrap_or_else(|| "all".into());
+    let model = agent.model.as_deref().unwrap_or(&cfg.model);
+    let thinking = agent.thinking.unwrap_or(cfg.thinking);
+    format!(
+        "agent: {} · model {} · thinking {} · tools {}",
+        agent.name,
+        model,
+        if thinking { "on" } else { "off" },
+        tools
+    )
+}
+
 pub struct Session {
     pub cfg: Config,
     launch_permissions: Permissions,
@@ -1063,6 +1080,18 @@ mod tests {
             roster(),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         )
+    }
+
+    #[test]
+    fn describe_agent_names_model_thinking_and_tools() {
+        let mut agent = Agent::builtin();
+        agent.name = "reviewer".into();
+        agent.tools = Some(vec!["read".into(), "bash".into()]);
+        let text = describe_agent(&agent, &Config::default());
+        assert!(text.contains("agent: reviewer"), "{text}");
+        assert!(text.contains("model deepseek-flash"), "{text}");
+        assert!(text.contains("thinking off"), "{text}");
+        assert!(text.contains("tools read, bash"), "{text}");
     }
 
     #[test]

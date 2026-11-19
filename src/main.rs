@@ -355,10 +355,37 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     Ok(()) => println!("reloaded; prompt cache reset"),
                     Err(e) => eprintln!("imp: {e}"),
                 },
-                "agent" => {
-                    println!("agent: {}", session.agent.name);
-                    for a in &session.roster {
-                        println!("  {:<12} {}", a.name, a.description);
+                other if other == "agent" || other.starts_with("agent ") => {
+                    let rest = other.strip_prefix("agent").unwrap_or("").trim();
+                    match rest {
+                        "" => {
+                            println!("agent: {}", session.agent.name);
+                            for a in &session.roster {
+                                println!("  {:<12} {}", a.name, a.description);
+                            }
+                        }
+                        "current" => println!(
+                            "{}",
+                            agent::describe_agent(&session.agent, &session.cfg)
+                        ),
+                        name => {
+                            let found = session
+                                .roster
+                                .iter()
+                                .find(|a| a.name == name)
+                                .cloned();
+                            match found {
+                                Some(agent) => {
+                                    let applied = session.switch_agent(agent);
+                                    println!("agent: {applied}");
+                                }
+                                None => {
+                                    let names: Vec<String> =
+                                        session.roster.iter().map(|a| a.name.clone()).collect();
+                                    println!("no agent {name}; available: {}", names.join(", "));
+                                }
+                            }
+                        }
                     }
                 }
                 "sessions" => {

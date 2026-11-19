@@ -457,6 +457,7 @@ pub enum Cmd {
     Prompt(String),
     SetThinking(bool),
     SetAgent(String),
+    ShowAgent,
     SetRoot(std::path::PathBuf),
     Compact,
     Resume(String),
@@ -1196,15 +1197,26 @@ impl App {
         match cmd {
             "help" => self.push(Role::Info, crate::help::commands()),
             "quit" | "exit" => self.quit = true,
-            "agent" => {
-                let options = self.agents.clone();
-                self.pending = Some(Pending::Choose {
-                    title: "agent".into(),
-                    options,
-                    index: 0,
-                    action: ChooseKind::Agent,
-                });
-                self.dirty = true;
+            other if other == "agent" || other.starts_with("agent ") => {
+                let rest = other.strip_prefix("agent").unwrap_or("").trim();
+                match rest {
+                    "" => {
+                        let options = self.agents.clone();
+                        self.pending = Some(Pending::Choose {
+                            title: "agent".into(),
+                            options,
+                            index: 0,
+                            action: ChooseKind::Agent,
+                        });
+                        self.dirty = true;
+                    }
+                    "current" => {
+                        let _ = tx.send(Cmd::ShowAgent);
+                    }
+                    name => {
+                        let _ = tx.send(Cmd::SetAgent(name.to_string()));
+                    }
+                }
             }
             "yolo" => {
                 let _ = tx.send(Cmd::Yolo);
@@ -2013,8 +2025,19 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         let _ = ev_tx.send(Ev::Info(format!("agent: {applied}")));
                         let _ = &mut hooks;
                     } else {
-                        let _ = ev_tx.send(Ev::Error(format!("no agent {name}")));
+                        let names: Vec<String> =
+                            worker_session.roster.iter().map(|a| a.name.clone()).collect();
+                        let _ = ev_tx.send(Ev::Error(format!(
+                            "no agent {name}; available: {}",
+                            names.join(", ")
+                        )));
                     }
+                }
+                Ok(Cmd::ShowAgent) => {
+                    let _ = ev_tx.send(Ev::Info(crate::agent::describe_agent(
+                        &worker_session.agent,
+                        &worker_session.cfg,
+                    )));
                 }
                 Ok(Cmd::SetRoot(path)) => match worker_session.set_root(path.clone()) {
                     Ok(()) => {
@@ -2801,6 +2824,19 @@ mod tests {
 
         a.run_command("cd /nope/imp-missing", &tx);
         assert_eq!(a.entries.last().unwrap().role, Role::Error);
+    }
+
+    #[test]
+    fn agent_command_switches_by_name_and_reports_current() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("agent reviewer", &tx);
+        match rx.try_recv() {
+            Ok(Cmd::SetAgent(name)) => assert_eq!(name, "reviewer"),
+            _ => panic!("no direct switch"),
+        }
+        a.run_command("agent current", &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::ShowAgent)));
     }
 
     #[test]
