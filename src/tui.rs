@@ -671,6 +671,13 @@ enum Line {
     Spans(Vec<crate::render::Span>),
 }
 
+/// Animated frames for a running tool row.
+const SPINNER: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+
+fn spinner_frame(tick: usize) -> char {
+    SPINNER[tick % SPINNER.len()]
+}
+
 /// The tool call on screen: one row, updated in place when it finishes.
 struct ToolRow {
     index: usize,
@@ -683,6 +690,7 @@ struct ToolRow {
     detail_count: usize,
     ok: bool,
     ms: u128,
+    running: bool,
     expanded: bool,
 }
 
@@ -1207,9 +1215,11 @@ impl App {
                     detail_count: 0,
                     ok: true,
                     ms: 0,
+                    running: true,
                     expanded: false,
                 });
-                self.push(Role::Tool, format!("⠹ {summary}"))
+                let frame = spinner_frame(self.spinner);
+                self.push(Role::Tool, format!("{frame} {summary}"))
             }
             Ev::ToolEnd {
                 ok,
@@ -1223,6 +1233,7 @@ impl App {
                     Some(mut row) => {
                         row.ok = ok;
                         row.ms = ms;
+                        row.running = false;
                         row.output = output;
                         row.preview = preview;
                         row.detail = detail;
@@ -2485,9 +2496,23 @@ impl App {
         redraw || self.dirty
     }
 
-    /// The spinner advances at most ten times a second.
+    /// The spinner advances at most ten times a second while a tool runs.
     fn spinner_due(&self) -> bool {
-        self.status.streaming && self.last_redraw.elapsed() >= Duration::from_millis(100)
+        self.tool.as_ref().is_some_and(|row| row.running)
+            && self.last_redraw.elapsed() >= Duration::from_millis(100)
+    }
+
+    /// Advance the running row's glyph in place.
+    fn tick_spinner(&mut self) {
+        self.spinner += 1;
+        let frame = spinner_frame(self.spinner);
+        if let Some(row) = &self.tool {
+            if row.running {
+                if let Some(entry) = self.entries.get_mut(row.index) {
+                    entry.text = format!("{frame} {}", row.summary);
+                }
+            }
+        }
     }
 
     fn resized(&self, cols: usize, rows: usize) -> bool {
@@ -2846,12 +2871,6 @@ impl App {
         if self.input.starts_with('!') && !self.status.streaming {
             return fit(" shell · local · not sent to the model", cols);
         }
-        let spin = if self.status.streaming {
-            let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
-            frames[self.spinner % frames.len()].to_string()
-        } else {
-            "·".into()
-        };
         let thinking = if self.cfg.thinking { " · think" } else { "" };
         let unseen = if self.unseen > 0 {
             format!(" · ↑ {}", self.unseen)
@@ -2878,7 +2897,7 @@ impl App {
         };
         fit(
             &format!(
-                " {spin} {model} · {} tok{money}{unseen}{thinking}",
+                "{model} · {} tok{money}{unseen}{thinking}",
                 compact_tokens(self.status.tokens),
             ),
             cols,
@@ -3333,7 +3352,7 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                 // Ten frames a second is enough for a spinner. Repainting faster
                 // flickers under software terminal renderers.
                 if app.spinner_due() {
-                    app.spinner += 1;
+                    app.tick_spinner();
                     redraw = true;
                 }
             }
@@ -3969,12 +3988,51 @@ mod tests {
     fn the_spinner_runs_at_ten_frames_a_second() {
         let mut a = app();
         a.status.streaming = true;
+        a.last_redraw = Instant::now() - Duration::from_millis(101);
+        assert!(!a.spinner_due(), "a turn without a tool ticked the spinner");
+
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `sleep 1`".into(),
+            args: "{}".into(),
+        });
         a.last_redraw = Instant::now();
         assert!(!a.spinner_due(), "spinner ran faster than 100 ms");
         a.last_redraw = Instant::now() - Duration::from_millis(101);
         assert!(a.spinner_due(), "spinner stalled after 100 ms");
-        a.status.streaming = false;
-        assert!(!a.spinner_due(), "idle spinner still ticking");
+
+        let before = a.entries[0].text.clone();
+        a.tick_spinner();
+        assert_ne!(a.entries[0].text, before, "the row did not advance");
+        assert!(a.entries[0].text.starts_with(spinner_frame(a.spinner)));
+
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: "done".into(),
+            output: "done".into(),
+            detail: String::new(),
+            ms: 7,
+        });
+        assert!(!a.spinner_due(), "a finished tool kept ticking");
+    }
+
+    #[test]
+    fn the_status_line_has_no_spinner() {
+        let mut a = app();
+        a.status.streaming = true;
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `sleep 1`".into(),
+            args: "{}".into(),
+        });
+        let line = a.status_line(80);
+        for frame in SPINNER {
+            assert!(
+                !line.contains(frame),
+                "status line carried {frame:?}: {line:?}"
+            );
+        }
+        assert!(line.starts_with("deepseek-flash"), "{line:?}");
     }
 
     #[test]
@@ -4498,7 +4556,10 @@ mod tests {
             args: "{\"command\":\"false\"}".into(),
         });
         assert_eq!(a.entries.len(), 1, "a call should start as one row");
-        assert!(a.entries[0].text.contains("⠹"), "no spinner while running");
+        assert!(
+            a.entries[0].text.starts_with(spinner_frame(a.spinner)),
+            "no spinner while running"
+        );
         a.apply(Ev::ToolEnd {
             ok: false,
             preview: "exit 1".into(),
