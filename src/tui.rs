@@ -924,13 +924,19 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize) -> String 
             .max(10)
             + 2;
         let mut label = item.label.clone();
+        let mut desc = item.desc.clone();
         if picker.kind != PickKind::Command {
-            // The right column stays whole; the label gives way.
-            let desc = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
-            left = left.min(inner.saturating_sub(2 + 2 + desc)).max(4);
+            // The right column stays whole, one space off the wall; the
+            // label gives way.
+            let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+            left = left.min(inner.saturating_sub(2 + 2 + wide + 1)).max(4);
             label = fit(&label, left);
+            if picker.kind == PickKind::Session {
+                // Counts line up on their last digit.
+                desc = format!("{desc:>wide$}");
+            }
         }
-        format!("{marker} {label:<left$}  {}", item.desc)
+        format!("{marker} {label:<left$}  {desc}")
     } else {
         format!("{marker} {}", item.label)
     }
@@ -1717,11 +1723,14 @@ impl App {
             .unwrap_or(0);
         let mut options: Vec<PickItem> = crate::store::Log::list(&self.sessions_dir)
             .into_iter()
-            .map(|m| PickItem {
-                label: crate::store::format_session(&m, now),
-                value: m.id,
-                actions: Vec::new(),
-                desc: String::new(),
+            .map(|m| {
+                let (label, desc) = crate::store::session_row(&m, now);
+                PickItem {
+                    label,
+                    value: m.id,
+                    actions: Vec::new(),
+                    desc,
+                }
             })
             .collect();
         options.truncate(20);

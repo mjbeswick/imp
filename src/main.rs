@@ -113,9 +113,8 @@ fn run() -> Result<(), String> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        for m in store::Log::list(&sessions_dir) {
-            println!("{}", store::format_session(&m, now));
-        }
+        let metas = store::Log::list(&sessions_dir);
+        print!("{}", store::session_table(&metas, now, terminal_width()));
         return Ok(());
     }
     if let Some((id, title)) = rename {
@@ -409,9 +408,13 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     }
                 }
                 "sessions" => {
-                    for m in store::Log::list(&sessions_dir) {
-                        println!("{:<12} {:<40} {:>5} msgs", m.id, m.title, m.messages);
-                    }
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let mut metas = store::Log::list(sessions_dir);
+                    metas.truncate(20);
+                    print!("{}", store::session_table(&metas, now, terminal_width()));
                 }
                 "cwd" => println!("{}", session.tools.root.display()),
                 "fork" => match session.fork() {

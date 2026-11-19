@@ -685,7 +685,9 @@ pub fn slugify(title: &str) -> String {
 }
 
 /// One line for `--list` and the picker: id, age, title, messages.
-pub fn format_session(meta: &Meta, now_secs: u64) -> String {
+/// One session as a left part (id, age, one-line title) and a right part
+/// (message count). Every session list shares it.
+pub fn session_row(meta: &Meta, now_secs: u64) -> (String, String) {
     let age = now_secs.saturating_sub(meta.updated);
     let age = match age {
         0..=59 => format!("{age}s"),
@@ -693,13 +695,33 @@ pub fn format_session(meta: &Meta, now_secs: u64) -> String {
         3600..=86399 => format!("{}h", age / 3600),
         _ => format!("{}d", age / 86_400),
     };
-    format!(
-        "{:<10} {:<5} {:<40} {:>4} msgs",
-        meta.id,
-        age,
-        if meta.title.is_empty() { "(untitled)" } else { &meta.title },
-        meta.messages
+    let title = meta.title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = if title.is_empty() { "(untitled)".to_string() } else { title };
+    (
+        format!("{:<9}  {age:>3}  {title}", meta.id),
+        format!("{} msgs", meta.messages),
     )
+}
+
+/// Sessions as aligned text rows no wider than `width`: titles give way,
+/// counts stay whole and end in one column.
+pub fn session_table(metas: &[Meta], now_secs: u64, width: usize) -> String {
+    let rows: Vec<(String, String)> = metas.iter().map(|m| session_row(m, now_secs)).collect();
+    let right = rows.iter().map(|(_, r)| r.chars().count()).max().unwrap_or(0);
+    let longest = rows.iter().map(|(l, _)| l.chars().count()).max().unwrap_or(0);
+    let left = longest.min(width.saturating_sub(right + 2)).max(16);
+    let mut out = String::new();
+    for (l, r) in rows {
+        let l = if l.chars().count() > left {
+            let mut cut: String = l.chars().take(left - 1).collect();
+            cut.push('…');
+            cut
+        } else {
+            l
+        };
+        out.push_str(&format!("{l:<left$}  {r:>right$}\n"));
+    }
+    out
 }
 
 pub fn is_project(root: &Path) -> bool {
@@ -984,21 +1006,43 @@ mod session_tests {
         assert_eq!(loaded[0].content, "hello");
     }
 
-    #[test]
-    fn session_rows_show_age_and_messages() {
-        let meta = Meta {
-            id: "abc".into(),
-            title: "flaky test".into(),
+    fn meta(id: &str, title: &str, messages: u64) -> Meta {
+        Meta {
+            id: id.into(),
+            title: title.into(),
             cwd: "/tmp".into(),
             model: "m".into(),
-            messages: 7,
+            messages,
             updated: 1_000,
-        };
-        let row = format_session(&meta, 1_090);
-        assert!(row.contains("abc"));
-        assert!(row.contains("1m"), "{row}");
-        assert!(row.contains("flaky test"));
-        assert!(row.contains("7 msgs"));
+        }
+    }
+
+    #[test]
+    fn session_rows_show_age_and_messages() {
+        let (left, right) = session_row(&meta("abc", "flaky test", 7), 1_090);
+        assert!(left.starts_with("abc") && left.contains(" 1m  flaky test"), "{left}");
+        assert_eq!(right, "7 msgs");
+    }
+
+    #[test]
+    fn session_tables_align_counts_and_keep_one_line() {
+        let metas = [
+            meta("51280befc", "Rate my machine.", 13),
+            meta("51280ba80", &"a long title ".repeat(10), 67),
+            meta("51270a84e", "alpha\nbeta", 1),
+            meta("512706203", "", 0),
+        ];
+        let text = session_table(&metas, 1_090, 60);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 4, "{text}");
+        for line in &lines {
+            assert!(line.ends_with("msgs"), "{line}");
+            assert_eq!(line.chars().count(), lines[0].chars().count(), "{text}");
+            assert!(line.chars().count() <= 60, "{line}");
+        }
+        assert!(lines[1].contains('…') && lines[1].ends_with("67 msgs"), "{text}");
+        assert!(lines[2].contains("alpha beta"), "{text}");
+        assert!(lines[3].contains("(untitled)"), "{text}");
     }
 
     #[test]
