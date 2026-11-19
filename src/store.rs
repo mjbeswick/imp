@@ -143,10 +143,12 @@ pub fn builtin_skills() -> Vec<(String, String, String)> {
 
 /// Global, project, then extra roots; project entries shadow global by name.
 pub fn agent_dirs(cfg: &Config, root: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![root.join(".imp").join("agents")];
+    let mut dirs = Vec::new();
     if let Some(extra) = &cfg.skills_dir {
         dirs.push(extra.with_file_name("agents"));
     }
+    dirs.push(root.join(".agents").join("agents"));
+    dirs.push(root.join(".imp").join("agents"));
     dirs.push(dirs_config().join("imp").join("agents"));
     dirs
 }
@@ -198,6 +200,50 @@ mod tests {
         let root = Path::new("/tmp/project");
         let cfg = Config::default();
         assert!(agent_dirs(&cfg, root).contains(&root.join(".imp").join("agents")));
+    }
+
+    #[test]
+    fn dot_agents_skills_shadow_dot_imp() {
+        let root = tmp();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let write = |dir: &Path, desc: &str| {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                format!("---\nname: zz-shared\ndescription: {desc}\n---\nbody from {desc}\n"),
+            )
+            .unwrap();
+        };
+        write(&root.join(".imp/skills/zz-shared"), "imp");
+        write(&root.join(".agents/skills/zz-shared"), "agents");
+        std::fs::write(root.join(".agents/skills/.openspec-target"), "x").unwrap();
+
+        let cfg = Config::default();
+        let skills = load_skills(&cfg, &root);
+        let found = skills.iter().find(|s| s.name == "zz-shared").unwrap();
+        assert_eq!(found.description, "agents");
+        assert!(found.body.contains("body from agents"));
+    }
+
+    #[test]
+    fn dot_agents_profiles_are_loaded_first() {
+        let root = tmp();
+        std::fs::create_dir_all(root.join(".agents/agents")).unwrap();
+        std::fs::write(
+            root.join(".agents/agents/zz-agent.md"),
+            "# zz-agent\nagents body\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join(".imp/agents")).unwrap();
+        std::fs::write(root.join(".imp/agents/zz-agent.md"), "# zz-agent\nimp body\n")
+            .unwrap();
+
+        let cfg = Config::default();
+        let agents = load_agents(&cfg, &root);
+        let found = agents.iter().find(|a| a.name == "zz-agent").unwrap();
+        assert!(found.instructions.contains("agents body"));
+        let dirs = agent_dirs(&cfg, &root);
+        assert_eq!(dirs[0], root.join(".agents").join("agents"));
     }
 
     #[test]
@@ -622,6 +668,18 @@ pub struct Skill {
     pub path: Option<PathBuf>,
 }
 
+pub fn skill_dirs(cfg: &Config, root: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![crate::config::dirs_config().join("imp").join("skills")];
+    if is_project(root) {
+        dirs.push(root.join(".imp").join("skills"));
+        dirs.push(root.join(".agents").join("skills"));
+    }
+    if let Some(extra) = &cfg.skills_dir {
+        dirs.push(extra.clone());
+    }
+    dirs
+}
+
 pub fn load_skills(cfg: &Config, root: &Path) -> Vec<Skill> {
     let mut out: Vec<Skill> = builtin_skills()
         .into_iter()
@@ -633,20 +691,14 @@ pub fn load_skills(cfg: &Config, root: &Path) -> Vec<Skill> {
         })
         .collect();
 
-    let mut dirs = Vec::new();
-    if is_project(root) {
-        dirs.push(root.join(".imp").join("skills"));
-    }
-    if let Some(extra) = &cfg.skills_dir {
-        dirs.push(extra.clone());
-    }
-    dirs.push(crate::config::dirs_config().join("imp").join("skills"));
-
-    for dir in dirs {
+    for dir in skill_dirs(cfg, root) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for e in entries.flatten() {
+            if !e.path().is_dir() {
+                continue;
+            }
             let path = e.path().join("SKILL.md");
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
