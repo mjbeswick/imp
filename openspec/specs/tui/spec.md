@@ -475,7 +475,7 @@ The system SHALL open the picker overlay when the input begins with `/`, SHALL s
 
 ### Requirement: The interface uses colour with meaning
 
-The system SHALL colour by role rather than by text, SHALL use at least six roles — user prompt, assistant text, thinking, tool line, error, accent — SHALL paint inline code bold in the tool colour and keep fenced blocks and quotes dim, SHALL detect truecolor, 256-colour, and no-colour terminals, and SHALL honour `NO_COLOR` and a `color=auto|always|never` setting.
+The system SHALL colour by role rather than by text, SHALL paint inline code bold in the code colour and keep fenced blocks and quotes muted, SHALL detect truecolor, 256-colour, and no-colour terminals, and SHALL honour `NO_COLOR` and a `color=auto|always|never` setting.
 
 #### Scenario: Truecolor terminal
 - **WHEN** `COLORTERM` advertises truecolor
@@ -495,7 +495,7 @@ The system SHALL colour by role rather than by text, SHALL use at least six role
 
 #### Scenario: Inline code is not dim
 - **WHEN** a reply contains `` `bash` `` inside a sentence
-- **THEN** that span is bold in the tool colour, not the thinking grey
+- **THEN** that span is bold in the code colour, not the muted grey
 
 #### Scenario: Fenced code stays dim
 - **WHEN** a reply contains a fenced block
@@ -747,11 +747,11 @@ The system SHALL print a tool start row, then a finish row carrying `✓` or `�
 
 ### Requirement: Themes are selectable
 
-The system SHALL provide four built-in themes named `default`, `mono`, `solarized-dark`, and `gruvbox-dark`, SHALL apply the active theme to both front-ends, SHALL switch with `/theme <name>`, SHALL list the themes and mark the current one for `/theme` with no argument, SHALL reject an unknown name and list the valid ones, SHALL load the saved theme at startup, and SHALL save a switch in the state directory. `mono` SHALL force colour off.
+The system SHALL provide `default`, `default-light`, `solarized-dark`, `solarized-light`, `gruvbox-dark`, `gruvbox-light`, `catppuccin-mocha`, `catppuccin-latte`, `tokyo-night`, `nord`, and `mono`, SHALL apply the active theme to both front-ends, SHALL switch with `/theme <name>`, SHALL reject an unknown name and list the valid ones, and SHALL save a switch and load it at startup. `mono` SHALL force colour off.
 
 #### Scenario: List
 - **WHEN** the user runs `/theme`
-- **THEN** the four names appear with the active one marked
+- **THEN** the eleven names appear with the active one marked
 
 #### Scenario: Switch
 - **WHEN** the user runs `/theme gruvbox-dark`
@@ -763,15 +763,15 @@ The system SHALL provide four built-in themes named `default`, `mono`, `solarize
 
 #### Scenario: Unknown
 - **WHEN** the user runs `/theme neon`
-- **THEN** the transcript refuses it and lists the four names
+- **THEN** the transcript refuses it and lists the valid names
 
 #### Scenario: Persistence
-- **WHEN** the user switches to `solarized-dark` and restarts
-- **THEN** the session starts in `solarized-dark`
+- **WHEN** the user switches to `solarized-light` and restarts
+- **THEN** the session starts in `solarized-light`
 
 #### Scenario: Bad saved value
 - **WHEN** the state file names a theme that does not exist
-- **THEN** the session starts in `default`
+- **THEN** the session starts in `default` or `default-light` by the background guess
 
 ### Requirement: File changes show a diff
 
@@ -1122,3 +1122,31 @@ The system SHALL paint the composer prompt glyph and the rule above the composer
 #### Scenario: No colour
 - **WHEN** colour is off and the mode is `yolo`
 - **THEN** the frame is identical to the `normal` frame
+
+### Requirement: Eleven roles cover the screen
+
+The system SHALL give every theme eleven roles, `text`, `user`, `muted`, `border`, `accent`, `tool`, `success`, `error`, `code`, `link`, and `select`, SHALL paint rules and the picker frame in `border`, `✓` marks and added lines in `success`, `✗` marks and removed lines in `error`, links in `link`, and the highlighted picker row on the `select` background.
+
+#### Scenario: Picker highlight
+- **WHEN** a picker is open in a colour terminal
+- **THEN** the highlighted row has the `select` background across the inner width
+
+#### Scenario: Marks
+- **WHEN** a tool call succeeds
+- **THEN** its `✓` is bold in the success colour and the summary is in the tool colour
+
+### Requirement: The default follows the terminal background
+
+The system SHALL, when no theme is saved, choose `default-light` for a light terminal background and `default` otherwise, SHALL read `COLORFGBG` first, SHALL then ask the chat's terminal with OSC 11 and wait at most 100 ms, and SHALL treat no answer as dark.
+
+#### Scenario: Light terminal
+- **WHEN** no theme is saved and the terminal reports a white background
+- **THEN** the session starts in `default-light`
+
+#### Scenario: Silent terminal
+- **WHEN** no theme is saved and the terminal does not answer within 100 ms
+- **THEN** the session starts in `default` without delay beyond that limit
+
+#### Scenario: Saved choice wins
+- **WHEN** a theme is saved
+- **THEN** no query is sent and the saved theme is used
