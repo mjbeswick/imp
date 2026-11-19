@@ -19,7 +19,7 @@ const READ_LINES: usize = 2000;
 const READ_BYTES: usize = 200 * 1024;
 const DIR_ENTRIES: usize = 200;
 const LIST_BYTES: usize = 3500;
-const IGNORE: &[&str] = &[".git", ".jj", "target", "node_modules", "dist", "build", ".venv"];
+pub(crate) const IGNORE: &[&str] = &[".git", ".jj", "target", "node_modules", "dist", "build", ".venv"];
 
 extern "C" {
     fn setpgid(pid: c_int, pgid: c_int) -> c_int;

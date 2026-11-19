@@ -754,6 +754,7 @@ enum PickKind {
     Agent,
     Session,
     Verbosity,
+    Dir,
 }
 
 #[derive(Clone)]
@@ -770,6 +771,8 @@ struct Picker {
     index: usize,
     offset: usize,
     kind: PickKind,
+    current: std::path::PathBuf,
+    root: std::path::PathBuf,
 }
 
 /// Rows the picker shows at once. Paging moves by the same amount.
@@ -784,7 +787,50 @@ impl Picker {
             index: 0,
             offset: 0,
             kind,
+            current: std::path::PathBuf::new(),
+            root: std::path::PathBuf::new(),
         }
+    }
+
+    /// A browser start at the session root, never above it.
+    fn browse(title: impl Into<String>, kind: PickKind, root: &std::path::Path) -> Self {
+        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let mut picker = Self::new(title, Vec::new(), kind);
+        picker.current = root.clone();
+        picker.root = root;
+        picker.reload();
+        picker
+    }
+
+    fn reload(&mut self) {
+        self.items = match self.kind {
+            PickKind::Dir => browse_items(&self.current, &self.root, false),
+            _ => Vec::new(),
+        };
+        self.filter.clear();
+        self.reset();
+    }
+
+    /// Move one directory up, stopping at the session root.
+    fn parent(&mut self) -> bool {
+        if self.current == self.root {
+            return false;
+        }
+        let Some(parent) = self.current.parent() else {
+            self.current = self.root.clone();
+            self.reload();
+            return true;
+        };
+        let parent = parent
+            .canonicalize()
+            .unwrap_or_else(|_| parent.to_path_buf());
+        self.current = if parent.starts_with(&self.root) {
+            parent
+        } else {
+            self.root.clone()
+        };
+        self.reload();
+        true
     }
 
     /// Indices of the items matching the filter, in list order.
@@ -836,6 +882,52 @@ impl Picker {
         self.filter.pop();
         self.reset();
     }
+}
+
+/// Directories under `dir`, or directories plus image files when `images`.
+///
+/// Paths are canonicalised and must stay under the session root, so a symlink
+/// cannot lead the browser outside it.
+fn browse_items(dir: &std::path::Path, root: &std::path::Path, images: bool) -> Vec<PickItem> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if crate::tools::IGNORE.contains(&name.as_str()) {
+            continue;
+        }
+        let Ok(path) = entry.path().canonicalize() else {
+            continue;
+        };
+        if !path.starts_with(root) {
+            continue;
+        }
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            out.push(PickItem {
+                label: format!("{name}/"),
+                value: path.display().to_string(),
+            });
+        } else if images && is_image_name(&name) {
+            out.push(PickItem {
+                label: name,
+                value: path.display().to_string(),
+            });
+        }
+    }
+    out.sort_by_cached_key(|item| item.label.to_lowercase());
+    out
+}
+
+fn is_image_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
 }
 
 struct Status {
@@ -1492,7 +1584,12 @@ impl App {
             other if other == "cd" || other.starts_with("cd ") => {
                 let raw = other[2..].trim();
                 if raw.is_empty() {
-                    self.push(Role::Info, "cd <path>");
+                    self.pending = Some(Pending::Pick(Picker::browse(
+                        "cd",
+                        PickKind::Dir,
+                        &self.root,
+                    )));
+                    self.dirty = true;
                 } else {
                     match crate::config::resolve_root(Some(raw), &self.root) {
                         Ok(path) => {
@@ -1620,6 +1717,23 @@ impl App {
                         return;
                     }
                     Key::Char(c) => picker.filter_push(c),
+                    Key::Tab if picker.kind == PickKind::Dir => {
+                        if let Some(choice) = picker.selected().cloned() {
+                            if choice.label.ends_with('/') {
+                                // The typed command keeps the existing jail and
+                                // root-change logic in one place.
+                                self.run_command(&format!("cd {}", choice.value), tx);
+                                self.dirty = true;
+                                return;
+                            }
+                        }
+                        self.pending = Some(Pending::Pick(picker));
+                        self.dirty = true;
+                        return;
+                    }
+                    Key::Left if picker.kind == PickKind::Dir => {
+                        picker.parent();
+                    }
                     Key::Enter => {
                         if let Some(choice) = picker.selected().cloned() {
                             match picker.kind {
@@ -1636,6 +1750,16 @@ impl App {
                                 PickKind::Verbosity => {
                                     self.verbose = choice.value == "high";
                                     self.push(Role::Info, format!("verbosity: {}", choice.value));
+                                }
+                                PickKind::Dir => {
+                                    if choice.label.ends_with('/') {
+                                        picker.current =
+                                            std::path::PathBuf::from(&choice.value);
+                                        picker.reload();
+                                        self.pending = Some(Pending::Pick(picker));
+                                        self.dirty = true;
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -2660,15 +2784,30 @@ mod tests {
     }
 
     fn app() -> App {
+        app_at(std::env::temp_dir())
+    }
+
+    fn app_at(root: std::path::PathBuf) -> App {
         let mut cfg = Config::default();
         cfg.color = ColorMode::Never;
         App::new(
             cfg,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
-            std::env::temp_dir(),
+            root,
             "default".into(),
         )
+    }
+
+    /// A unique empty directory for a browser fixture.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "imp-picker-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
     }
 
     fn colour_app() -> App {
@@ -3177,7 +3316,16 @@ mod tests {
         );
 
         a.run_command("cd", &tx);
-        assert_eq!(a.entries.last().unwrap().text, "cd <path>");
+        assert_eq!(
+            open_picker(&a).kind,
+            PickKind::Dir,
+            "bare cd opened no browser"
+        );
+        let (tx, rx) = channel();
+        a.run_command("cd", &tx);
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.pending.is_none(), "Esc left the browser open");
+        assert!(rx.try_recv().is_err(), "Esc changed the root");
 
         a.run_command("cd .", &tx);
         match rx.try_recv() {
@@ -3198,6 +3346,64 @@ mod tests {
 
         a.run_command("cd /nope/imp-missing", &tx);
         assert_eq!(a.entries.last().unwrap().role, Role::Error);
+    }
+
+    fn highlight(a: &mut App, tx: &Sender<Cmd>, label: &str) {
+        let at = {
+            let picker = open_picker(a);
+            picker
+                .matches()
+                .iter()
+                .position(|&i| picker.items[i].label == label)
+                .unwrap_or_else(|| panic!("no row {label:?}"))
+        };
+        for _ in 0..at {
+            a.handle_key(Key::Down, tx);
+        }
+    }
+
+    #[test]
+    fn directory_browser_navigates_selects_and_stops_at_the_root() {
+        let root = scratch("dir");
+        std::fs::create_dir_all(root.join("src").join("nested")).unwrap();
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::write(root.join("notes.txt"), "x").unwrap();
+
+        let mut a = app_at(root.clone());
+        let (tx, rx) = channel();
+        a.run_command("cd", &tx);
+        {
+            let picker = open_picker(&a);
+            let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
+            assert!(labels.contains(&"src/"), "{labels:?}");
+            assert!(labels.contains(&"docs/"), "{labels:?}");
+            assert!(!labels.contains(&"notes.txt"), "a file was listed");
+        }
+
+        highlight(&mut a, &tx, "src/");
+        a.handle_key(Key::Enter, &tx);
+        {
+            let picker = open_picker(&a);
+            assert_eq!(picker.current, root.join("src"), "Enter did not navigate");
+            assert!(picker.items.iter().any(|i| i.label == "nested/"));
+            assert!(!picker.items.iter().any(|i| i.label == "docs/"));
+        }
+        assert_eq!(a.root, root, "Enter changed the session root");
+
+        a.handle_key(Key::Left, &tx);
+        assert_eq!(open_picker(&a).current, root, "Left did not go up");
+        a.handle_key(Key::Left, &tx);
+        assert_eq!(open_picker(&a).current, root, "Left passed the root");
+        assert!(rx.try_recv().is_err(), "navigating changed the root");
+
+        highlight(&mut a, &tx, "src/");
+        a.handle_key(Key::Tab, &tx);
+        match rx.try_recv() {
+            Ok(Cmd::SetRoot(path)) => assert_eq!(path, root.join("src")),
+            _ => panic!("Tab did not select the directory"),
+        }
+        assert!(a.pending.is_none(), "Tab left the browser open");
+        assert_eq!(a.root, root, "the root moved before the worker replied");
     }
 
     #[test]
