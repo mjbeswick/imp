@@ -173,6 +173,76 @@ pub struct Caps {
     pub reasoning: bool,
 }
 
+/// A curated list for the picker before a fetch answers, and after a failure.
+pub fn catalog(provider: Provider) -> Vec<String> {
+    let names: &[&str] = match provider {
+        Provider::DeepSeek => &["deepseek-flash", "deepseek-chat", "deepseek-reasoner"],
+        Provider::OpenAi => &[
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "o3",
+            "o4-mini",
+        ],
+        Provider::Anthropic => &["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+        Provider::Gemini => &["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+        Provider::Ollama => &["llama3.2", "qwen2.5-coder", "mistral"],
+        Provider::Custom => &[],
+    };
+    names.iter().map(|name| name.to_string()).collect()
+}
+
+/// The provider's model list, fetched with a short timeout.
+pub fn list_models(provider: Provider, base_url: &str, key: &str) -> Result<Vec<String>, String> {
+    let base = base_url.trim_end_matches('/');
+    let (url, headers) = match provider {
+        Provider::Anthropic => (
+            format!("{base}/v1/models"),
+            vec![
+                format!("x-api-key: {key}"),
+                "anthropic-version: 2023-06-01".to_string(),
+            ],
+        ),
+        Provider::Gemini => (
+            format!("{base}/v1beta/models"),
+            vec![format!("x-goog-api-key: {key}")],
+        ),
+        _ => (
+            format!("{base}/models"),
+            vec![format!("Authorization: Bearer {key}")],
+        ),
+    };
+    let refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let (status, body) = crate::http::get(&url, &refs, 5_000)?;
+    if !(200..300).contains(&status) {
+        return Err(format!("models: HTTP {status}"));
+    }
+    parse_models(provider, &body)
+}
+
+/// Read one provider's model document.
+pub fn parse_models(provider: Provider, body: &str) -> Result<Vec<String>, String> {
+    let value: Value = serde_json::from_str(body).map_err(|e| format!("models: {e}"))?;
+    let mut out = Vec::new();
+    if provider == Provider::Gemini {
+        for model in value["models"].as_array().into_iter().flatten() {
+            if let Some(name) = model["name"].as_str() {
+                out.push(name.trim_start_matches("models/").to_string());
+            }
+        }
+    } else {
+        for model in value["data"].as_array().into_iter().flatten() {
+            if let Some(id) = model["id"].as_str() {
+                out.push(id.to_string());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +288,47 @@ mod tests {
             Provider::DeepSeek.profile().key_var,
             Some("DEEPSEEK_API_KEY")
         );
+    }
+
+    #[test]
+    fn catalog_names_are_unique_and_known() {
+        for provider in [
+            Provider::DeepSeek,
+            Provider::OpenAi,
+            Provider::Anthropic,
+            Provider::Gemini,
+            Provider::Ollama,
+        ] {
+            let names = catalog(provider);
+            assert!(!names.is_empty(), "{provider:?} has no catalog");
+            let mut sorted = names.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(sorted.len(), names.len(), "{provider:?} repeats a name");
+        }
+        assert!(catalog(Provider::Custom).is_empty());
+    }
+
+    #[test]
+    fn openai_shaped_model_lists_parse() {
+        let body = r#"{"data":[{"id":"gpt-b"},{"id":"gpt-a"},{"id":"gpt-a"}]}"#;
+        let names = parse_models(Provider::OpenAi, body).unwrap();
+        assert_eq!(names, vec!["gpt-a", "gpt-b"]);
+        let names = parse_models(Provider::Anthropic, body).unwrap();
+        assert_eq!(names, vec!["gpt-a", "gpt-b"]);
+    }
+
+    #[test]
+    fn gemini_model_names_lose_their_prefix() {
+        let body = r#"{"models":[{"name":"models/gemini-b"},{"name":"models/gemini-a"}]}"#;
+        assert_eq!(
+            parse_models(Provider::Gemini, body).unwrap(),
+            vec!["gemini-a", "gemini-b"]
+        );
+    }
+
+    #[test]
+    fn a_bad_model_document_is_an_error() {
+        assert!(parse_models(Provider::OpenAi, "not json").is_err());
     }
 }

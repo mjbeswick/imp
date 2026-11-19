@@ -81,8 +81,10 @@ highlighted image.
 10 MB to the next message.
 
 `/shell` hands the terminal to `$SHELL` and redraws the chat when it exits.
-`/model <name>` sets the session model; bare `/model` offers the current model,
-the provider default, and recent choices. Nothing is written to the config.
+`/model <name>` sets the session model; bare `/model` lists the provider's
+models, fetched live with a built-in catalog as the immediate and fallback
+list, plus the current model, the provider default, and recent choices.
+Nothing is written to the config.
 
 `/provider` lists built-in and custom profiles. `add <name>`, `edit <name>`,
 `delete <name>`, and `use <name>` manage custom profiles in a managed

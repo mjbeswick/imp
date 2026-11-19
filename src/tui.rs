@@ -479,6 +479,7 @@ pub enum Cmd {
     SetThinking(bool),
     SetAgent(String),
     SetModel(String),
+    ListModels,
     ShowAgent,
     Fork,
     Shell,
@@ -520,6 +521,7 @@ pub enum Ev {
     },
     Info(String),
     Error(String),
+    Models(Vec<String>),
     Usage {
         tokens: u64,
         hit: u64,
@@ -757,6 +759,8 @@ pub struct App {
     config_path: std::path::PathBuf,
     /// Where recently chosen models are remembered.
     models_path: std::path::PathBuf,
+    /// The provider's models, catalog first and then whatever it reported.
+    available_models: Vec<String>,
     /// Messages parked for this session, never persisted.
     stash: Vec<String>,
     bell_pending: bool,
@@ -1137,6 +1141,7 @@ impl App {
         agent: String,
     ) -> Self {
         let palette = Palette::detect(&cfg);
+        let provider = cfg.provider;
         let history = load_history();
         let agents = crate::store::load_agents(&cfg, &root)
             .into_iter()
@@ -1162,6 +1167,7 @@ impl App {
             pending_since: None,
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
+            available_models: crate::providers::catalog(provider),
             stash: Vec::new(),
             bell_pending: false,
             status: Status {
@@ -1300,6 +1306,21 @@ impl App {
             Ev::Error(t) => self.push(Role::Error, t),
             Ev::Root(path) => {
                 self.root = path;
+                self.dirty = true;
+            }
+            Ev::Models(models) => {
+                self.available_models = models;
+                let model_picker = matches!(
+                    &self.pending,
+                    Some(Pending::Pick(picker)) if picker.kind == PickKind::Model
+                );
+                if model_picker {
+                    let items = self.model_items();
+                    if let Some(Pending::Pick(picker)) = &mut self.pending {
+                        picker.items = items;
+                        picker.reset();
+                    }
+                }
                 self.dirty = true;
             }
             Ev::Usage {
@@ -1552,6 +1573,7 @@ impl App {
         let current = self.cfg.model.clone();
         let default = self.cfg.provider.profile().model.to_string();
         let mut names = vec![current.clone(), default.clone()];
+        names.extend(self.available_models.iter().cloned());
         names.extend(load_models(&self.models_path));
         let mut seen: Vec<String> = Vec::new();
         let mut items = Vec::new();
@@ -2019,6 +2041,9 @@ impl App {
             )
         };
         self.cfg.set_active(name)?;
+        self.available_models = crate::providers::Provider::parse(&dialect)
+            .map(crate::providers::catalog)
+            .unwrap_or_default();
         let _ = tx.send(Cmd::UseProvider {
             name: name.to_string(),
             dialect,
@@ -2255,6 +2280,7 @@ impl App {
                         items,
                         PickKind::Model,
                     )));
+                    let _ = tx.send(Cmd::ListModels);
                     self.dirty = true;
                 } else {
                     self.set_model(rest, tx);
@@ -3474,6 +3500,15 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
                         worker_session.history.push(m);
                     }
                 }
+                Ok(Cmd::ListModels) => {
+                    let provider = worker_session.cfg.provider;
+                    let base = worker_session.cfg.base_url.clone();
+                    let key = worker_session.cfg.api_key.clone();
+                    let models =
+                        crate::providers::list_models(provider, &base, &key)
+                            .unwrap_or_else(|_| crate::providers::catalog(provider));
+                    let _ = ev_tx.send(Ev::Models(models));
+                }
                 Ok(Cmd::SetModel(name)) => worker_session.cfg.model = name,
                 Ok(Cmd::Shell) => {
                     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
@@ -4297,6 +4332,51 @@ mod tests {
         assert_eq!(labels[0], "other  (current)");
         assert_eq!(labels[1], "deepseek-flash  (default)");
         assert!(labels.contains(&"deepseek-v4-pro"), "{labels:?}");
+    }
+
+    #[test]
+    fn the_model_picker_lists_the_provider_catalog() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("model", &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::ListModels)));
+        let picker = open_picker(&a);
+        let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.len() >= 3, "only {} model rows", labels.len());
+        assert!(labels.contains(&"deepseek-chat"), "{labels:?}");
+        assert!(labels.contains(&"deepseek-reasoner"), "{labels:?}");
+    }
+
+    #[test]
+    fn a_live_model_list_replaces_the_catalog_rows() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.run_command("model", &tx);
+        if let Some(Pending::Pick(picker)) = &mut a.pending {
+            picker.filter = "be".into();
+        }
+        a.apply(Ev::Models(vec!["alpha".into(), "beta".into()]));
+        let picker = open_picker(&a);
+        let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"alpha"), "{labels:?}");
+        assert!(labels.contains(&"beta"), "{labels:?}");
+        assert!(!labels.contains(&"deepseek-chat"), "catalog row stayed: {labels:?}");
+        assert_eq!(picker.filter, "be", "the filter was lost");
+    }
+
+    #[test]
+    fn switching_provider_swaps_the_model_catalog() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.run_command("provider use openai", &tx);
+        assert!(a.available_models.iter().any(|m| m == "gpt-4.1"));
+        a.run_command("model", &tx);
+        let labels: Vec<&str> = open_picker(&a)
+            .items
+            .iter()
+            .map(|i| i.label.as_str())
+            .collect();
+        assert!(labels.iter().any(|l| l.starts_with("gpt-4.1")), "{labels:?}");
     }
 
     #[test]

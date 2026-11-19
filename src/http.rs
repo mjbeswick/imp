@@ -57,6 +57,29 @@ pub fn post_stream<F>(
     url: &str,
     headers: &[&str],
     body: &[u8],
+    on_chunk: F,
+) -> Result<Response, String>
+where
+    F: FnMut(&[u8]),
+{
+    request_stream(url, headers, Some(body), 600_000, on_chunk)
+}
+
+/// One GET, collecting the body. Used for small JSON documents such as a
+/// provider's model list.
+pub fn get(url: &str, headers: &[&str], timeout_ms: u64) -> Result<(u16, String), String> {
+    let mut body = Vec::new();
+    let response = request_stream(url, headers, None, timeout_ms, |chunk| {
+        body.extend_from_slice(chunk);
+    })?;
+    Ok((response.status, String::from_utf8_lossy(&body).into_owned()))
+}
+
+fn request_stream<F>(
+    url: &str,
+    headers: &[&str],
+    body: Option<&[u8]>,
+    timeout_ms: u64,
     mut on_chunk: F,
 ) -> Result<Response, String>
 where
@@ -93,10 +116,12 @@ where
         setopt_ptr(handle, CURLOPT_WRITEFUNCTION, write_cb::<F> as *const c_void);
         setopt_ptr(handle, CURLOPT_WRITEDATA, userdata);
         setopt_ptr(handle, CURLOPT_HTTPHEADER, slist as *const c_void);
-        setopt_long(handle, CURLOPT_POST, 1);
-        setopt_ptr(handle, CURLOPT_POSTFIELDS, body.as_ptr() as *const c_void);
-        setopt_long(handle, CURLOPT_POSTFIELDSIZE, body.len() as c_long);
-        setopt_long(handle, CURLOPT_TIMEOUT_MS, 600_000);
+        if let Some(body) = body {
+            setopt_long(handle, CURLOPT_POST, 1);
+            setopt_ptr(handle, CURLOPT_POSTFIELDS, body.as_ptr() as *const c_void);
+            setopt_long(handle, CURLOPT_POSTFIELDSIZE, body.len() as c_long);
+        }
+        setopt_long(handle, CURLOPT_TIMEOUT_MS, timeout_ms as c_long);
         setopt_long(handle, CURLOPT_CONNECTTIMEOUT_MS, 15_000);
         setopt_long(handle, CURLOPT_NOSIGNAL, 1);
         setopt_str(handle, CURLOPT_USERAGENT, agent.as_ptr());
@@ -105,11 +130,7 @@ where
 
         let code = curl_easy_perform(handle);
         let mut status: c_long = 0;
-        curl_easy_getinfo(
-            handle,
-            CURLINFO_RESPONSE_CODE,
-            &mut status as *mut c_long,
-        );
+        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &mut status as *mut c_long);
 
         curl_slist_free_all(slist);
         curl_easy_cleanup(handle);
