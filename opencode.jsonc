@@ -9,7 +9,16 @@
     { "action": "edit", "resource": "openspec/changes/**/specs/**", "effect": "ask" },
     { "action": "shell", "resource": "git push *", "effect": "deny" },
     { "action": "shell", "resource": "cargo publish *", "effect": "deny" },
-    { "action": "shell", "resource": "rm -rf *", "effect": "deny" }
+    { "action": "shell", "resource": "rm -rf *", "effect": "deny" },
+
+    // Workspace cleanup for the OpenSpec jj workflow. Shell patterns are raw
+    // command text, so the `~` and absolute forms each need a rule.
+    { "action": "shell", "resource": "rm -rf ~/Projects/.workspaces/*", "effect": "allow" },
+    { "action": "shell", "resource": "rm -rf /Users/michael/Projects/.workspaces/*", "effect": "allow" },
+
+    // Keep the state files and traversal out of the allow above.
+    { "action": "shell", "resource": "rm -rf */.workspaces/.apply-state*", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf *..*", "effect": "deny" }
   ],
 
   "agents": {
