@@ -768,7 +768,17 @@ impl Session {
                         Err(e) => (false, format!("refused: could not start job: {e}")),
                     };
                 }
-                let o = self.tools.bash(cmd, &self.cancel);
+                let o = self.tools.bash_handover(cmd, &self.cancel);
+                if let Some(h) = self.tools.handover.take() {
+                    // Too slow to wait for: it carries on as a job, nothing reruns.
+                    let log = h.log.display().to_string();
+                    let id = self.jobs.adopt(&h.command, h.child, h.log);
+                    let secs = self.tools.timeout.as_secs();
+                    return (
+                        true,
+                        format!("still running after {secs}s; now job {id}; log {log}; use job wait {id}"),
+                    );
+                }
                 (o.ok, format!("exit {}\n{}", o.code.unwrap_or(-1), o.text))
             }
             "read" => {

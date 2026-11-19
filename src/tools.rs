@@ -347,11 +347,20 @@ fn prune_out_with(dir: &std::path::Path, max_age: Duration, max_bytes: u64) {
     }
 }
 
+/// A model command that outlived the timeout, left running for the job table.
+pub struct Handover {
+    pub command: String,
+    pub child: std::process::Child,
+    pub log: PathBuf,
+}
+
 pub struct Tools {
     pub root: PathBuf,
     pub out_dir: PathBuf,
     pub jail: bool,
     pub timeout: Duration,
+    /// Set by `bash_handover` when a command is still running at the timeout.
+    pub handover: Option<Handover>,
     read_paths: HashSet<PathBuf>,
     buffers: Buffers,
 }
@@ -363,6 +372,7 @@ impl Tools {
             out_dir,
             jail: true,
             timeout: TIMEOUT,
+            handover: None,
             read_paths: HashSet::new(),
             buffers: Buffers::new(),
         }
@@ -473,11 +483,33 @@ impl Tools {
         self.buffers.clear();
     }
 
+    /// Run a command, terminating it at the timeout.
     pub fn bash(&mut self, command: &str, cancel: &AtomicBool) -> Outcome {
+        self.shell(command, cancel, false)
+    }
+
+    /// Run a command; at the timeout leave it running in `self.handover`.
+    pub fn bash_handover(&mut self, command: &str, cancel: &AtomicBool) -> Outcome {
+        self.shell(command, cancel, true)
+    }
+
+    fn shell(&mut self, command: &str, cancel: &AtomicBool, hand_over: bool) -> Outcome {
         let start = Instant::now();
         if cancel.load(Ordering::Relaxed) {
             return Outcome::error("cancelled");
         }
+
+        // Output goes to a log, so a command can outlive this call as a job.
+        let dir = self.out_dir.join("jobs");
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let log = dir.join(format!("run-{}-{nanos}.log", std::process::id()));
+        let file = match std::fs::create_dir_all(&dir).and_then(|_| std::fs::File::create(&log)) {
+            Ok(f) => f,
+            Err(e) => return Outcome::error(format!("could not start: {e}")),
+        };
 
         let script = format!("exec 2>&1\n{command}");
         let mut cmd = Command::new("sh");
@@ -485,7 +517,7 @@ impl Tools {
             .arg(script)
             .current_dir(&self.root)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::from(file))
             .stderr(Stdio::null());
         unsafe {
             cmd.pre_exec(|| {
@@ -500,23 +532,6 @@ impl Tools {
         };
         let pid = child.id() as c_int;
 
-        let mut stdout = child.stdout.take().expect("piped");
-        let reader = std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 8192];
-            loop {
-                match stdout.read(&mut chunk) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if buf.len() < CAPTURE_CAP {
-                            buf.extend_from_slice(&chunk[..n]);
-                        }
-                    }
-                }
-            }
-            buf
-        });
-
         let mut killed = false;
         let status = 'outer: loop {
             match child.try_wait() {
@@ -524,7 +539,20 @@ impl Tools {
                 Ok(None) => {}
                 Err(e) => return Outcome::error(format!("wait failed: {e}")),
             }
-            if cancel.load(Ordering::Relaxed) || start.elapsed() > self.timeout {
+            let late = start.elapsed() > self.timeout;
+            if late && hand_over && !cancel.load(Ordering::Relaxed) {
+                self.handover = Some(Handover {
+                    command: command.to_string(),
+                    child,
+                    log,
+                });
+                return Outcome {
+                    ok: true,
+                    text: String::new(),
+                    code: None,
+                };
+            }
+            if cancel.load(Ordering::Relaxed) || late {
                 killed = true;
                 unsafe {
                     kill(-pid, SIGTERM);
@@ -547,7 +575,11 @@ impl Tools {
             std::thread::sleep(Duration::from_millis(10));
         };
 
-        let raw = reader.join().unwrap_or_default();
+        let mut raw = Vec::new();
+        if let Ok(f) = std::fs::File::open(&log) {
+            let _ = f.take(CAPTURE_CAP as u64).read_to_end(&mut raw);
+        }
+        let _ = std::fs::remove_file(&log);
         let text = String::from_utf8_lossy(&raw).to_string();
 
         if killed {
@@ -990,6 +1022,29 @@ mod tests {
         let o = t.bash("sleep 40", &AtomicBool::new(false));
         assert!(!o.ok);
         assert!(o.text.contains("timed out"), "{}", o.text);
+    }
+
+    #[test]
+    fn a_slow_model_command_is_handed_over_and_finishes_as_a_job() {
+        let (mut t, _d) = tools();
+        let o = t.bash_handover("echo early; sleep 1; echo late", &AtomicBool::new(false));
+        assert!(o.ok && o.code.is_none(), "{o:?}");
+        let h = t.handover.take().expect("no handover");
+        let mut jobs = crate::jobs::Jobs::default();
+        let id = jobs.adopt(&h.command, h.child, h.log.clone());
+        let text = jobs.wait(id, Duration::from_secs(10)).unwrap();
+        assert!(text.contains("exit 0"), "{text}");
+        assert!(text.contains("early") && text.contains("late"), "{text}");
+    }
+
+    #[test]
+    fn a_fast_command_leaves_no_log_behind() {
+        let (mut t, _d) = tools();
+        let o = t.bash_handover("echo quick", &AtomicBool::new(false));
+        assert!(o.ok && o.text.contains("quick"), "{o:?}");
+        assert!(t.handover.is_none());
+        let logs = std::fs::read_dir(t.out_dir.join("jobs")).map(|r| r.count()).unwrap_or(0);
+        assert_eq!(logs, 0, "the run log stayed");
     }
 
     #[test]

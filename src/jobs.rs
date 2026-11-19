@@ -84,6 +84,25 @@ impl Jobs {
         Ok(id)
     }
 
+    /// Take over a command that is already running, logging to `output`.
+    pub fn adopt(&mut self, command: &str, child: Child, output: PathBuf) -> u64 {
+        self.next += 1;
+        let id = self.next;
+        self.map.insert(
+            id,
+            Job {
+                id,
+                command: command.to_string(),
+                output,
+                cursor: 0,
+                started: Instant::now(),
+                child: Some(child),
+                code: None,
+            },
+        );
+        id
+    }
+
     /// Poll every job; return ids that finished since the last poll.
     pub fn poll(&mut self) -> Vec<(u64, i32, PathBuf)> {
         let mut done = Vec::new();
