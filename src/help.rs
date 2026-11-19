@@ -1,6 +1,6 @@
 //! Help text. One renderer, used by `--help`, `/help`, and line mode.
 
-pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear · PgUp/PgDn scroll · Up/Down history · Tab complete · !cmd shell · picker: type to filter, Enter choose, Esc cancel";
+pub const KEYS: &str = "Enter send · Shift+Enter/Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear · PgUp/PgDn scroll · Up/Down history · Tab complete · !cmd shell · picker: type to filter, Enter choose, Esc cancel";
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
@@ -246,6 +246,11 @@ mod tests {
         for line in text.lines() {
             assert!(line.chars().count() <= 80, "too wide: {line:?}");
         }
+    }
+
+    #[test]
+    fn keys_explain_ctrl_c() {
+        assert!(KEYS.contains("Ctrl+C clear or quit"), "{KEYS}");
     }
 
     #[test]

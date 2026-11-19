@@ -43,7 +43,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 ### Keys
 
 ```
-Enter send · Alt+Enter newline · Esc cancel · Ctrl+C quit · Ctrl+L clear
+Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab pick directory · Left up · Esc cancel
 ```

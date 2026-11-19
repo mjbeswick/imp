@@ -1325,10 +1325,30 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
-        // Ctrl+C means exit, whatever is on screen. Esc cancels a turn and n or
-        // Esc refuses a prompt, so nothing else needs this key.
+        // Ctrl+C protects a draft first. Prompts do not use the composer, so
+        // they keep the exit; a picker is part of composing, so it closes with
+        // the text.
         if matches!(key, Key::Ctrl('c')) {
-            self.quit = true;
+            let prompt = matches!(
+                self.pending,
+                Some(Pending::Confirm { .. })
+                    | Some(Pending::ConfirmDelete { .. })
+                    | Some(Pending::Question { .. })
+                    | Some(Pending::Prompt { .. })
+                    | Some(Pending::ProviderForm { .. })
+                    | Some(Pending::RenameCurrent { .. })
+            );
+            if prompt || self.input.is_empty() {
+                self.quit = true;
+            } else {
+                self.input.clear();
+                self.cursor = 0;
+                self.hist_pos = None;
+                self.pending = None;
+                self.pending_since = None;
+                self.follow_tail();
+                self.dirty = true;
+            }
             return;
         }
         if let Some(pending) = self.pending.take() {
@@ -5014,6 +5034,51 @@ mod tests {
         let out = a.frame(60, 12);
         assert!(out.contains("> hello"), "{out:?}");
         assert!(out.contains("deepseek-flash"), "{out:?}");
+    }
+
+    #[test]
+    fn ctrl_c_clears_a_draft_instead_of_quitting() {
+        let mut a = app();
+        a.input = "half written".into();
+        a.cursor = 4;
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(!a.quit, "a draft did not protect the session");
+        assert!(a.input.is_empty(), "the draft stayed: {:?}", a.input);
+        assert_eq!(a.cursor, 0);
+    }
+
+    #[test]
+    fn ctrl_c_clears_a_draft_without_cancelling_the_turn() {
+        let mut a = app();
+        a.status.streaming = true;
+        a.input = "draft".into();
+        a.cursor = 5;
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(!a.quit, "a draft did not protect the turn");
+        assert!(a.input.is_empty());
+        assert!(
+            !a.cancel.load(std::sync::atomic::Ordering::Relaxed),
+            "clearing a draft cancelled the turn"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_closes_a_picker_and_clears_its_draft() {
+        let mut a = app();
+        a.input = "/sess".into();
+        a.cursor = 5;
+        a.pending = Some(Pending::Pick(Picker::new(
+            "commands",
+            command_items(),
+            PickKind::Command,
+        )));
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(!a.quit, "a picker with a draft exited");
+        assert!(a.pending.is_none(), "the picker stayed open");
+        assert!(a.input.is_empty(), "the draft stayed: {:?}", a.input);
     }
 
     #[test]
