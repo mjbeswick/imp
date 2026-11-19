@@ -32,6 +32,7 @@ imp                                  # full-screen chat
 imp "why is the build failing?"      # one request, then exit
 imp -c                               # continue the last session
 imp -r 3k9a0aa                       # resume a specific session
+imp --cwd ~/Projects/imp             # run the session in another directory
 printf 'ls\n/quit\n' | imp           # scripted line mode
 ```
 
@@ -51,7 +52,8 @@ Up/Down history · Tab complete · PgUp/PgDn scroll
 /help      keys and commands     /agent     switch profile
 /new       fresh conversation    /reload    re-read instructions and skills
 /sessions  list and pick         /compact   compact now
-/think     thinking toggle       /quit      leave
+/think     thinking toggle       /yolo      prompt-free for this session
+/verbosity tool detail: low|high /quit      leave
 ```
 
 A line starting with `!` runs as a shell command, unchecked by the model, with
