@@ -684,6 +684,7 @@ pub struct App {
     bell_pending: bool,
     status: Status,
     verbose: bool,
+    root: std::path::PathBuf,
     agents: Vec<String>,
     sessions_dir: std::path::PathBuf,
     last_redraw: Instant,
@@ -729,6 +730,7 @@ impl App {
         cfg: Config,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
         cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
+        root: std::path::PathBuf,
     ) -> Self {
         let palette = Palette::detect(&cfg);
         let history = load_history();
@@ -767,6 +769,7 @@ impl App {
                 streaming: false,
             },
             verbose: false,
+            root,
             agents,
             sessions_dir,
             last_redraw: Instant::now() - Duration::from_secs(1),
@@ -1175,7 +1178,7 @@ impl App {
     fn run_local(&mut self, command: &str) {
         // Same runner as the bash tool, one implementation of the limits.
         let mut tools = crate::tools::Tools::new(
-            std::env::current_dir().unwrap_or_default(),
+            self.root.clone(),
             crate::config::dirs_state().join("imp").join("out"),
         );
         let cancel = std::sync::atomic::AtomicBool::new(false);
@@ -1933,7 +1936,12 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
     if std::env::var_os("IMP_FORCE_PANIC").is_some() {
         panic!("forced panic for the terminal-guard test");
     }
-    let mut app = App::new(cfg, session.cancel.clone(), session.cols.clone());
+    let mut app = App::new(
+        cfg,
+        session.cancel.clone(),
+        session.cols.clone(),
+        session.tools.root.clone(),
+    );
 
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel::<Ev>();
@@ -2242,6 +2250,7 @@ mod tests {
             cfg,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+            std::env::temp_dir(),
         )
     }
 
@@ -2252,6 +2261,7 @@ mod tests {
             cfg,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+            std::env::temp_dir(),
         )
     }
 

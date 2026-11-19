@@ -175,6 +175,7 @@ impl Tools {
         let mut cmd = Command::new("sh");
         cmd.arg("-c")
             .arg(script)
+            .current_dir(&self.root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -441,6 +442,15 @@ mod tests {
         let (mut t, _d) = tools();
         let o = t.bash("echo out; echo err 1>&2", &AtomicBool::new(false));
         assert!(o.text.contains("out") && o.text.contains("err"), "{}", o.text);
+    }
+
+    #[test]
+    fn bash_runs_in_its_root() {
+        let (mut t, dir) = tools();
+        let o = t.bash("pwd", &AtomicBool::new(false));
+        assert!(o.ok, "{}", o.text);
+        let expected = dir.canonicalize().unwrap();
+        assert_eq!(o.text.trim(), expected.display().to_string());
     }
 
     #[test]

@@ -58,6 +58,7 @@ fn run() -> Result<(), String> {
     let mut agent_name: Option<String> = None;
     let mut resume: Option<String> = None;
     let mut continue_last = false;
+    let mut cwd: Option<String> = None;
     let mut list = false;
     let mut rename: Option<(String, String)> = None;
     let mut delete: Option<String> = None;
@@ -83,6 +84,7 @@ fn run() -> Result<(), String> {
             "--skills-dir" => {
                 cfg.skills_dir = Some(PathBuf::from(next(&args, &mut i, "--skills-dir")?))
             }
+            "-C" | "--cwd" => cwd = Some(next(&args, &mut i, "--cwd")?),
             other if other.starts_with('-') && other.len() > 1 => {
                 return Err(format!("unknown option {other}"))
             }
@@ -92,6 +94,8 @@ fn run() -> Result<(), String> {
     }
 
     let sessions_dir = config::dirs_state().join("imp").join("sessions");
+    let launch = std::env::current_dir().map_err(|e| e.to_string())?;
+    let root = choose_root(cwd.as_deref(), &launch)?;
 
     if list {
         let now = std::time::SystemTime::now()
@@ -118,7 +122,6 @@ fn run() -> Result<(), String> {
         return Err("DEEPSEEK_API_KEY is not set".into());
     }
 
-    let root = std::env::current_dir().map_err(|e| e.to_string())?;
     let out_dir = config::dirs_state().join("imp").join("out");
     let system = system_prompt(&root, &cfg);
     let tui_cfg = cfg.clone();
@@ -193,6 +196,27 @@ fn run() -> Result<(), String> {
 /// The line printed when a session ends, naming the id `imp -r` accepts.
 fn resume_line(id: &str) -> String {
     format!("imp: resume with imp -r {id}")
+}
+
+/// The session root: `--cwd` when given, resolved against the launch
+/// directory, otherwise the launch directory itself.
+fn choose_root(cwd: Option<&str>, launch: &std::path::Path) -> Result<PathBuf, String> {
+    let Some(raw) = cwd else {
+        return Ok(launch.to_path_buf());
+    };
+    let given = PathBuf::from(raw);
+    let path = if given.is_absolute() {
+        given
+    } else {
+        launch.join(given)
+    };
+    let resolved = path
+        .canonicalize()
+        .map_err(|_| format!("--cwd {}: not a directory", path.display()))?;
+    if !resolved.is_dir() {
+        return Err(format!("--cwd {}: not a directory", path.display()));
+    }
+    Ok(resolved)
 }
 
 fn terminal_width() -> usize {
@@ -483,6 +507,15 @@ mod tests {
             resume_line("3k9a0aa"),
             "imp: resume with imp -r 3k9a0aa"
         );
+    }
+
+    #[test]
+    fn cwd_resolves_against_the_launch_directory() {
+        let launch = std::env::temp_dir();
+        let root = choose_root(Some("."), &launch).unwrap();
+        assert_eq!(root, launch.canonicalize().unwrap());
+        assert!(choose_root(Some("/nope/imp-missing"), &launch).is_err());
+        assert_eq!(choose_root(None, &launch).unwrap(), launch);
     }
 
     #[test]
