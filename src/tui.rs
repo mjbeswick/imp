@@ -804,6 +804,9 @@ enum Pending {
     },
     ConfirmDelete {
         id: String,
+        title: String,
+        /// The session list, drawn behind the question and reopened after.
+        picker: Box<Picker>,
     },
     Question {
         q: String,
@@ -2494,14 +2497,16 @@ impl App {
                 }
                 return;
             }
-            Pending::ConfirmDelete { id } => {
-                match key {
-                    Key::Char('y') | Key::Char('Y') | Key::Enter => {
-                        let _ = tx.send(Cmd::Delete(id.clone()));
-                        self.push(Role::Info, format!("deleted {id}"));
-                    }
-                    _ => self.push(Role::Info, "delete cancelled"),
+            Pending::ConfirmDelete { id, picker, .. } => {
+                let mut picker = *picker;
+                if matches!(key, Key::Char('y') | Key::Char('Y') | Key::Enter) {
+                    let _ = tx.send(Cmd::Delete(id.clone()));
+                    self.push(Role::Info, format!("deleted {id}"));
+                    picker.items.retain(|item| item.value != id);
+                    picker.reset();
                 }
+                // Back to the list either way, so the next pick is one key away.
+                self.pending = Some(Pending::Pick(picker));
                 self.dirty = true;
                 return;
             }
@@ -2572,8 +2577,16 @@ impl App {
                             }
                             Some("delete") => {
                                 if let Some(choice) = picker.selected() {
+                                    let id = choice.value.clone();
+                                    let title = crate::store::Log::list(&self.sessions_dir)
+                                        .into_iter()
+                                        .find(|m| m.id == id)
+                                        .map(|m| m.title)
+                                        .unwrap_or_default();
                                     self.pending = Some(Pending::ConfirmDelete {
-                                        id: choice.value.clone(),
+                                        id,
+                                        title,
+                                        picker: Box::new(picker),
                                     });
                                 }
                             }
@@ -2930,7 +2943,10 @@ impl App {
         if let Some((overlay, cursor_x, cursor_y)) = self.overlay(cols, rows) {
             screen.push_str("\x1b[?7l");
             screen.push_str(&overlay);
-            screen.push_str(&format!("\x1b[{cursor_y};{cursor_x}H\x1b[?25h"));
+            if matches!(self.pending, Some(Pending::Pick(_))) {
+                // Only an open filter takes the cursor.
+                screen.push_str(&format!("\x1b[{cursor_y};{cursor_x}H\x1b[?25h"));
+            }
             screen.push_str("\x1b[?7h");
         }
 
@@ -2975,7 +2991,12 @@ impl App {
                 Pending::Confirm { what, .. } => {
                     format!("{} y/N  ({}s)", verb(what), self.seconds_left())
                 }
-                Pending::ConfirmDelete { id } => format!("delete {id}? y/N"),
+                Pending::ConfirmDelete { id, title, .. } if title.is_empty() => {
+                    format!("delete {id}? y/N")
+                }
+                Pending::ConfirmDelete { id, title, .. } => {
+                    format!("delete \"{}\" ({id})? y/N", title.replace('\n', " "))
+                }
                 Pending::Prompt { label, value, .. } => format!("{label}: {value}_"),
                 Pending::RenameCurrent { value } => format!("new title: {value}_"),
                 Pending::ProviderForm { name, fields, at } => {
@@ -3020,6 +3041,7 @@ impl App {
     fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize)> {
         let picker = match &self.pending {
             Some(Pending::Pick(picker)) => picker,
+            Some(Pending::ConfirmDelete { picker, .. }) => &**picker,
             _ => return None,
         };
         let width = (cols * 80 / 100).clamp(40, 72).min(cols);
@@ -5444,11 +5466,29 @@ mod tests {
         let (tx, rx) = channel();
         a.handle_key(Key::Char('d'), &tx);
         assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })));
+        let frame = strip(&a.frame(100, 30));
+        assert!(frame.contains("delete abc123? y/N"), "{frame}");
+        assert!(frame.contains("old title"), "the list vanished: {frame}");
         a.handle_key(Key::Char('y'), &tx);
         match rx.try_recv() {
             Ok(Cmd::Delete(id)) => assert_eq!(id, "abc123"),
             _ => panic!("expected delete"),
         }
+        let picker = open_picker(&a);
+        assert!(picker.items.is_empty(), "the deleted row stayed");
+    }
+
+    #[test]
+    fn the_delete_question_names_the_title() {
+        let mut a = picker();
+        let Some(Pending::Pick(list)) = a.pending.take() else { panic!("no picker") };
+        a.pending = Some(Pending::ConfirmDelete {
+            id: "51280befc".into(),
+            title: "Rate my machine.".into(),
+            picker: Box::new(list),
+        });
+        let frame = strip(&a.frame(100, 30));
+        assert!(frame.contains("delete \"Rate my machine.\" (51280befc)? y/N"), "{frame}");
     }
 
     #[test]
