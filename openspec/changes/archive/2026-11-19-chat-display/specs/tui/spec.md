@@ -4,7 +4,7 @@
 
 ### Requirement: Tool activity is one line each
 
-The system SHALL render every tool call as one row containing what the tool is doing, a short argument summary, and the elapsed time, SHALL draw the leading `✓` or `✗` in bold in the row's colour, SHALL place a failure preview on its own line indented under the row content, SHALL wrap a long row under that same indent, SHALL update the row in place when the call finishes, SHALL measure only the tool's own work and not time spent waiting for a confirmation, SHALL show a failure with its reason in the error colour, and SHALL allow expanding the most recent call to its full arguments and output.
+The system SHALL render each tool call as one row with what it is doing, an argument summary, and the elapsed time, SHALL bold the leading `✓` or `✗` in the row's colour, SHALL put a failure preview on its own indented line and wrap continuations to that indent, SHALL update the row in place when the call finishes, SHALL charge only the tool's own work and not a confirmation wait, SHALL show a failure with its reason in the error colour, and SHALL expand the most recent call on request.
 
 #### Scenario: Failed tool
 - **WHEN** a tool returns a non-zero exit code

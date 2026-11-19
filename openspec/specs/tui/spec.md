@@ -127,11 +127,23 @@ The system SHALL show reasoning content as a single dim line with its token coun
 
 ### Requirement: Tool activity is one line each
 
-The system SHALL render every tool call as a single dim line containing what the tool is doing, a short argument summary, and the elapsed time, SHALL update that line in place when the call finishes, SHALL measure only the tool's own work and not time spent waiting for a confirmation, SHALL show a failure with its reason in the error colour, and SHALL allow expanding the most recent call to its full arguments and output.
+The system SHALL render each tool call as one row with what it is doing, an argument summary, and the elapsed time, SHALL bold the leading `✓` or `✗` in the row's colour, SHALL put a failure preview on its own indented line and wrap continuations to that indent, SHALL update the row in place when the call finishes, SHALL charge only the tool's own work and not a confirmation wait, SHALL show a failure with its reason in the error colour, and SHALL expand the most recent call on request.
 
 #### Scenario: Failed tool
 - **WHEN** a tool returns a non-zero exit code
-- **THEN** its line is shown in the error colour and still carries the duration
+- **THEN** its row is shown in the error colour and still carries the duration
+
+#### Scenario: Bold mark
+- **WHEN** a tool row is drawn
+- **THEN** the leading `✓` or `✗` is bold and the rest of the row keeps its role colour
+
+#### Scenario: Failure detail
+- **WHEN** a command exits non-zero and its first output line is `Changes: render-on-change`
+- **THEN** that text starts on its own indented line and is never appended after the exit code
+
+#### Scenario: Wrapped summary
+- **WHEN** a tool summary is wider than the terminal
+- **THEN** every continuation line begins at the row's content indent
 
 #### Scenario: While it runs
 - **WHEN** a tool call is running
@@ -215,7 +227,7 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 
 ### Requirement: The status line reports tokens and cost
 
-The system SHALL show the model name, the estimated context tokens, and the running cost of the messages sent in the current process, SHALL abbreviate token counts at or above 1,000 with K and at or above 1,000,000 with M using one decimal, SHALL render cost with two decimals, SHALL NOT show the cache hit share or the permission mode, and SHALL omit a figure it cannot compute rather than guessing.
+The system SHALL show the model name, the served model string when the API reports one that differs from the configured name, the estimated context tokens, and the running cost of the messages sent in the current process, SHALL abbreviate token counts at or above 1,000 with K and at or above 1,000,000 with M using one decimal, SHALL render cost with two decimals, SHALL NOT show the cache hit share or the permission mode, and SHALL omit a figure it cannot compute rather than guessing.
 
 #### Scenario: Abbreviated tokens
 - **WHEN** the estimated context is 3,400 tokens
@@ -224,6 +236,14 @@ The system SHALL show the model name, the estimated context tokens, and the runn
 #### Scenario: Small counts stay exact
 - **WHEN** the estimated context is 940 tokens
 - **THEN** the status line shows `940 tok`
+
+#### Scenario: Served model differs
+- **WHEN** the configured model is `deepseek-flash` and a response reports `deepseek-flash-2026-11`
+- **THEN** the status line shows `deepseek-flash (deepseek-flash-2026-11)`
+
+#### Scenario: Served model matches
+- **WHEN** the response reports the same string as the configured model, or no response has arrived
+- **THEN** the status line shows the configured name alone
 
 #### Scenario: Two-decimal cost
 - **WHEN** the messages sent in this process cost 0.4246
@@ -533,13 +553,13 @@ The system SHALL draw `[text](url)` as the link text wrapped in an OSC 8 hyperli
 - **WHEN** `links=never`
 - **THEN** no OSC 8 sequence is emitted and links render as text with the URL
 
-### Requirement: Nine slash commands, no more
+### Requirement: Ten slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all nine commands appear with a one-line description
+- **THEN** all ten commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -568,3 +588,31 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reloa
 #### Scenario: Line mode
 - **WHEN** the user runs `/help` in line mode
 - **THEN** it prints the same list as a plain block
+
+### Requirement: Verbosity controls tool detail
+
+The system SHALL keep a per-session verbosity with two levels, `low` and `high`, SHALL default to `low`, SHALL change it with `/verbosity low` or `/verbosity high`, SHALL show one summary line per tool call at `low`, SHALL show every call's arguments and capped output at `high` in both front-ends, SHALL apply the level to calls that start after the command runs, and SHALL NOT write the level to the config file.
+
+#### Scenario: Default
+- **WHEN** a session starts and the user has run no verbosity command
+- **THEN** tool calls render as one summary line each
+
+#### Scenario: High
+- **WHEN** the user runs `/verbosity high` and the next tool call runs
+- **THEN** that call shows its arguments and capped output in the transcript
+
+#### Scenario: Back to low
+- **WHEN** the user runs `/verbosity low`
+- **THEN** later calls return to one summary line and earlier rows stay as they were drawn
+
+#### Scenario: Line mode
+- **WHEN** the user runs `/verbosity high` in line mode
+- **THEN** each following call prints its arguments and capped output as plain text
+
+#### Scenario: No argument
+- **WHEN** the user runs `/verbosity` with no level
+- **THEN** the transcript reports the current level and the command does nothing else
+
+#### Scenario: Unknown level
+- **WHEN** the user runs `/verbosity loud`
+- **THEN** the transcript refuses the value and names `low` and `high`
