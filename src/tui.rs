@@ -1848,8 +1848,8 @@ fn save_history(history: &[String]) {
     let _ = std::fs::write(path, body);
 }
 
-/// Run the interface until the user quits.
-pub fn run(session: Session, cfg: Config) -> Result<(), String> {
+/// Run the interface until the user quits. Returns the final session id.
+pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
     install_guards();
     let _raw = RawMode::enter();
     if std::env::var_os("IMP_FORCE_PANIC").is_some() {
@@ -1862,8 +1862,16 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
 
     let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
     let mut worker_session = session;
+    let session_id = std::sync::Arc::new(std::sync::Mutex::new(
+        worker_session
+            .log
+            .as_ref()
+            .map(|l| l.id.clone())
+            .unwrap_or_default(),
+    ));
     std::thread::spawn({
         let ev_tx = ev_tx.clone();
+        let session_id = session_id.clone();
         move || loop {
             match cmd_rx.recv() {
                 Ok(Cmd::Prompt(text)) => {
@@ -1904,6 +1912,9 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                 Ok(Cmd::Resume(id)) => {
                     match worker_session.resume_id(&sessions_dir, &id) {
                         Ok(()) => {
+                            if let Ok(mut slot) = session_id.lock() {
+                                *slot = id.clone();
+                            }
                             let _ = ev_tx.send(Ev::Info(format!("resumed {id}")));
                         }
                         Err(e) => {
@@ -1920,6 +1931,9 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
                     );
                     worker_session.reset();
                     worker_session.attach_log(log);
+                    if let (Some(log), Ok(mut slot)) = (&worker_session.log, session_id.lock()) {
+                        *slot = log.id.clone();
+                    }
                     let _ = ev_tx.send(Ev::Info("new session".into()));
                     let _ = ev_tx.send(Ev::Done(None));
                 }
@@ -2048,7 +2062,12 @@ pub fn run(session: Session, cfg: Config) -> Result<(), String> {
     }
 
     let _ = cmd_tx.send(Cmd::Quit);
-    Ok(())
+    let id = session_id
+        .lock()
+        .ok()
+        .map(|slot| slot.clone())
+        .filter(|id| !id.is_empty());
+    Ok(id)
 }
 
 #[cfg(test)]

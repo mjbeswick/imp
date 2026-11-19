@@ -160,22 +160,38 @@ fn run() -> Result<(), String> {
         }
     }
 
-    match prompt {
+    let (result, id) = match prompt {
         Some(text) => {
             let mut session = session;
-            session.turn(&text, &mut Cli)
+            let result = session.turn(&text, &mut Cli);
+            let id = session.log.as_ref().map(|l| l.id.clone());
+            (result, id)
         }
         None => {
             let interactive = unsafe { isatty(0) } != 0 && unsafe { isatty(1) } != 0;
             let chat = wants_chat(mode, interactive);
             if chat {
-                tui::run(session, tui_cfg)
+                match tui::run(session, tui_cfg) {
+                    Ok(id) => (Ok(()), id),
+                    Err(e) => (Err(e), None),
+                }
             } else {
                 let mut session = session;
-                repl(&mut session, &mut Cli, &sessions_dir)
+                let result = repl(&mut session, &mut Cli, &sessions_dir);
+                let id = session.log.as_ref().map(|l| l.id.clone());
+                (result, id)
             }
         }
+    };
+    if let Some(id) = id {
+        eprintln!("{}", resume_line(&id));
     }
+    result
+}
+
+/// The line printed when a session ends, naming the id `imp -r` accepts.
+fn resume_line(id: &str) -> String {
+    format!("imp: resume with imp -r {id}")
 }
 
 fn terminal_width() -> usize {
@@ -429,6 +445,14 @@ mod tests {
         assert!(!wants_chat("auto", false));
         assert!(wants_chat("chat", false));
         assert!(!wants_chat("cli", true));
+    }
+
+    #[test]
+    fn resume_line_names_the_id() {
+        assert_eq!(
+            resume_line("3k9a0aa"),
+            "imp: resume with imp -r 3k9a0aa"
+        );
     }
 
     #[test]
