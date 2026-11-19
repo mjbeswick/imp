@@ -629,10 +629,10 @@ struct ToolRow {
     expanded: bool,
 }
 
-fn tool_row_text(row: &ToolRow) -> String {
+fn tool_row_text(row: &ToolRow, verbose: bool) -> String {
     let mark = if row.ok { "✓" } else { "✗" };
     let mut text = format!("{mark} {} · {} ms", row.summary, row.ms);
-    if row.expanded {
+    if row.expanded || verbose {
         text.push_str("\n  args: ");
         text.push_str(&row.args);
         if !row.output.is_empty() {
@@ -640,10 +640,26 @@ fn tool_row_text(row: &ToolRow) -> String {
             text.push_str(&row.output.lines().take(20).collect::<Vec<_>>().join("\n  "));
         }
     } else if !row.preview.is_empty() && !row.ok {
-        text.push_str(" · ");
+        text.push('\n');
         text.push_str(&row.preview);
     }
     text
+}
+
+/// Bold the leading mark after the row has been coloured. Only the weight is
+/// reset, so the row keeps its role colour.
+fn bold_mark(painted: String) -> String {
+    let Some(at) = painted.find(['✓', '✗']) else {
+        return painted;
+    };
+    let mark = painted[at..].chars().next().unwrap_or('?');
+    let mut out = String::with_capacity(painted.len() + 8);
+    out.push_str(&painted[..at]);
+    out.push_str("\x1b[1m");
+    out.push(mark);
+    out.push_str("\x1b[22m");
+    out.push_str(&painted[at + mark.len_utf8()..]);
+    out
 }
 
 pub struct App {
@@ -667,6 +683,7 @@ pub struct App {
     pending_since: Option<Instant>,
     bell_pending: bool,
     status: Status,
+    verbose: bool,
     agents: Vec<String>,
     sessions_dir: std::path::PathBuf,
     last_redraw: Instant,
@@ -749,6 +766,7 @@ impl App {
                 served: String::new(),
                 streaming: false,
             },
+            verbose: false,
             agents,
             sessions_dir,
             last_redraw: Instant::now() - Duration::from_secs(1),
@@ -829,7 +847,7 @@ impl App {
                         row.ms = ms;
                         row.output = output;
                         row.preview = preview;
-                        let text = tool_row_text(&row);
+                        let text = tool_row_text(&row, self.verbose);
                         if let Some(entry) = self.entries.get_mut(row.index) {
                             entry.role = role;
                             entry.text = text;
@@ -1107,7 +1125,7 @@ impl App {
             return;
         };
         row.expanded = !row.expanded;
-        let text = tool_row_text(&row);
+        let text = tool_row_text(&row, self.verbose);
         if let Some(entry) = self.entries.get_mut(row.index) {
             entry.text = text;
         }
@@ -1524,7 +1542,14 @@ impl App {
         for (role, line) in visible.iter().take(body_rows) {
             screen.push_str("\x1b[2K");
             match line {
-                Line::Text(text) => screen.push_str(&self.palette.paint(*role, &fit(text, cols))),
+                Line::Text(text) => {
+                    let painted = self.palette.paint(*role, &fit(text, cols));
+                    if self.palette.on && matches!(role, Role::Tool | Role::Error) {
+                        screen.push_str(&bold_mark(painted));
+                    } else {
+                        screen.push_str(&painted);
+                    }
+                }
                 Line::Spans(spans) => screen.push_str(&self.paint_spans(*role, spans)),
             }
             screen.push_str("\r\n");
@@ -2672,6 +2697,73 @@ mod tests {
         assert!(!a.resized(80, 24));
         assert!(a.resized(81, 24));
         assert!(a.resized(80, 25));
+    }
+
+    #[test]
+    fn a_failed_call_puts_its_preview_on_its_own_line() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `openspec list`".into(),
+            args: "{\"command\":\"openspec list\"}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: false,
+            preview: "Changes: render-on-change".into(),
+            output: "Changes: render-on-change".into(),
+            ms: 7,
+        });
+        let text = &a.entries[0].text;
+        assert!(text.contains("\nChanges: render-on-change"), "{text:?}");
+        assert!(!text.contains(" · Changes:"), "{text:?}");
+        let out = a.frame(60, 12);
+        assert!(out.contains("  Changes: render-on-change"), "{out:?}");
+    }
+
+    #[test]
+    fn tool_marks_are_bold() {
+        let mut a = colour_app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: "run `true`".into(),
+            args: "{}".into(),
+        });
+        a.apply(Ev::ToolEnd {
+            ok: true,
+            preview: String::new(),
+            output: String::new(),
+            ms: 1,
+        });
+        let out = a.frame(80, 12);
+        assert!(out.contains("\x1b[1m✓"), "mark not bold: {out:?}");
+        assert!(out.contains("\x1b[22m"), "bold not closed: {out:?}");
+
+        a.palette = Palette {
+            on: false,
+            truecolor: false,
+        };
+        let plain = a.frame(80, 12);
+        assert!(!plain.contains("\x1b[1m"), "bold with colour off: {plain:?}");
+    }
+
+    #[test]
+    fn a_wrapped_tool_row_keeps_its_indent() {
+        let mut a = app();
+        a.apply(Ev::ToolStart {
+            name: "bash".into(),
+            summary: format!("run `echo {}`", "a".repeat(60)),
+            args: "{}".into(),
+        });
+        let out = a.frame(30, 10);
+        let mut seen = 0;
+        for line in out.split("\r\n") {
+            if line.contains("aaaa") {
+                let body = line.trim_start_matches("\x1b[2K");
+                assert!(body.starts_with("  "), "lost indent: {body:?}");
+                seen += 1;
+            }
+        }
+        assert!(seen > 1, "summary did not wrap: {out:?}");
     }
 
     #[test]
