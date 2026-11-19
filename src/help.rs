@@ -16,6 +16,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/cd", "change the session directory"),
     ("/image", "attach an image by path"),
     ("/fork", "copy the session and continue there"),
+    ("/theme", "set the colour theme"),
     ("/quit", "leave"),
 ];
 
@@ -92,7 +93,6 @@ pub fn usage(width: usize) -> String {
             ("--skills-dir <PATH>", "extra skills directory"),
             ("-C, --cwd <PATH>", "session directory [launch directory]"),
             ("--cli", "line mode, even in a terminal"),
-            ("--chat", "full-screen chat, even when piped"),
         ],
         width,
     );
@@ -197,7 +197,6 @@ mod tests {
             "--skills-dir",
             "--cwd",
             "--cli",
-            "--chat",
             "--version",
         ] {
             assert!(text.contains(flag), "missing {flag}");
@@ -232,7 +231,7 @@ mod tests {
     #[test]
     fn commands_lists_every_command() {
         let text = commands();
-        assert_eq!(COMMANDS.len(), 14);
+        assert_eq!(COMMANDS.len(), 15);
         for (name, _) in COMMANDS {
             assert!(text.contains(name), "missing {name}");
         }

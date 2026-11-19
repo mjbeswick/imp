@@ -11,6 +11,7 @@ mod pricing;
 mod prompt;
 mod render;
 mod store;
+mod theme;
 mod tools;
 mod transport;
 mod tui;
@@ -84,7 +85,6 @@ fn run() -> Result<(), String> {
             }
             "--delete" => delete = Some(next(&args, &mut i, "--delete")?),
             "--cli" => mode = "cli",
-            "--chat" => mode = "chat",
             "--skills-dir" => {
                 cfg.skills_dir = Some(PathBuf::from(next(&args, &mut i, "--skills-dir")?))
             }
@@ -182,7 +182,7 @@ fn run() -> Result<(), String> {
     let (result, id) = match prompt {
         Some(text) => {
             let mut session = session;
-            let result = session.turn(&text, &mut Cli { verbose: false });
+            let result = session.turn(&text, &mut Cli { verbose: false, palette: tui::Palette::detect(&tui_cfg) });
             let id = session.log.as_ref().map(|l| l.id.clone());
             (result, id)
         }
@@ -196,7 +196,7 @@ fn run() -> Result<(), String> {
                 }
             } else {
                 let mut session = session;
-                let mut cli = Cli { verbose: false };
+                let mut cli = Cli { verbose: false, palette: tui::Palette::detect(&tui_cfg) };
                 let result = repl(&mut session, &mut cli, &sessions_dir);
                 let id = session.log.as_ref().map(|l| l.id.clone());
                 (result, id)
@@ -308,7 +308,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
     let _line_mode = if tty { Some(tui::LineMode::enter()) } else { None };
     loop {
         if tty {
-            print!("> ");
+            print!("{}", cli.palette.paint(tui::Role::User, "> "));
             out.flush().ok();
         }
         let line = match read_entry(&mut stdin.lock()).map_err(|e| e.to_string())? {
@@ -404,6 +404,27 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     Ok((new_id, old_id)) => println!("fork: {new_id} (from {old_id})"),
                     Err(e) => println!("{e}"),
                 },
+                other if other == "theme" || other.starts_with("theme ") => {
+                    let rest = other.strip_prefix("theme").unwrap_or("").trim();
+                    if rest.is_empty() {
+                        let current = cli.palette.theme_name();
+                        let names: Vec<String> = theme::names()
+                            .into_iter()
+                            .map(|n| if n == current { format!("*{n}") } else { n.to_string() })
+                            .collect();
+                        println!("{}", names.join("  "));
+                    } else if theme::by_name(rest).is_some() {
+                        match theme::save(rest) {
+                            Ok(()) => {
+                                cli.palette = tui::Palette::detect(&session.cfg);
+                                println!("theme: {rest}");
+                            }
+                            Err(e) => eprintln!("imp: {e}"),
+                        }
+                    } else {
+                        println!("no theme {rest}; use {}", theme::names().join(", "));
+                    }
+                }
                 other if other == "image" || other.starts_with("image ") => {
                     let raw = other.strip_prefix("image").unwrap_or("").trim();
                     if raw.is_empty() {
@@ -464,11 +485,12 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
 
 struct Cli {
     verbose: bool,
+    palette: tui::Palette,
 }
 
 impl Hooks for Cli {
     fn ui(&mut self, event: Ui) {
-        print_ui(event, self.verbose)
+        print_ui(event, self.verbose, &self.palette)
     }
 
     fn confirm(&mut self, what: &str) -> bool {
@@ -502,39 +524,79 @@ impl Hooks for Cli {
     }
 }
 
-fn print_ui(event: Ui, verbose: bool) {
+fn print_ui(event: Ui, verbose: bool, palette: &tui::Palette) {
     let mut out = std::io::stdout();
-    print_ui_to(&mut out, event, verbose).ok();
+    print_ui_to(&mut out, event, verbose, palette).ok();
 }
 
-fn print_ui_to<W: Write>(out: &mut W, event: Ui, verbose: bool) -> std::io::Result<()> {
+fn preview_lines(text: &str) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    for line in text.lines().take(2) {
+        if used > 0 {
+            out.push('\n');
+        }
+        used += 1;
+        out.push_str(line);
+    }
+    if text.lines().count() > 2 || out.chars().count() > 240 {
+        out.truncate(
+            out.char_indices()
+                .take(240)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(0),
+        );
+        if !out.contains("more") {
+            out.push_str(" …");
+        }
+    }
+    out
+}
+
+fn print_ui_to<W: Write>(
+    out: &mut W,
+    event: Ui,
+    verbose: bool,
+    palette: &tui::Palette,
+) -> std::io::Result<()> {
     match event {
         Ui::Content(t) => {
             write!(out, "{t}")?;
             out.flush().ok();
         }
         Ui::Reasoning(t) => {
-            // Reasoning is collapsed unless asked for; a single marker is enough.
             let _ = t;
         }
         Ui::ToolStart { name, summary, args } => {
-            writeln!(out, "\n\u{25b8} {summary}")?;
+            let line = format!("\u{25b8} {summary}");
+            writeln!(out, "\n{}", palette.paint(tui::Role::Tool, &line))?;
             if verbose && !args.is_empty() {
-                writeln!(out, "  {args}")?;
+                for line in args.lines() {
+                    writeln!(out, "  {}", palette.paint(tui::Role::Thinking, line))?;
+                }
             }
             let _ = name;
         }
         Ui::ToolEnd { ok, preview, output, .. } => {
-            let mark = if ok { "" } else { "!" };
-            writeln!(out, "  {mark}{preview}")?;
+            let role = if ok { tui::Role::Tool } else { tui::Role::Error };
+            let mark = if ok { "✓" } else { "✗" };
+            let line = format!("{mark} {}", preview_lines(&preview));
+            writeln!(out, "  {}", palette.paint(role, &line))?;
             if verbose && !output.is_empty() {
-                for line in output.lines() {
-                    writeln!(out, "  {line}")?;
+                for line in preview_lines(&output).lines() {
+                    writeln!(out, "  {}", palette.paint(tui::Role::Thinking, line))?;
                 }
             }
         }
-        Ui::Info(t) => writeln!(out, "\n\u{25e6} {t}")?,
-        Ui::Error(t) => writeln!(out, "\n! {t}")?,
+        Ui::Info(t) => {
+            let line = format!("\u{25e6} {t}");
+            writeln!(out, "\n{}", palette.paint(tui::Role::Info, &line))?;
+        }
+        Ui::Error(t) => {
+            let line = format!("! {t}");
+            writeln!(out, "\n{}", palette.paint(tui::Role::Error, &line))?;
+        }
     }
     Ok(())
 }
@@ -549,13 +611,9 @@ fn confirm(prompt: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
-/// `--chat` and `--cli` win; otherwise a real terminal decides.
+/// `--cli` wins; otherwise a real terminal decides.
 pub fn wants_chat(mode: &str, tty: bool) -> bool {
-    match mode {
-        "chat" => true,
-        "cli" => false,
-        _ => tty,
-    }
+    mode != "cli" && tty
 }
 
 fn system_prompt(root: &std::path::Path, cfg: &config::Config) -> String {
@@ -586,7 +644,6 @@ mod tests {
     fn mode_selection() {
         assert!(wants_chat("auto", true));
         assert!(!wants_chat("auto", false));
-        assert!(wants_chat("chat", false));
         assert!(!wants_chat("cli", true));
     }
 
@@ -639,6 +696,7 @@ mod tests {
 
     #[test]
     fn line_mode_high_shows_args_and_output() {
+        let palette = tui::Palette::detect(&config::Config::default());
         let mut out = Vec::new();
         print_ui_to(
             &mut out,
@@ -648,6 +706,7 @@ mod tests {
                 args: "{\"command\":\"ls\"}".into(),
             },
             true,
+            &palette,
         )
         .unwrap();
         print_ui_to(
@@ -659,11 +718,12 @@ mod tests {
                 ms: 4,
             },
             true,
+            &palette,
         )
         .unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("{\"command\":\"ls\"}"), "{text}");
-        assert!(text.contains("  total 8\n  foo"), "{text}");
+        assert!(text.contains("✓ total 8") && text.contains("  foo"), "{text}");
 
         let mut low = Vec::new();
         print_ui_to(
@@ -674,6 +734,7 @@ mod tests {
                 args: "{\"command\":\"ls\"}".into(),
             },
             false,
+            &palette,
         )
         .unwrap();
         let low = String::from_utf8(low).unwrap();

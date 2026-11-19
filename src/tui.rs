@@ -266,45 +266,60 @@ pub enum Role {
     Info,
 }
 
-struct Palette {
+pub(crate) struct Palette {
     on: bool,
     truecolor: bool,
+    theme: &'static crate::theme::Theme,
 }
 
 impl Palette {
-    fn detect(cfg: &Config) -> Self {
+    pub(crate) fn detect(cfg: &Config) -> Self {
         let tty = unsafe { isatty(1) } != 0;
-        let on = match cfg.color {
+        let theme = crate::theme::load();
+        let mut on = match cfg.color {
             ColorMode::Never => false,
             ColorMode::Always => true,
             ColorMode::Auto => tty && std::env::var_os("NO_COLOR").is_none(),
         };
+        if theme.name == "mono" {
+            on = false;
+        }
         let truecolor = std::env::var("COLORTERM")
             .map(|v| v.contains("truecolor") || v.contains("24bit"))
             .unwrap_or(false);
-        Self { on, truecolor }
+        Self {
+            on,
+            truecolor,
+            theme,
+        }
     }
 
-    fn paint(&self, role: Role, text: &str) -> String {
+    pub(crate) fn theme_name(&self) -> &'static str {
+        self.theme.name
+    }
+
+    pub(crate) fn paint(&self, role: Role, text: &str) -> String {
         if !self.on {
             return text.to_string();
         }
-        let (r, g, b, fallback) = match role {
-            Role::User => (0x8f, 0xbf, 0xff, 111),
-            Role::Assistant => (0xe6, 0xe6, 0xe6, 255),
-            Role::Thinking => (0x80, 0x80, 0x80, 244),
-            Role::Tool => (0x7f, 0xc8, 0xa0, 108),
-            Role::Error => (0xff, 0x6b, 0x6b, 203),
-            Role::Info => (0xd7, 0xa6, 0x5a, 214),
+        let index = match role {
+            Role::User => 0,
+            Role::Assistant => 1,
+            Role::Thinking => 2,
+            Role::Tool => 3,
+            Role::Error => 4,
+            Role::Info => 5,
         };
+        let [r, g, b] = self.theme.rgb[index];
+        let fallback = self.theme.ansi[index];
         if self.truecolor {
             format!("\x1b[38;2;{r};{g};{b}m{text}\x1b[0m")
         } else {
             format!("\x1b[38;5;{fallback}m{text}\x1b[0m")
         }
     }
-
 }
+
 
 extern "C" {
     fn isatty(fd: c_int) -> c_int;
@@ -1276,6 +1291,31 @@ impl App {
             "cwd" => self.push(Role::Info, self.root.display().to_string()),
             "fork" => {
                 let _ = tx.send(Cmd::Fork);
+            }
+            other if other == "theme" || other.starts_with("theme ") => {
+                let rest = other.strip_prefix("theme").unwrap_or("").trim();
+                if rest.is_empty() {
+                    let names: Vec<String> = crate::theme::names()
+                        .into_iter()
+                        .map(|n| {
+                            if n == self.palette.theme_name() {
+                                format!("*{n}")
+                            } else {
+                                n.to_string()
+                            }
+                        })
+                        .collect();
+                    self.push(Role::Info, names.join("  "));
+                } else if crate::theme::by_name(rest).is_some() {
+                    let _ = crate::theme::save(rest);
+                    self.palette = Palette::detect(&self.cfg);
+                    self.push(Role::Info, format!("theme: {rest}"));
+                } else {
+                    self.push(
+                        Role::Error,
+                        format!("no theme {rest}; use {}", crate::theme::names().join(", ")),
+                    );
+                }
             }
             other if other == "image" || other.starts_with("image ") => {
                 let raw = other.strip_prefix("image").unwrap_or("").trim();
@@ -2696,11 +2736,11 @@ mod tests {
 
     #[test]
     fn colour_roles_use_256_and_truecolor() {
-        let plain = Palette { on: true, truecolor: false };
+        let plain = Palette { on: true, truecolor: false, theme: &crate::theme::THEMES[0] };
         assert!(plain.paint(Role::Error, "x").contains("38;5;"));
-        let rgb = Palette { on: true, truecolor: true };
+        let rgb = Palette { on: true, truecolor: true, theme: &crate::theme::THEMES[0] };
         assert!(rgb.paint(Role::Error, "x").contains("38;2;"));
-        let off = Palette { on: false, truecolor: true };
+        let off = Palette { on: false, truecolor: true, theme: &crate::theme::THEMES[0] };
         assert_eq!(off.paint(Role::Error, "x"), "x");
     }
 
@@ -2986,8 +3026,7 @@ mod tests {
 
         a.palette = Palette {
             on: false,
-            truecolor: false,
-        };
+            truecolor: false, theme: &crate::theme::THEMES[0] };
         let plain = a.frame(80, 12);
         assert!(!plain.contains("\x1b[1m"), "bold with colour off: {plain:?}");
     }

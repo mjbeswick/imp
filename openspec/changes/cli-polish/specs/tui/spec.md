@@ -26,6 +26,50 @@ The system SHALL offer a line mode and a full-screen chat mode, SHALL pick the f
 - **WHEN** the same prompt is sent in either mode
 - **THEN** the same tools run and the same history is recorded
 
+### Requirement: Fourteen slash commands, no more
+
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/model`, `/reload` as a mode, `/mode`, or `/cost`.
+
+#### Scenario: Help
+- **WHEN** the user types `/help`
+- **THEN** all fifteen commands appear with a one-line description
+
+#### Scenario: Unknown command
+- **WHEN** the user types `/nope`
+- **THEN** nothing is sent to the model and the nearest matching command is suggested
+
+#### Scenario: Command effect
+- **WHEN** the user runs `/compact`
+- **THEN** compaction runs immediately and the result is reported in the transcript
+
+#### Scenario: Reload
+- **WHEN** the user runs `/reload` after editing `AGENTS.md`
+- **THEN** the next request carries the new instructions and the interface says the cache was reset
+
+#### Scenario: Yolo on
+- **WHEN** the user runs `/yolo` in a session launched in `normal`
+- **THEN** the mode becomes `yolo`, the path jail turns off, the transcript names both, and the config file is untouched
+
+#### Scenario: Yolo off
+- **WHEN** the user runs `/yolo` again in that session
+- **THEN** the mode returns to `normal` and the path jail returns
+
+#### Scenario: Duplicate affordance is absent
+- **WHEN** the user types `/clear`
+- **THEN** it is not a command; Ctrl+L clears the view
+
+#### Scenario: Line mode
+- **WHEN** the user runs `/help` in line mode
+- **THEN** it prints the same list as a plain block
+
+#### Scenario: Fork
+- **WHEN** the user runs `/fork`
+- **THEN** the session continues in a new id and the transcript names both ids
+
+#### Scenario: Theme
+- **WHEN** the user runs `/theme solarized-dark`
+- **THEN** the palette changes and the transcript names the theme
+
 ## ADDED Requirements
 
 ### Requirement: Line mode uses the role palette
@@ -50,7 +94,7 @@ The system SHALL print a tool start row, then a finish row carrying `✓` or `�
 
 #### Scenario: Success
 - **WHEN** a command finishes successfully
-- **THEN** the start row stays and a green `✓ 28 ms` row follows
+- **THEN** the start row stays and a green `✓` row follows
 
 #### Scenario: Failure
 - **WHEN** a command exits non-zero
