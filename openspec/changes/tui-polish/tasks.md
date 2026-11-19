@@ -34,7 +34,7 @@
 - [x] 5.5 Draw the composer caret in text prompts. Verify: a `/rename` frame test finds no trailing `_`.
 - [x] 5.7 Make Tab in the command picker complete the word and open a value command's picker. Verify: tests for `/th`, `/ren`, and `/comp` with Tab.
 - [x] 5.8 Resume with `/sessions <id>` in both front-ends. Verify: a test sends the resume for a typed id.
-- [ ] 5.9 Report unknown commands and values in the error role, confirm settings as `setting: value`, and print line-mode value lists as rows with `current`. Verify: tests for `/nope`, `/think`, and line-mode `/theme`.
+- [x] 5.9 Report unknown commands and values in the error role, confirm settings as `setting: value`, and print line-mode value lists as rows with `current`. Verify: tests for `/nope`, `/think`, and line-mode `/theme`.
 - [ ] 5.6 Add `session_row` and use it in `--list`, line-mode `/sessions`, and the picker; cap line mode at twenty. Verify: alignment, newline title, and untitled tests.
 
 ## 6. Finish

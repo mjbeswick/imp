@@ -356,7 +356,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 }
                 "think" => {
                     session.cfg.thinking = !session.cfg.thinking;
-                    println!("thinking {}", if session.cfg.thinking { "on" } else { "off" });
+                    println!("thinking: {}", if session.cfg.thinking { "on" } else { "off" });
                 }
                 "yolo" => {
                     let line = session.toggle_yolo();
@@ -370,10 +370,12 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     let rest = other.strip_prefix("agent").unwrap_or("").trim();
                     match rest {
                         "" => {
-                            println!("agent: {}", session.agent.name);
-                            for a in &session.roster {
-                                println!("  {:<12} {}", a.name, a.description);
-                            }
+                            let rows: Vec<(String, String)> = session
+                                .roster
+                                .iter()
+                                .map(|a| (a.name.clone(), a.description.clone()))
+                                .collect();
+                            print!("{}", value_rows(&rows, &session.agent.name));
                         }
                         "current" => println!(
                             "{}",
@@ -419,12 +421,9 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 other if other == "theme" || other.starts_with("theme ") => {
                     let rest = other.strip_prefix("theme").unwrap_or("").trim();
                     if rest.is_empty() {
-                        let current = cli.palette.theme_name();
-                        let names: Vec<String> = theme::names()
-                            .into_iter()
-                            .map(|n| if n == current { format!("*{n}") } else { n.to_string() })
-                            .collect();
-                        println!("{}", names.join("  "));
+                        let rows: Vec<(String, String)> =
+                            theme::names().into_iter().map(|n| (n.into(), String::new())).collect();
+                        print!("{}", value_rows(&rows, cli.palette.theme_name()));
                     } else if theme::by_name(rest).is_some() {
                         match theme::save(rest) {
                             Ok(()) => {
@@ -472,7 +471,16 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 }
                 other if other == "verbosity" || other.starts_with("verbosity ") => {
                     match other.strip_prefix("verbosity").unwrap_or("").trim() {
-                        "" => println!("verbosity: {}", if cli.verbose { "high" } else { "low" }),
+                        "" => print!(
+                            "{}",
+                            value_rows(
+                                &[
+                                    ("low".into(), "one summary line".into()),
+                                    ("high".into(), "arguments and output".into()),
+                                ],
+                                if cli.verbose { "high" } else { "low" },
+                            )
+                        ),
                         "high" => {
                             cli.verbose = true;
                             println!("verbosity: high");
@@ -508,8 +516,17 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 other if other == "model" || other.starts_with("model ") => {
                     let name = other.strip_prefix("model").unwrap_or("").trim();
                     if name.is_empty() {
-                        println!("model: {}", session.cfg.model);
-                        println!("default: {}", session.cfg.provider.profile().model);
+                        let default = session.cfg.provider.profile().model.to_string();
+                        let mut names = vec![session.cfg.model.clone(), default.clone()];
+                        names.extend(providers::catalog(session.cfg.provider));
+                        let mut rows: Vec<(String, String)> = Vec::new();
+                        for n in names {
+                            if !rows.iter().any(|(r, _)| *r == n) {
+                                let about = if n == default { "default" } else { "" };
+                                rows.push((n, about.into()));
+                            }
+                        }
+                        print!("{}", value_rows(&rows, &session.cfg.model));
                     } else {
                         session.cfg.model = name.to_string();
                         println!("model: {name}");
@@ -548,11 +565,34 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         println!("stash: added ({})", stash.len());
                     }
                 }
-                other if other == "provider" || other.starts_with("provider ") => {
-                    println!("provider: a named profile is stored by the chat interface");
-                    println!("active: {}", session.cfg.active_name);
+                "provider" => {
+                    let rows: Vec<(String, String)> = [
+                        providers::Provider::DeepSeek,
+                        providers::Provider::OpenAi,
+                        providers::Provider::Anthropic,
+                        providers::Provider::Gemini,
+                        providers::Provider::Ollama,
+                        providers::Provider::Custom,
+                    ]
+                    .into_iter()
+                    .map(|p| {
+                        let profile = p.profile();
+                        let about = format!("{}  {}", profile.base_url, profile.model);
+                        (format!("{p:?}").to_lowercase(), about)
+                    })
+                    .chain(session.cfg.named.iter().map(|n| {
+                        (n.name.clone(), format!("{}  {}  {}", n.base, n.model, n.dialect))
+                    }))
+                    .collect();
+                    print!("{}", value_rows(&rows, &session.cfg.active_name));
                 }
-                other => println!("{}", help::unknown(other)),
+                other if other.starts_with("provider ") => {
+                    println!("provider: add, edit, delete, and use run in the chat");
+                }
+                other => {
+                    let line = help::unknown(other);
+                    println!("{}", cli.palette.paint(tui::Role::Error, &line));
+                }
             }
             continue;
         }
@@ -573,6 +613,23 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
         }
         println!();
     }
+}
+
+/// Values as aligned rows, with `current` beside the active one.
+fn value_rows(rows: &[(String, String)], current: &str) -> String {
+    let width = rows.iter().map(|(n, _)| n.chars().count()).max().unwrap_or(0);
+    let mut out = String::new();
+    for (name, about) in rows {
+        let right = match (name == current, about.is_empty()) {
+            (true, true) => "current".to_string(),
+            (true, false) => format!("current · {about}"),
+            (false, _) => about.clone(),
+        };
+        let line = format!("  {name:<width$}  {right}");
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
 }
 
 struct Cli {
@@ -864,6 +921,16 @@ mod tests {
         let plain: String = text.split('\x1b').map(|p| p.split_once('m').map_or(p, |(_, r)| r)).collect();
         assert!(plain.contains("  ✗ 1.4s\n    exit 1 hi\n"), "{plain:?}");
         assert!(!plain.lines().any(|l| l.ends_with(' ')), "{plain:?}");
+    }
+
+    #[test]
+    fn value_rows_align_and_mark_the_current_one() {
+        let rows: Vec<(String, String)> = ["default", "mono", "gruvbox-dark"]
+            .iter()
+            .map(|n| (n.to_string(), String::new()))
+            .collect();
+        let text = value_rows(&rows, "mono");
+        assert_eq!(text, "  default\n  mono          current\n  gruvbox-dark\n");
     }
 
     #[test]

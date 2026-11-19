@@ -2244,10 +2244,7 @@ impl App {
                 let _ = tx.send(Cmd::SetThinking(self.cfg.thinking));
                 self.push(
                     Role::Info,
-                    format!(
-                        "thinking {} for the next turn",
-                        if self.cfg.thinking { "on" } else { "off" }
-                    ),
+                    format!("thinking: {}", if self.cfg.thinking { "on" } else { "off" }),
                 );
             }
             "new" => {
@@ -2386,7 +2383,7 @@ impl App {
                     self.provider_command(rest, tx);
                 }
             }
-            other => self.push(Role::Info, crate::help::unknown(other)),
+            other => self.push(Role::Error, crate::help::unknown(other)),
         }
     }
 
@@ -5698,6 +5695,23 @@ mod tests {
             Ok(Cmd::Resume(id)) => assert_eq!(id, "51280befc"),
             _ => panic!("expected a resume command"),
         }
+    }
+
+    #[test]
+    fn replies_use_one_form() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.run_command("nope", &tx);
+        let last = a.entries.last().unwrap();
+        assert_eq!(last.role, Role::Error);
+        assert!(last.text.contains("/nope"), "{}", last.text);
+        a.run_command("think", &tx);
+        let last = a.entries.last().unwrap();
+        assert!(last.text == "thinking: on" || last.text == "thinking: off", "{}", last.text);
+        a.run_command("verbosity loud", &tx);
+        let last = a.entries.last().unwrap();
+        assert_eq!(last.role, Role::Error);
+        assert!(last.text.contains("low or high"), "{}", last.text);
     }
 
     #[test]
