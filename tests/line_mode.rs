@@ -37,3 +37,15 @@ fn a_bang_line_runs_locally_and_sends_nothing() {
     assert!(!err.contains("127.0.0.1"), "a request was attempted: {err}");
     assert!(!out.contains("▸"), "the model ran it as a tool: {out}");
 }
+
+#[test]
+fn an_unknown_option_points_to_help() {
+    let out = Command::new(env!("CARGO_BIN_EXE_imp"))
+        .arg("--bogus")
+        .env("HOME", std::env::temp_dir())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("unknown option --bogus; try imp --help"), "{err}");
+    assert!(!out.status.success());
+}

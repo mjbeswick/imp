@@ -96,7 +96,7 @@ fn run() -> Result<(), String> {
             }
             "-C" | "--cwd" => cwd = Some(next(&args, &mut i, "--cwd")?),
             other if other.starts_with('-') && other.len() > 1 => {
-                return Err(format!("unknown option {other}"))
+                return Err(format!("unknown option {other}; try imp --help"))
             }
             other => prompt_words.push(other.to_string()),
         }
