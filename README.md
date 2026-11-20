@@ -55,7 +55,7 @@ Ctrl+O expand the last tool call · Ctrl+D leaves line mode
 /help      keys and commands     /agent     switch profile
 /new       fresh conversation    /reload    re-read instructions and skills
 /sessions  pick a session        /compact   compact now
-/think     thinking toggle       /yolo      prompt-free for this session
+/think     thinking toggle       /mode      normal, strict, or yolo
 /verbosity level: low or high    /cwd       show the session directory
 /cd        browse or change cwd  /image     browse or attach an image
 /fork      copy the session      /theme     set the colour theme
@@ -206,7 +206,10 @@ other providers show tokens and no cost.
 | `strict` | allow | ask | ask |
 | `yolo` | allow | allow, jail off | allow |
 
-Denied in every mode but `yolo`: `dd`, `mkfs`, shutdown, `rm -rf` outside the
+Switch for the session with `/mode`; the config and `--permissions` set the
+starting mode.
+
+Denied in every mode, `yolo` included: `dd`, `mkfs`, shutdown, `rm -rf` outside the
 directory, `chmod -R /`, force push, hard reset, downloads piped to a shell.
 `sudo` needs `allow_sudo=true`.
 
