@@ -31,6 +31,12 @@ Do not change source, config, or assets outside an OpenSpec change.
 4. Commit after every ticked task, with `jj commit`. One task, one commit.
    Not at the end of a batch: batching is how the archive move in this repo was
    briefly left uncommitted, and a commit you have not made is not a checkpoint.
+5. After every commit that changes source, reinstall so the user runs the new
+   build:
+
+   ```sh
+   cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp
+   ```
 
 ## No exceptions
 
