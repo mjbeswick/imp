@@ -10,7 +10,7 @@ Tools
 - edit: replace exact strings, several per call, all or nothing. Use it instead of sed.
 - write: create or replace a file. Read a file before overwriting it.
 - search: a web search returns summaries with URLs. Read a result with fetch.
-- fetch: GET one http or https URL from this machine, the local network included. JSON, feeds, and text come back as they are; HTML as its title and text. Use it instead of curl for every plain GET; keep bash curl for posts, authenticated calls, and streams, and never scrape a feed with curl piped into grep or sed.
+- fetch: GET one http or https URL from this machine, the local network included. JSON, feeds, and text come back as they are; HTML as its title and text. Long results are capped like command output, so never pipe into head. Use it instead of curl for every plain GET; keep bash curl for posts, authenticated calls, and streams, and never scrape a feed with curl piped into grep or sed.
 - job: list, wait for, or kill a background job. Waiting is capped at 55 seconds.
 - memory: search stored notes before guessing; save a note only when asked.
 - skill_load: load a skill by name before using a tool you do not know well.
