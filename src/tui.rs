@@ -1238,7 +1238,7 @@ impl Picker {
                 "Esc close".into(),
             ],
             PickKind::Inbox => {
-                return "Enter open · y n a answer · x close · Esc back".into();
+                return "Enter open · y n s a answer · x close · Esc back".into();
             }
             PickKind::Keys => return "? or Esc close".into(),
             _ => vec!["Enter choose".into(), "Esc close".into()],
@@ -1881,7 +1881,7 @@ impl App {
                     Some(Pending::Confirm { what, always, .. }) => {
                         actions = vec![('y', "yes"), ('n', "no"), ('x', "close")];
                         if *always {
-                            actions.insert(2, ('a', "always"));
+                            actions.splice(2..2, [('s', "session"), ('a', "always")]);
                         }
                         (0, "needs approval", what.clone())
                     }
@@ -3389,6 +3389,7 @@ impl App {
             Pending::Confirm { what, reply, always } => {
                 let answer = match key {
                     Key::Char('y' | 'Y') | Key::Enter => Answer::Yes,
+                    Key::Char('s' | 'S') if always => Answer::Session,
                     Key::Char('a' | 'A') if always => Answer::Always,
                     Key::Esc | Key::Char('n' | 'N') => Answer::No,
                     _ => {
@@ -3738,6 +3739,50 @@ impl App {
         out
     }
 
+    /// The confirmation row: question, key chips, and the countdown at the
+    /// right edge. Keys are bold accent, labels and countdown muted.
+    fn confirm_row(&self, what: &str, always: bool, cols: usize) -> String {
+        let chips: &[(&str, &str)] = if always {
+            &[("y", "yes"), ("n", "no"), ("s", "session"), ("a", "always")]
+        } else {
+            &[("y", "yes"), ("n", "no")]
+        };
+        let keys = chips.iter().map(|(k, l)| format!("[{k}] {l}")).collect::<Vec<_>>().join("  ");
+        let secs = format!("{}s", self.seconds_left());
+        // "▌ " + question + "   " + chips + at least one space + countdown.
+        let fixed = 2 + 3 + keys.chars().count() + 1 + secs.len();
+        // A labelled row hides the command, so the question names it.
+        let shown = self.tool.as_ref().is_none_or(|row| {
+            let command = what.split('`').nth(1).unwrap_or(what);
+            row.summary.contains(command)
+        });
+        let ask = if shown {
+            verb(what).to_string()
+        } else {
+            format!("{}?", fit(what, cols.saturating_sub(fixed + 1).max(8)))
+        };
+        let bell = if self.bell_pending { "\u{7}" } else { "" };
+        let used = fixed - 1 + ask.chars().count();
+        let p = &self.palette;
+        if used + 1 > cols {
+            // Too narrow for chips: one plain accent line, cut at the edge.
+            let plain = format!("▌ {ask}   {keys} {secs}");
+            return format!("{bell}{}", p.paint(Role::Info, &fit(&plain, cols)));
+        }
+        let mut row = format!("{bell}{}   ", p.paint(Role::Info, &format!("▌ {ask}")));
+        for (i, (k, l)) in chips.iter().enumerate() {
+            if i > 0 {
+                row.push_str("  ");
+            }
+            let key = p.paint(Role::Info, k);
+            let key = if p.on { format!("\x1b[1m{key}") } else { key };
+            row.push_str(&format!("{}{key}{}", p.paint(Role::Thinking, "["), p.paint(Role::Thinking, &format!("] {l}"))));
+        }
+        row.push_str(&" ".repeat(cols - used));
+        row.push_str(&p.paint(Role::Thinking, &secs));
+        row
+    }
+
     /// A single row for an open question or confirmation, if any.
     ///
     /// The picker draws as an overlay instead, so it has no composer row.
@@ -3745,21 +3790,7 @@ impl App {
         if let Some(pending) = &self.pending {
             let text = match pending {
                 Pending::Pick(_) => return None,
-                Pending::Confirm { what, always, .. } => {
-                    // A labelled row hides the command, so the question names it.
-                    let shown = self.tool.as_ref().is_none_or(|row| {
-                        let command = what.split('`').nth(1).unwrap_or(what);
-                        row.summary.contains(command)
-                    });
-                    let ask = if shown {
-                        verb(what).to_string()
-                    } else {
-                        // Leave room for the answer hint and the countdown.
-                        format!("{}?", fit(what, cols.saturating_sub(36)))
-                    };
-                    let keys = if *always { "y yes · n no · a always" } else { "y yes · n no" };
-                    format!("{ask} {keys}  ({}s)", self.seconds_left())
-                }
+                Pending::Confirm { what, always, .. } => return Some(self.confirm_row(what, *always, cols)),
                 Pending::ConfirmDelete { id, title, .. } if title.is_empty() => {
                     format!("delete {id}? y/N")
                 }
@@ -4908,7 +4939,7 @@ mod tests {
         assert!(rows[1].1.starts_with("replied · All done."), "{rows:?}");
         assert!(rows[2].1.starts_with("idle"), "{rows:?}");
         assert_eq!(inbox.index, 0);
-        assert_eq!(inbox.footer(), "Enter open · y n a answer · x close · Esc back");
+        assert_eq!(inbox.footer(), "Enter open · y n s a answer · x close · Esc back");
         let frame = a.frame(80, 20);
         assert!(frame.contains("inbox"), "{frame}");
         a.handle_key(Key::Ctrl('o'), &tx);
@@ -4927,9 +4958,21 @@ mod tests {
         a.handle_key(Key::Char('a'), &tx);
         assert_eq!(answers.try_recv().ok(), Some(Answer::Always));
         assert_eq!(a.at, 2, "answering moved the view");
+        let footer = a.inbox.as_ref().unwrap().footer();
+        assert!(footer.contains("y n s a answer"), "{footer}");
         let inbox = a.inbox.as_ref().expect("the inbox closed");
         let row = inbox.items.iter().find(|i| i.label == "run the tests").unwrap();
         assert!(row.desc.starts_with("working"), "{}", row.desc);
+    }
+
+    #[test]
+    fn the_inbox_answers_for_the_session() {
+        let (mut a, answers) = inbox_app("session");
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Ctrl('o'), &tx);
+        a.handle_key(Key::Char('s'), &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::Session));
+        assert!(a.inbox.is_some(), "the inbox closed");
     }
 
     #[test]
@@ -5118,14 +5161,14 @@ mod tests {
         let long = format!("run `{}`", "cat openspec/changes/thing.md; ".repeat(8));
         let (reply, _rx) = channel();
         a.apply(Ev::Confirm { what: long, reply, always: false });
-        let out = a.frame(80, 12);
+        let out = strip(&a.frame(80, 12));
         let row = out
             .lines()
-            .find(|l| l.contains("y yes · n no"))
+            .find(|l| l.contains("[y] yes  [n] no"))
             .unwrap_or_else(|| panic!("no answer hint in {out:?}"));
         assert!(row.contains('s'), "no seconds left: {row:?}");
         assert!(
-            strip(row).chars().count() <= 80,
+            strip(row).chars().filter(|c| *c != '\u{7}').count() <= 80,
             "the prompt row is wider than the terminal"
         );
     }
@@ -5179,7 +5222,7 @@ mod tests {
         let (reply, _rx) = channel();
         a.apply(Ev::Confirm { what: "run `find . | wc -l`".into(), reply, always: false });
         let frame = strip(&a.frame(80, 20));
-        assert!(frame.contains("run `find . | wc -l`? y yes · n no"), "{frame:?}");
+        assert!(frame.contains("run `find . | wc -l`?   [y] yes  [n] no"), "{frame:?}");
     }
 
     #[test]
@@ -5202,11 +5245,22 @@ mod tests {
     }
 
     fn countdown(frame: &str) -> u64 {
-        let at = frame.rfind('(').expect("countdown in the prompt row");
-        let rest = &frame[at + 1..];
-        rest[..rest.find('s').expect("seconds marker")]
-            .parse()
-            .expect("seconds")
+        let frame = strip(frame);
+        let row = frame.lines().find(|l| l.contains("[y] yes")).expect("the prompt row");
+        let last = row.trim_end().rsplit(' ').next().expect("countdown");
+        last.strip_suffix('s').expect("seconds marker").parse().expect("seconds")
+    }
+
+    #[test]
+    fn the_countdown_sits_at_the_right_edge() {
+        let mut a = app();
+        let (reply, _rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        let frame = strip(&a.frame(80, 12));
+        let row = frame.lines().find(|l| l.contains("[a] always")).expect("chips");
+        assert!(row.contains("[y] yes  [n] no  [s] session  [a] always"), "{row}");
+        assert_eq!(row.chars().filter(|c| *c != '\u{7}').count(), 80, "countdown not at the edge: {row:?}");
+        assert!(row.ends_with("0s") || row.ends_with("9s"), "{row:?}");
     }
 
     #[test]
@@ -5215,14 +5269,20 @@ mod tests {
         let (tx, _cmds) = channel();
         let (reply, rx) = channel();
         a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
-        assert!(a.frame(80, 12).contains("y yes · n no · a always"));
+        assert!(strip(&a.frame(80, 12)).contains("[y] yes  [n] no  [s] session  [a] always"));
         a.handle_key(Key::Char('a'), &tx);
         assert_eq!(rx.try_recv().ok(), Some(Answer::Always));
 
         let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        a.handle_key(Key::Char('s'), &tx);
+        assert_eq!(rx.try_recv().ok(), Some(Answer::Session));
+
+        let (reply, rx) = channel();
         a.apply(Ev::Confirm { what: "run `a && b`".into(), reply, always: false });
-        let frame = a.frame(80, 12);
-        assert!(frame.contains("y yes · n no") && !frame.contains("a always"), "{frame}");
+        let frame = strip(&a.frame(80, 12));
+        assert!(frame.contains("[y] yes  [n] no") && !frame.contains("[s]"), "{frame}");
+        a.handle_key(Key::Char('s'), &tx);
         a.handle_key(Key::Char('a'), &tx);
         assert!(rx.try_recv().is_err(), "a answered a prompt that did not offer it");
         assert!(matches!(a.pending, Some(Pending::Confirm { .. })));
@@ -7621,8 +7681,8 @@ mod tests {
             reply,
             always: false,
         });
-        let out = a.frame(90, 12);
-        assert!(out.contains("run it? y yes · n no"), "no verb prompt: {out:?}");
+        let out = strip(&a.frame(90, 12));
+        assert!(out.contains("run it?   [y] yes  [n] no"), "no verb prompt: {out:?}");
         assert_eq!(
             out.matches("nmap -sV -T4 192.168.0.56").count(),
             1,
@@ -7639,7 +7699,7 @@ mod tests {
             reply,
             always: false,
         });
-        assert!(a.frame(80, 12).contains("approve? y yes · n no"));
+        assert!(strip(&a.frame(80, 12)).contains("approve?   [y] yes  [n] no"));
     }
 
     #[test]

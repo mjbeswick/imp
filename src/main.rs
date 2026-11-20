@@ -814,7 +814,7 @@ fn print_ui_to<W: Write>(
 }
 
 fn answer(prompt: &str, always: bool) -> agent::Answer {
-    let keys = if always { "y yes · n no · a always" } else { "y yes · n no" };
+    let keys = if always { "[y] yes  [n] no  [s] session  [a] always" } else { "[y] yes  [n] no" };
     print!("{prompt}? {keys} ");
     std::io::stdout().flush().ok();
     let Ok(Some(line)) = read_entry(&mut std::io::stdin().lock()) else {
@@ -826,6 +826,7 @@ fn answer(prompt: &str, always: bool) -> agent::Answer {
 fn parse_answer(line: &str, always: bool) -> agent::Answer {
     match line.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => agent::Answer::Yes,
+        "s" | "session" if always => agent::Answer::Session,
         "a" | "always" if always => agent::Answer::Always,
         _ => agent::Answer::No,
     }
@@ -866,6 +867,8 @@ mod tests {
         assert_eq!(parse_answer("y\n", true), Answer::Yes);
         assert_eq!(parse_answer("a", true), Answer::Always);
         assert_eq!(parse_answer("always", true), Answer::Always);
+        assert_eq!(parse_answer("s", true), Answer::Session);
+        assert_eq!(parse_answer("s", false), Answer::No);
         assert_eq!(parse_answer("a", false), Answer::No);
         assert_eq!(parse_answer("", true), Answer::No);
     }
