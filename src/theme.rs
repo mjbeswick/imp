@@ -21,8 +21,6 @@ pub enum Slot {
 
 pub struct Theme {
     pub name: &'static str,
-    /// Made for a light terminal background.
-    pub light: bool,
     /// RGB per `Slot`. The 256-colour fallback is computed from it.
     pub rgb: [[u8; 3]; 11],
 }
@@ -36,7 +34,6 @@ impl Theme {
 pub const THEMES: &[Theme] = &[
     Theme {
         name: "default",
-        light: false,
         rgb: [
             [0xe6, 0xe6, 0xe6],
             [0x8f, 0xbf, 0xff],
@@ -53,7 +50,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "default-light",
-        light: true,
         rgb: [
             [0x1f, 0x23, 0x28],
             [0x0b, 0x5c, 0xad],
@@ -70,7 +66,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "solarized-dark",
-        light: false,
         rgb: [
             [0x93, 0xa1, 0xa1],
             [0x26, 0x8b, 0xd2],
@@ -87,7 +82,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "solarized-light",
-        light: true,
         rgb: [
             [0x58, 0x6e, 0x75],
             [0x26, 0x8b, 0xd2],
@@ -104,7 +98,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "gruvbox-dark",
-        light: false,
         rgb: [
             [0xeb, 0xdb, 0xb2],
             [0x83, 0xa5, 0x98],
@@ -121,7 +114,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "gruvbox-light",
-        light: true,
         rgb: [
             [0x3c, 0x38, 0x36],
             [0x07, 0x66, 0x78],
@@ -138,7 +130,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "catppuccin-mocha",
-        light: false,
         rgb: [
             [0xcd, 0xd6, 0xf4],
             [0x89, 0xb4, 0xfa],
@@ -155,7 +146,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "catppuccin-latte",
-        light: true,
         rgb: [
             [0x4c, 0x4f, 0x69],
             [0x1e, 0x66, 0xf5],
@@ -172,7 +162,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "tokyo-night",
-        light: false,
         rgb: [
             [0xc0, 0xca, 0xf5],
             [0x7a, 0xa2, 0xf7],
@@ -189,7 +178,6 @@ pub const THEMES: &[Theme] = &[
     },
     Theme {
         name: "nord",
-        light: false,
         rgb: [
             [0xd8, 0xde, 0xe9],
             [0x88, 0xc0, 0xd0],
@@ -207,7 +195,6 @@ pub const THEMES: &[Theme] = &[
     // Colour off; the slots are never read.
     Theme {
         name: "mono",
-        light: false,
         rgb: [[0, 0, 0]; 11],
     },
 ];
@@ -339,7 +326,8 @@ mod tests {
             assert_ne!(t.rgb(Slot::Success), t.rgb(Slot::Error), "{}", t.name);
             // Light themes use dark text, dark themes light text.
             let luma = |[r, g, b]: [u8; 3]| r as u32 * 3 + g as u32 * 6 + b as u32;
-            assert_eq!(luma(text) < 1280, t.light, "{} text vs light flag", t.name);
+            let light = t.name.ends_with("-light") || t.name == "catppuccin-latte";
+            assert_eq!(luma(text) < 1280, light, "{} text vs its name", t.name);
         }
     }
 
