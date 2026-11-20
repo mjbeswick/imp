@@ -206,6 +206,11 @@ other providers show tokens and no cost.
 | `strict` | allow | ask | ask |
 | `yolo` | allow | allow, jail off | allow |
 
+A command prompt answers `y`, `n`, or `a` for always: in `normal`, `a` lets
+the same command shape run without asking for the rest of the session, so
+`npm test` covers `npm test -- --watch` but not `npm install`. Pipes, `&&`,
+`;`, and redirects never offer `a`.
+
 Switch for the session with `/mode`; the config and `--permissions` set the
 starting mode.
 
