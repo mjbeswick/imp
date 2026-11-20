@@ -12,7 +12,7 @@ with nothing tracking them.
 - When the filter matches no title, Enter searches the text of every stored
   session and lists the hits with a snippet. Enter on a hit resumes it.
 - A live session whose agent is working shows a spinner next to its count.
-- Background jobs end with their session: closed for room, or on exit.
+- Background jobs end when their session closes to make room. Exit is unchanged.
 - No `/close`. The four-session pool and Ctrl+O cover it; still 21 commands.
 
 ## Capabilities

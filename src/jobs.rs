@@ -204,6 +204,22 @@ impl Jobs {
     }
 }
 
+/// Jobs end with their session: SIGTERM to every running process group. No
+/// wait, so closing a session never blocks the interface.
+impl Drop for Jobs {
+    fn drop(&mut self) {
+        for job in self.map.values_mut().filter(|j| j.code.is_none()) {
+            if let Some(child) = job.child.as_mut() {
+                if matches!(child.try_wait(), Ok(None)) {
+                    unsafe {
+                        kill(-(child.id() as c_int), SIGTERM);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn read_from(path: &Path, cursor: u64, cap: usize) -> String {
     let Ok(bytes) = std::fs::read(path) else {
         return String::new();
@@ -238,6 +254,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn dropping_jobs_stops_running_ones() {
+        let d = dir();
+        let mut jobs = Jobs::default();
+        jobs.start(&format!("sleep 0.4; touch {}", d.join("late").display()), &d).unwrap();
+        jobs.start("true", &d).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        jobs.poll();
+        drop(jobs);
+        std::thread::sleep(Duration::from_millis(700));
+        assert!(!d.join("late").exists(), "the job outlived its session");
     }
 
     #[test]
