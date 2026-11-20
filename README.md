@@ -47,7 +47,7 @@ Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L 
 Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
 Ctrl+E expand the last tool call · Ctrl+D leaves line mode
-Ctrl+O inbox · Ctrl+N/Ctrl+P next or previous session · ? keys, from an empty composer
+Ctrl+O next waiting · Ctrl+N/Ctrl+P next or previous session · ? keys, from an empty composer
 ```
 
 ### Several sessions
@@ -58,11 +58,12 @@ current one, up to four; the oldest idle one closes to make room and stays in
 which one is in view, such as `2/3 fix the parser`, and how many others are
 `waiting`.
 
-Ctrl+O or `/inbox` fills the screen with one card per live session: its
-number, title, state (`needs approval`, `replied`, `working`, or `idle`), and
-what it needs, such as the command waiting for approval or the end of the
-reply. Answer an approval in place with `y`, `n`, `s`, or `a`, open a session
-with Enter or its number, and close an idle one with `x`. A prompt out of view waits; its 60 second deadline starts when you see it.
+Ctrl+O or `/next` goes to the session that has waited longest for you: an
+approval, a question, or a reply that finished out of view. Pressing it again
+counts the reply as read and moves on; an approval is never answered that way,
+it goes to the back of the queue. With `auto_next=on`, the default, sending a
+message or answering a prompt moves you to the next waiting session, and a
+line such as `→ 2/3 fix the parser · replied` says where you are. A prompt out of view waits; its 60 second deadline starts when you see it.
 Approvals (except `a`), modes, and buffers belong to each session, and all sessions share
 one 16 MB output buffer budget.
 
@@ -79,7 +80,7 @@ one 16 MB output buffer budget.
 /shell     open a shell          /model     set or pick the session model
 /provider  manage providers      /stash     park a message for this session
 /rename    rename this session   /quit      leave
-/inbox     live sessions
+/next      next session waiting on you
 ```
 
 `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` are
@@ -158,6 +159,7 @@ wins when set.
 # compact_at=60000
 # color=auto
 # mouse=on
+# auto_next=on          # move to the next waiting session after you reply
 ```
 
 Keys come from the provider's variable and are never written to the config by
