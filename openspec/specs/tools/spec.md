@@ -360,3 +360,15 @@ The system SHALL apply the 16 MB memory and 64 MB spill limits for output buffer
 #### Scenario: Closed session
 - **WHEN** the user closes a session in the inbox
 - **THEN** its buffers are freed
+
+### Requirement: Background jobs end with their session
+
+The system SHALL stop every running background job of a session when that session closes to make room, by signalling the job's process group.
+
+#### Scenario: Closed for room
+- **WHEN** a session with a running background job closes to make room for a fifth
+- **THEN** the job's process group receives SIGTERM
+
+#### Scenario: Finished jobs
+- **WHEN** a session whose jobs have all exited closes
+- **THEN** nothing is signalled
