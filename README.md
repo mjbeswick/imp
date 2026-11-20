@@ -46,7 +46,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
-Ctrl+O expand the last tool call · Ctrl+D leaves line mode
+Ctrl+E expand the last tool call · Ctrl+D leaves line mode
 ```
 
 ### Commands

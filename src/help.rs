@@ -7,7 +7,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Esc", "cancel the turn or close a picker"),
     ("Ctrl+C", "clear the draft, or quit"),
     ("Ctrl+L", "clear the screen"),
-    ("Ctrl+O", "expand the last tool call"),
+    ("Ctrl+E", "expand the last tool call"),
     ("Up, Down", "history"),
     ("PgUp, PgDn", "scroll"),
     ("Tab", "complete"),
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn line_mode_lists_only_its_own_keys() {
         let text = commands(80, false);
-        for key in ["Picker", "PgUp", "Tab", "Ctrl+O", "Esc"] {
+        for key in ["Picker", "PgUp", "Tab", "Ctrl+E", "Esc"] {
             assert!(!text.contains(key), "{key} in line mode:\n{text}");
         }
         assert!(text.contains("Ctrl+D"), "{text}");

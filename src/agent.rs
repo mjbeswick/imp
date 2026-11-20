@@ -1159,7 +1159,7 @@ pub fn describe(name: &str, args: &Value) -> String {
     let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
     let lines = |key: &str| text(key).lines().count();
     match name {
-        // A label reads better than a long pipeline; the command stays in Ctrl+O.
+        // A label reads better than a long pipeline; the command stays in Ctrl+E.
         "bash" if !text("description").trim().is_empty() => flatten(text("description")),
         "bash" => format!("run `{}`", flatten(text("command"))),
         "job" => match args.get("id").and_then(Value::as_u64) {

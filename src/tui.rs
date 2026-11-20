@@ -818,7 +818,7 @@ fn preview_detail(text: &str) -> Vec<String> {
     let mut lines: Vec<String> = text.lines().take(12).map(str::to_string).collect();
     let total = text.lines().count();
     if total > 12 {
-        lines.push(format!("… +{} lines (Ctrl+O)", total - 12));
+        lines.push(format!("… +{} lines (Ctrl+E)", total - 12));
     }
     lines
 }
@@ -1635,7 +1635,7 @@ impl App {
         match key {
             Key::Ctrl('c') => self.quit = true,
             Key::Ctrl('d') => self.quit = true,
-            Key::Ctrl('o') => {
+            Key::Ctrl('e') => {
                 self.toggle_tool();
                 self.dirty = true;
             }
@@ -4184,6 +4184,20 @@ mod tests {
     }
 
     #[test]
+    fn session_keys_decode_raw_and_disambiguated() {
+        let mut buf = b"\x05\x0f\x0e\x10\x1b[101;5u\x1b[111;5u\x1b[110;5u\x1b[112;5u".to_vec();
+        let keys = decode(&mut buf);
+        let letters: Vec<char> = keys
+            .iter()
+            .map(|k| match k {
+                Key::Ctrl(c) => *c,
+                other => panic!("not a control key: {other:?}"),
+            })
+            .collect();
+        assert_eq!(letters, ['e', 'o', 'n', 'p', 'e', 'o', 'n', 'p']);
+    }
+
+    #[test]
     fn decodes_the_mouse_wheel_and_ignores_clicks() {
         let mut buf = b"\x1b[<64;10;5M\x1b[<65;10;5M\x1b[<0;3;4M\x1b[<0;3;4m\x1b[<68;1;1M".to_vec();
         let keys = decode(&mut buf);
@@ -4694,11 +4708,13 @@ mod tests {
         });
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('o'), &tx);
+        assert!(!a.entries[0].text.contains("args:"), "Ctrl+O still expands");
+        a.handle_key(Key::Ctrl('e'), &tx);
         let text = a.entries[0].text.clone();
         assert!(text.contains("args:"), "{text}");
         assert!(text.contains("ls -la"), "{text}");
         assert!(text.contains("total 8"), "{text}");
-        a.handle_key(Key::Ctrl('o'), &tx);
+        a.handle_key(Key::Ctrl('e'), &tx);
         assert!(!a.entries[0].text.contains("args:"), "it did not collapse");
     }
 
