@@ -853,8 +853,6 @@ pub struct App {
     models_path: std::path::PathBuf,
     /// The provider's models, catalog first and then whatever it reported.
     available_models: Vec<String>,
-    /// The mode the session launched in, restored by a second `/yolo`.
-    launch_permissions: crate::config::Permissions,
     /// Messages parked for this session, never persisted.
     stash: Vec<String>,
     bell_pending: bool,
@@ -923,6 +921,7 @@ enum PickKind {
     Model,
     Theme,
     Provider,
+    Mode,
 }
 
 #[derive(Clone)]
@@ -1280,7 +1279,6 @@ impl App {
     ) -> Self {
         let palette = Palette::detect(&cfg);
         let provider = cfg.provider;
-        let launch_permissions = cfg.live_permissions();
         let history = load_history();
         let agents = crate::store::load_agents(&cfg, &root)
             .into_iter()
@@ -1308,7 +1306,6 @@ impl App {
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
             available_models: crate::providers::catalog(provider),
-            launch_permissions,
             stash: Vec::new(),
             bell_pending: false,
             status: Status {
@@ -1816,6 +1813,35 @@ impl App {
             .collect()
     }
 
+    fn mode_items(&self) -> Vec<PickItem> {
+        let current = self.cfg.live_permissions().as_str();
+        [
+            ("normal", "unlisted commands ask"),
+            ("strict", "every action asks"),
+            ("yolo", "never asks; deny list holds"),
+        ]
+        .into_iter()
+        .map(|(name, about)| PickItem {
+            label: name.into(),
+            value: name.into(),
+            desc: mark_current(name == current, about),
+            actions: Vec::new(),
+        })
+        .collect()
+    }
+
+    /// Set the session's mode, applied before the worker sees it.
+    fn set_mode(&mut self, name: &str, tx: &Sender<Cmd>) {
+        match crate::config::Permissions::parse(name) {
+            Ok(mode) => {
+                self.cfg.set_permissions(mode);
+                let _ = tx.send(Cmd::SetPermissions(mode));
+                self.push(Role::Info, crate::perm::mode_line(mode));
+            }
+            Err(_) => self.push(Role::Error, format!("unknown mode {name}; use normal, strict, or yolo")),
+        }
+    }
+
     fn verbosity_items(&self) -> Vec<PickItem> {
         vec![
             PickItem {
@@ -1899,6 +1925,7 @@ impl App {
             PickKind::Theme => self.palette.theme_name().to_string(),
             PickKind::Verbosity => if self.verbose { "high" } else { "low" }.into(),
             PickKind::Provider => self.cfg.active_name.clone(),
+            PickKind::Mode => self.cfg.live_permissions().as_str().into(),
             _ => String::new(),
         }
     }
@@ -1923,6 +1950,7 @@ impl App {
             "agent" => Some(simple("agent", self.agent_items(), PickKind::Agent)),
             "model" => Some(simple("model", self.model_items(), PickKind::Model)),
             "theme" => Some(simple("theme", self.theme_items(), PickKind::Theme)),
+            "mode" => Some(simple("mode", self.mode_items(), PickKind::Mode)),
             "verbosity" => Some(simple(
                 "verbosity",
                 self.verbosity_items(),
@@ -2378,20 +2406,14 @@ impl App {
                     }
                 }
             }
-            "yolo" => {
-                let next = if self.cfg.live_permissions() == crate::config::Permissions::Yolo {
-                    self.launch_permissions
-                } else {
-                    crate::config::Permissions::Yolo
-                };
-                self.cfg.set_permissions(next);
-                let _ = tx.send(Cmd::SetPermissions(next));
-                let line = if next == crate::config::Permissions::Yolo {
-                    "yolo for this session · deny list still applies · path jail off"
-                } else {
-                    "back to the session mode · prompts return"
-                };
-                self.push(Role::Info, format!("{line} ({})", next.as_str()));
+            "mode" => {
+                let picker = self.value_picker("mode", self.mode_items(), PickKind::Mode);
+                self.pending = Some(Pending::Pick(picker));
+                self.dirty = true;
+            }
+            other if other.starts_with("mode ") => {
+                let name = other["mode ".len()..].trim().to_string();
+                self.set_mode(&name, tx);
             }
             "reload" => {
                 let _ = tx.send(Cmd::Reload);
@@ -2839,6 +2861,7 @@ impl App {
                             PickKind::Model => {
                                 self.set_model(&choice.value, tx);
                             }
+                            PickKind::Mode => self.set_mode(&choice.value, tx),
                             PickKind::Verbosity => {
                                 self.verbose = choice.value == "high";
                                 self.push(Role::Info, format!("verbosity: {}", choice.value));
@@ -4547,11 +4570,11 @@ mod tests {
         let rule = a.palette.paint(Role::Error, &"─".repeat(80));
         let normal = a.frame(80, 20);
         assert!(!normal.contains(&error) && !normal.contains(&rule), "{normal:?}");
-        a.run_command("yolo", &tx);
+        a.run_command("mode yolo", &tx);
         let yolo = a.frame(80, 20);
         assert!(yolo.contains(&error), "glyph: {yolo:?}");
         assert!(yolo.contains(&rule), "rule: {yolo:?}");
-        a.run_command("yolo", &tx);
+        a.run_command("mode normal", &tx);
         assert!(!a.frame(80, 20).contains(&error), "yolo colour stayed");
 
         let mut plain = app();
@@ -5001,25 +5024,60 @@ mod tests {
     }
 
     #[test]
-    fn yolo_changes_the_shared_mode_immediately() {
+    fn mode_changes_the_shared_mode_immediately() {
         let mut a = app();
         a.status.streaming = true;
         let (tx, rx) = channel();
-        assert_eq!(
-            a.cfg.live_permissions(),
-            crate::config::Permissions::Normal
-        );
-        a.run_command("yolo", &tx);
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Normal);
+        a.run_command("mode yolo", &tx);
         assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Yolo);
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(Cmd::SetPermissions(crate::config::Permissions::Yolo))
-        ));
-        a.run_command("yolo", &tx);
-        assert_eq!(
-            a.cfg.live_permissions(),
-            crate::config::Permissions::Normal
-        );
+        assert!(matches!(rx.try_recv(), Ok(Cmd::SetPermissions(crate::config::Permissions::Yolo))));
+        a.run_command("mode strict", &tx);
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Strict);
+        assert!(a.entries.last().unwrap().text.starts_with("mode: strict"), "no mode line");
+        // Queued commands each carry their target; the last wins.
+        a.run_command("mode yolo", &tx);
+        a.run_command("mode normal", &tx);
+        let sent: Vec<_> = rx.try_iter().filter_map(|c| match c {
+            Cmd::SetPermissions(m) => Some(m),
+            _ => None,
+        }).collect();
+        assert_eq!(sent.last(), Some(&crate::config::Permissions::Normal));
+    }
+
+    #[test]
+    fn mode_rejects_an_unknown_name() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("mode wild", &tx);
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Normal);
+        assert!(rx.try_recv().is_err(), "an unknown mode reached the worker");
+        let last = a.entries.last().unwrap();
+        assert_eq!(last.role, Role::Error);
+        assert_eq!(last.text, "unknown mode wild; use normal, strict, or yolo");
+    }
+
+    #[test]
+    fn mode_picker_opens_on_the_current_mode() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.cfg.set_permissions(crate::config::Permissions::Strict);
+        a.run_command("mode", &tx);
+        let Some(Pending::Pick(p)) = &a.pending else { panic!("no picker") };
+        assert_eq!(p.items.iter().map(|i| i.value.as_str()).collect::<Vec<_>>(), ["normal", "strict", "yolo"]);
+        assert_eq!(p.items[p.index].value, "strict");
+        assert!(p.items[1].desc.starts_with("current"), "{}", p.items[1].desc);
+        assert!(!p.items[0].desc.contains("current"));
+        a.handle_key(Key::Down, &tx);
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Yolo);
+        // Tab on a partial command opens the values, like other value commands.
+        for c in "/mo".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Tab, &tx);
+        let Some(Pending::Pick(p)) = &a.pending else { panic!("Tab did not open the mode values") };
+        assert_eq!(p.title, "mode");
     }
 
     #[test]

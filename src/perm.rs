@@ -121,6 +121,15 @@ pub fn shell_touches_self_config(command: &str, mode: Permissions) -> Option<Dec
     })
 }
 
+/// The transcript line for a mode change.
+pub fn mode_line(mode: Permissions) -> &'static str {
+    match mode {
+        Permissions::Normal => "mode: normal · unlisted commands ask",
+        Permissions::Strict => "mode: strict · every action asks",
+        Permissions::Yolo => "mode: yolo · deny list still applies · path jail off",
+    }
+}
+
 /// A fetch: `yolo` never asks, `strict` always does, and `normal` asks once
 /// per host per session.
 pub fn classify_fetch(mode: Permissions, host_approved: bool) -> Decision {

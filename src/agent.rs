@@ -112,7 +112,6 @@ pub fn describe_agent(agent: &Agent, cfg: &Config) -> String {
 
 pub struct Session {
     pub cfg: Config,
-    launch_permissions: Permissions,
     pub tools: Tools,
     pub history: Vec<Message>,
     pub cancel: std::sync::Arc<AtomicBool>,
@@ -155,7 +154,6 @@ impl Session {
         let memory = Memory::discover(&cfg, &root);
         let skills = crate::store::load_skills(&cfg, &root);
         Self {
-            launch_permissions: cfg.live_permissions(),
             cfg,
             tools: {
                 let mut t = Tools::new(root, out_dir);
@@ -667,22 +665,6 @@ impl Session {
     pub fn set_permissions(&mut self, mode: Permissions) {
         self.cfg.set_permissions(mode);
         self.tools.jail = crate::perm::jail_enabled(mode);
-    }
-
-    /// Switch between the launch mode and `yolo` for this session only.
-    pub fn toggle_yolo(&mut self) -> &'static str {
-        let next = if self.cfg.live_permissions() == Permissions::Yolo {
-            self.launch_permissions
-        } else {
-            Permissions::Yolo
-        };
-        self.cfg.set_permissions(next);
-        self.tools.jail = crate::perm::jail_enabled(next);
-        if next == Permissions::Yolo {
-            "yolo for this session · deny list still applies · path jail off"
-        } else {
-            "back to the session mode · prompts return"
-        }
     }
 
     /// Tell the model how wide the screen is, once per change.
@@ -2216,10 +2198,10 @@ mod tests {
             std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
         );
         assert!(s.tools.jail, "strict starts with the jail");
-        s.toggle_yolo();
+        s.set_permissions(Permissions::Yolo);
         assert_eq!(s.cfg.permissions, Permissions::Yolo);
         assert!(!s.tools.jail, "yolo left the jail on");
-        s.toggle_yolo();
+        s.set_permissions(Permissions::Strict);
         assert_eq!(s.cfg.permissions, Permissions::Strict, "did not restore strict");
         assert!(s.tools.jail, "the jail did not come back");
     }

@@ -20,7 +20,7 @@ const LINE_KEYS: &[(&str, &str)] = &[("Enter", "send"), ("Ctrl+D", "leave")];
 /// Commands by area, named from `COMMANDS`.
 const GROUPS: &[(&str, &[&str])] = &[
     ("Conversation", &["/new", "/compact", "/think", "/stash"]),
-    ("Model and agent", &["/model", "/provider", "/agent", "/yolo", "/reload"]),
+    ("Model and agent", &["/model", "/provider", "/agent", "/mode", "/reload"]),
     ("Workspace", &["/cwd", "/cd", "/image", "/shell"]),
     ("Session", &["/sessions", "/fork", "/rename", "/quit"]),
     ("Interface", &["/help", "/theme", "/verbosity"]),
@@ -34,7 +34,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
     ("/think", "toggle thinking for the next turn"),
-    ("/yolo", "prompt-free for this session"),
+    ("/mode", "normal, strict, or yolo for this session"),
     ("/verbosity", "tool detail: low, high, or pick"),
     ("/cwd", "show the session directory"),
     ("/cd", "browse or change the directory"),
