@@ -26,8 +26,13 @@ Do not change source, config, or assets outside an OpenSpec change.
    ```sh
    cargo test
    openspec validate --all --strict
-   ./scripts/size.sh      # binary under 776,000 bytes
+   ./scripts/size.sh      # reports the size and its change; never fails
    ```
+
+   Keep the binary as small as possible; there is no fixed limit. State a
+   change's expected bytes in its design, and when archiving run
+   `./scripts/size.sh --record` and put the measured bytes in the archive
+   commit message.
 4. Commit after every ticked task, with `jj commit`. One task, one commit.
    Not at the end of a batch: batching is how the archive move in this repo was
    briefly left uncommitted, and a commit you have not made is not a checkpoint.

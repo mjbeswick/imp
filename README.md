@@ -247,7 +247,7 @@ removed at startup.
 ```sh
 cargo test
 openspec validate --all --strict
-./scripts/size.sh
+./scripts/size.sh   # size report; the goal is as small as possible
 ```
 
 This repository uses OpenSpec: source changes need an active change. See
