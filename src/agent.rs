@@ -742,14 +742,27 @@ impl Session {
                         Decision::Allow => {}
                     }
                 }
-                match perm::classify_command(cmd, self.cfg.live_permissions(), self.cfg.allow_sudo) {
-                    Decision::Deny(why) => return (false, why),
-                    Decision::Ask => {
-                        if !hooks.confirm(&format!("run `{cmd}`")) {
-                            return (false, "refused: the user declined to run this command".into());
+                let mode = self.cfg.live_permissions();
+                let decision = perm::classify_command(cmd, mode, self.cfg.allow_sudo);
+                // A plain curl GET shares the per-host fetch approval.
+                let get = perm::plain_get(cmd).filter(|_| !matches!(decision, Decision::Deny(_)));
+                if let Some(host) = get {
+                    if perm::classify_fetch(mode, self.fetch_hosts.contains(&host)) == Decision::Ask {
+                        if !hooks.confirm(&format!("fetch from {host} for this session")) {
+                            return (false, format!("refused: the user declined fetching from {host}"));
                         }
+                        self.fetch_hosts.insert(host);
                     }
-                    Decision::Allow => {}
+                } else {
+                    match decision {
+                        Decision::Deny(why) => return (false, why),
+                        Decision::Ask => {
+                            if !hooks.confirm(&format!("run `{cmd}`")) {
+                                return (false, "refused: the user declined to run this command".into());
+                            }
+                        }
+                        Decision::Allow => {}
+                    }
                 }
                 // Only after the deny list, the opt-in, and any confirmation.
                 if cmd.split_whitespace().next() == Some("sudo") {
@@ -1800,6 +1813,27 @@ mod tests {
         let _ = strict.run_tool("fetch", &json!({"url": c}), &mut hooks);
         let _ = strict.run_tool("fetch", &json!({"url": "http://127.0.0.1:9/"}), &mut hooks);
         assert_eq!(hooks.confirms, 2, "strict did not ask every time");
+    }
+
+    #[test]
+    fn curl_gets_share_the_fetch_approval() {
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Normal);
+        let mut hooks = CountingHooks::default();
+        let a = serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\none");
+        assert!(s.run_tool("fetch", &json!({"url": a}), &mut hooks).0);
+        assert_eq!(hooks.confirms, 1);
+        let b = serve_once("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\ntwo");
+        let port = a.trim_start_matches("http://127.0.0.1:").split('/').next().unwrap().to_string();
+        let same = b.replace(b.trim_start_matches("http://127.0.0.1:").split('/').next().unwrap(), &port);
+        let _ = s.run_tool("bash", &json!({"command": format!("curl -s {same} | head -c 2")}), &mut hooks);
+        assert_eq!(hooks.confirms, 1, "curl to an approved host asked");
+        let _ = s.run_tool("bash", &json!({"command": format!("curl -s {b}")}), &mut hooks);
+        assert_eq!(hooks.confirms, 2, "curl to a new host did not ask");
+        let _ = s.run_tool("fetch", &json!({"url": b}), &mut hooks);
+        assert_eq!(hooks.confirms, 2, "fetch after a curl approval asked");
+        let _ = s.run_tool("bash", &json!({"command": format!("curl -X POST {b}")}), &mut hooks);
+        assert_eq!(hooks.confirms, 3, "a post did not ask");
     }
 
     #[test]
