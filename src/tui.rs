@@ -1237,9 +1237,6 @@ impl Picker {
                 "← up".into(),
                 "Esc close".into(),
             ],
-            PickKind::Inbox => {
-                return "Enter open · y n s a answer · x close · Esc back".into();
-            }
             PickKind::Keys => return "? or Esc close".into(),
             _ => vec!["Enter choose".into(), "Esc close".into()],
         };
@@ -1869,34 +1866,21 @@ impl App {
                     None => (&self.entries, &self.status, &self.pending, self.replied, self.touched),
                     Some(p) => (&p.entries, &p.status, &p.pending, p.replied, p.touched),
                 };
-                let last = entries
-                    .iter()
-                    .rev()
-                    .find(|e| e.role == Role::Assistant)
-                    .and_then(|e| e.text.lines().rev().find(|l| !l.trim().is_empty()))
-                    .unwrap_or("")
-                    .to_string();
                 let mut actions = vec![('x', "close")];
-                let (rank, state, line) = match pending {
-                    Some(Pending::Confirm { what, always, .. }) => {
+                let (rank, state) = match pending {
+                    Some(Pending::Confirm { always, .. }) => {
                         actions = vec![('y', "yes"), ('n', "no"), ('x', "close")];
                         if *always {
                             actions.splice(2..2, [('s', "session"), ('a', "always")]);
                         }
-                        (0, "needs approval", what.clone())
+                        (0, "needs approval")
                     }
-                    Some(Pending::Question { q, .. }) => (0, "needs approval", q.clone()),
-                    _ if replied => (1, "replied", last),
-                    _ if status.streaming => (2, "working", last),
-                    _ => (3, "idle", last),
+                    Some(Pending::Question { .. }) => (0, "needs approval"),
+                    _ if replied => (1, "replied"),
+                    _ if status.streaming => (2, "working"),
+                    _ => (3, "idle"),
                 };
-                let line = line.lines().next().unwrap_or("").to_string();
-                let age = age(touched.elapsed());
-                let desc = if line.is_empty() {
-                    format!("{state} · {age}")
-                } else {
-                    format!("{state} · {line} · {age}")
-                };
+                let desc = format!("{state} · {}", age(touched.elapsed()));
                 let item = PickItem { label: title_of(entries), value: i.to_string(), desc, actions };
                 (rank, touched, item)
             })
@@ -3543,6 +3527,16 @@ impl App {
 
     /// One frame as bytes. No terminal access, so it can be tested.
     pub fn frame(&mut self, cols: usize, rows: usize) -> String {
+        if self.inbox.is_some() {
+            let mut screen = String::from("\x1b[?25l\x1b[?7l\x1b[H");
+            for row in self.inbox_rows(cols, rows.saturating_sub(1).max(1)) {
+                screen.push_str(&format!("\x1b[2K{row}\r\n"));
+            }
+            screen.push_str("\x1b[2K\x1b[J");
+            screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
+            screen.push_str("\x1b[?7h");
+            return screen;
+        }
         let composer = self.composer(cols, rows.saturating_sub(1).max(1));
         // A rule sets the composer apart, unless the screen is too short.
         let rule = usize::from(rows >= 8);
@@ -3742,12 +3736,8 @@ impl App {
     /// The confirmation row: question, key chips, and the countdown at the
     /// right edge. Keys are bold accent, labels and countdown muted.
     fn confirm_row(&self, what: &str, always: bool, cols: usize) -> String {
-        let chips: &[(&str, &str)] = if always {
-            &[("y", "yes"), ("n", "no"), ("s", "session"), ("a", "always")]
-        } else {
-            &[("y", "yes"), ("n", "no")]
-        };
-        let keys = chips.iter().map(|(k, l)| format!("[{k}] {l}")).collect::<Vec<_>>().join("  ");
+        let chips: &[(&str, &str)] = if always { &ALL_CHIPS } else { &ALL_CHIPS[..2] };
+        let keys = chip_text(chips);
         let secs = format!("{}s", self.seconds_left());
         // "▌ " + question + "   " + chips + at least one space + countdown.
         let fixed = 2 + 3 + keys.chars().count() + 1 + secs.len();
@@ -3770,6 +3760,16 @@ impl App {
             return format!("{bell}{}", p.paint(Role::Info, &fit(&plain, cols)));
         }
         let mut row = format!("{bell}{}   ", p.paint(Role::Info, &format!("▌ {ask}")));
+        row.push_str(&self.paint_chips(chips));
+        row.push_str(&" ".repeat(cols - used));
+        row.push_str(&p.paint(Role::Thinking, &secs));
+        row
+    }
+
+    /// Answer chips: key letters bold accent, brackets and labels muted.
+    fn paint_chips(&self, chips: &[(&str, &str)]) -> String {
+        let p = &self.palette;
+        let mut row = String::new();
         for (i, (k, l)) in chips.iter().enumerate() {
             if i > 0 {
                 row.push_str("  ");
@@ -3778,9 +3778,115 @@ impl App {
             let key = if p.on { format!("\x1b[1m{key}") } else { key };
             row.push_str(&format!("{}{key}{}", p.paint(Role::Thinking, "["), p.paint(Role::Thinking, &format!("] {l}"))));
         }
-        row.push_str(&" ".repeat(cols - used));
-        row.push_str(&p.paint(Role::Thinking, &secs));
         row
+    }
+
+    /// The inbox, full screen above the status line: a header, one card per
+    /// session, and a footer for the highlighted card.
+    fn inbox_rows(&self, cols: usize, rows: usize) -> Vec<String> {
+        let Some(picker) = &self.inbox else { return Vec::new() };
+        let p = &self.palette;
+        let width = cols.saturating_sub(5);
+        let mut body: Vec<String> = Vec::new();
+        let (mut hl_start, mut hl_end) = (0, 0);
+        for (n, item) in picker.items.iter().enumerate() {
+            let Ok(i) = item.value.parse::<usize>() else { continue };
+            let here = n == picker.index;
+            if here {
+                hl_start = body.len();
+            }
+            let right = if i == self.at { format!("{} · in view", item.desc) } else { item.desc.clone() };
+            let state = item.desc.split(" · ").next().unwrap_or("");
+            let tone = match state {
+                "needs approval" => Role::Info,
+                "replied" => Role::Success,
+                "working" => Role::Tool,
+                _ => Role::Thinking,
+            };
+            let lead = format!("{} {}  ", if here { "▸" } else { " " }, i + 1);
+            let room = cols.saturating_sub(lead.chars().count() + right.chars().count() + 2);
+            let title = fit(&item.label, room);
+            let gap = cols.saturating_sub(lead.chars().count() + title.chars().count() + right.chars().count());
+            let title = if here {
+                let t = p.paint(Role::Info, &title);
+                if p.on { format!("\x1b[1m{t}") } else { t }
+            } else {
+                p.paint(Role::Assistant, &title)
+            };
+            body.push(format!("{}{title}{}{}", p.paint(Role::Info, &lead), " ".repeat(gap.max(1)), p.paint(tone, &right)));
+            let (lines, chips) = self.card_detail(i, width);
+            for line in lines {
+                body.push(format!("     {}", p.paint(Role::Thinking, &line)));
+            }
+            if let Some(always) = chips {
+                let set: &[(&str, &str)] = if always { &ALL_CHIPS } else { &ALL_CHIPS[..2] };
+                // Narrow screens keep the keys and drop the labels.
+                let bare: Vec<(&str, &str)> = set.iter().map(|(k, _)| (*k, "")).collect();
+                let set = if chip_text(set).chars().count() <= width { set } else { &bare[..] };
+                body.push(format!("     {}", self.paint_chips(set)));
+            }
+            if here {
+                hl_end = body.len();
+            }
+        }
+        // Header and footer take two rows; scroll so the highlight shows.
+        let space = rows.saturating_sub(2).max(1);
+        let start = if hl_end > space { (hl_end - space).min(hl_start) } else { 0 };
+        let title = if picker.title == "inbox" {
+            format!("inbox · {} live", self.panes.len())
+        } else {
+            picker.title.clone()
+        };
+        let back = "Esc back";
+        let gap = cols.saturating_sub(title.chars().count() + back.len());
+        let mut out = vec![format!("{}{}{}", p.paint(Role::Info, &fit(&title, cols)), " ".repeat(gap), p.paint(Role::Thinking, back))];
+        out.extend(body.into_iter().skip(start).take(space));
+        while out.len() < rows.saturating_sub(1) {
+            out.push(String::new());
+        }
+        out.push(p.paint(Role::Thinking, &fit(&self.inbox_footer(), cols)));
+        out
+    }
+
+    /// The keys that work on the highlighted card, and no others.
+    fn inbox_footer(&self) -> String {
+        let mut parts = vec!["Enter open".to_string()];
+        let actions = self.inbox.as_ref().and_then(|p| p.selected()).map(|i| i.actions.clone()).unwrap_or_default();
+        parts.extend(actions.iter().map(|(k, l)| format!("{k} {l}")));
+        if self.panes.len() > 1 {
+            parts.push(format!("1-{} jump", self.panes.len()));
+        }
+        parts.join(" · ")
+    }
+
+    /// What a session needs or is doing, and whether it shows answer chips.
+    fn card_detail(&self, i: usize, width: usize) -> (Vec<String>, Option<bool>) {
+        let (entries, status, pending, replied, tool) = match &self.panes[i] {
+            None => (&self.entries, &self.status, &self.pending, self.replied, &self.tool),
+            Some(p) => (&p.entries, &p.status, &p.pending, p.replied, &p.tool),
+        };
+        let reply = |n: usize| -> Vec<String> {
+            let text = entries.iter().rev().find(|e| e.role == Role::Assistant).map(|e| e.text.as_str()).unwrap_or("");
+            let mut lines: Vec<String> = text
+                .lines()
+                .rev()
+                .filter(|l| !l.trim().is_empty())
+                .take(n)
+                .map(|l| fit(&crate::render::clean(l.trim()), width))
+                .collect();
+            lines.reverse();
+            lines
+        };
+        match pending {
+            Some(Pending::Confirm { what, always, .. }) => (vec![squeeze(what, width)], Some(*always)),
+            Some(Pending::Question { q, .. }) => (vec![fit(&crate::render::clean(q), width)], None),
+            _ if replied => (reply(2), None),
+            _ if status.streaming => match tool {
+                Some(row) => (vec![squeeze(&crate::render::clean(&row.summary), width)], None),
+                None => (reply(1), None),
+            },
+            _ => (reply(1), None),
+        }
     }
 
     /// A single row for an open question or confirmation, if any.
@@ -3843,7 +3949,6 @@ impl App {
     /// transcript, and the next full frame replaces it, leaving no residue.
     fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize)> {
         let picker = match &self.pending {
-            _ if self.inbox.is_some() => self.inbox.as_ref()?,
             Some(Pending::Pick(picker)) => picker,
             Some(Pending::ConfirmDelete { picker, .. }) => &**picker,
             _ => return None,
@@ -4141,6 +4246,26 @@ fn extract_images(text: &str, root: &std::path::Path) -> (String, Vec<crate::api
         keep.push(token);
     }
     (keep.join(" "), images)
+}
+
+const ALL_CHIPS: [(&str, &str); 4] = [("y", "yes"), ("n", "no"), ("s", "session"), ("a", "always")];
+
+fn chip_text(chips: &[(&str, &str)]) -> String {
+    chips.iter().map(|(k, l)| format!("[{k}] {l}")).collect::<Vec<_>>().join("  ")
+}
+
+/// Cut the middle out of a long line, keeping both ends.
+fn squeeze(text: &str, cols: usize) -> String {
+    let text = text.replace('\n', " ");
+    let count = text.chars().count();
+    if count <= cols || cols < 3 {
+        return fit(&text, cols);
+    }
+    let head = (cols - 1) / 2;
+    let tail = cols - 1 - head;
+    let front: String = text.chars().take(head).collect();
+    let back: String = text.chars().skip(count - tail).collect();
+    format!("{front}…{back}")
 }
 
 fn fit(text: &str, cols: usize) -> String {
@@ -4935,13 +5060,18 @@ mod tests {
         let rows: Vec<(&str, &str)> = inbox.items.iter().map(|i| (i.label.as_str(), i.desc.as_str())).collect();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].0, "run the tests");
-        assert!(rows[0].1.starts_with("needs approval · run `npm test`"), "{rows:?}");
-        assert!(rows[1].1.starts_with("replied · All done."), "{rows:?}");
+        assert!(rows[0].1.starts_with("needs approval · "), "{rows:?}");
+        assert!(rows[1].1.starts_with("replied · "), "{rows:?}");
         assert!(rows[2].1.starts_with("idle"), "{rows:?}");
         assert_eq!(inbox.index, 0);
-        assert_eq!(inbox.footer(), "Enter open · y n s a answer · x close · Esc back");
-        let frame = a.frame(80, 20);
-        assert!(frame.contains("inbox"), "{frame}");
+        assert_eq!(
+            a.inbox_footer(),
+            "Enter open · y yes · n no · s session · a always · x close · 1-3 jump"
+        );
+        let frame = strip(&a.frame(80, 20));
+        assert!(frame.contains("inbox · 3 live"), "{frame}");
+        assert!(frame.contains("All done."), "the reply is missing: {frame}");
+        assert!(frame.lines().last().unwrap().contains("3/3"), "the status line went: {frame}");
         a.handle_key(Key::Ctrl('o'), &tx);
         assert!(a.inbox.is_none(), "Ctrl+O did not close it");
         a.run_command("inbox", &tx);
@@ -4958,11 +5088,33 @@ mod tests {
         a.handle_key(Key::Char('a'), &tx);
         assert_eq!(answers.try_recv().ok(), Some(Answer::Always));
         assert_eq!(a.at, 2, "answering moved the view");
-        let footer = a.inbox.as_ref().unwrap().footer();
-        assert!(footer.contains("y n s a answer"), "{footer}");
+        let footer = a.inbox_footer();
+        assert!(!footer.contains("y yes"), "a working card offers answers: {footer}");
         let inbox = a.inbox.as_ref().expect("the inbox closed");
         let row = inbox.items.iter().find(|i| i.label == "run the tests").unwrap();
         assert!(row.desc.starts_with("working"), "{}", row.desc);
+    }
+
+    #[test]
+    fn inbox_cards_show_titles_commands_and_chips() {
+        let (mut a, _answers) = inbox_app("cards");
+        let (tx, _rx) = channel();
+        a.entries.clear();
+        a.push(Role::User, "Give me the weather for Woking");
+        a.handle_key(Key::Ctrl('o'), &tx);
+        let frame = strip(&a.frame(80, 20));
+        assert!(frame.contains("3  Give me the weather for Woking"), "{frame}");
+        assert!(frame.contains("idle · 0s · in view"), "{frame}");
+        assert!(frame.contains("run `npm test`"), "no command: {frame}");
+        assert!(frame.contains("[y] yes  [n] no  [s] session  [a] always"), "no chips: {frame}");
+        assert!(frame.contains("▸ 1  run the tests"), "{frame}");
+        a.handle_key(Key::Down, &tx);
+        a.handle_key(Key::Down, &tx);
+        assert_eq!(a.inbox_footer(), "Enter open · x close · 1-3 jump");
+        let narrow = strip(&a.frame(40, 8));
+        assert!(narrow.lines().all(|l| l.chars().count() <= 40), "{narrow}");
+        assert!(narrow.contains("▸ 3"), "the highlight scrolled away: {narrow}");
+        assert_eq!(squeeze("abcdefghij", 7), "abc…hij");
     }
 
     #[test]
