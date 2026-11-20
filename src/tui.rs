@@ -1879,7 +1879,23 @@ impl App {
         if matches!(key, Key::Ctrl('o')) && !matches!(self.pending, Some(Pending::Pick(_))) {
             self.go_next();
         } else {
+            // A key that answers a prompt or starts a turn hands the session off.
+            let asked = matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. }));
+            let (at, was_working) = (self.at, self.status.streaming);
+            let interrupt = matches!(key, Key::Ctrl('c'));
             self.handle_key_inner(key, tx);
+            let handed = self.at == at
+                && !interrupt
+                && ((asked && self.pending.is_none()) || (!was_working && self.status.streaming));
+            if handed && self.cfg.auto_next {
+                if let Some(&i) = self.queue().first() {
+                    let prompt = self.panes[i].as_ref().is_some_and(|p| p.pending.is_some());
+                    let state = if prompt { "needs you" } else { "replied" };
+                    self.show(i);
+                    let note = format!("→ {}/{} {} · {state}", i + 1, self.panes.len(), title_of(&self.entries));
+                    self.push(Role::Info, note);
+                }
+            }
         }
         self.sync_preview();
     }
@@ -4856,6 +4872,29 @@ mod tests {
         assert_eq!(a.entries.last().unwrap().text, "nothing waiting");
         a.run_command("next", &tx);
         assert_eq!(a.entries.last().unwrap().text, "nothing waiting", "/next differs from Ctrl+O");
+    }
+
+    #[test]
+    fn handing_off_moves_to_the_next_waiting_session() {
+        let (mut a, _answers) = inbox_app("handoff");
+        let (tx, _rx) = channel();
+        // Typing never switches, even with sessions waiting.
+        a.handle_key(Key::Char('h'), &tx);
+        a.handle_key(Key::Char('i'), &tx);
+        assert_eq!(a.at, 2, "typing switched sessions");
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.at, 0, "sending did not move on");
+        assert!(a.entries.last().unwrap().text.starts_with("→ 1/3 run the tests · needs you"), "{}", a.entries.last().unwrap().text);
+        // Answering hands off too: the reply is next.
+        a.handle_key(Key::Char('y'), &tx);
+        assert_eq!(a.at, 1);
+        assert_eq!(a.entries.last().unwrap().text, "→ 2/3 summarise the log · replied");
+
+        let (mut off, _answers) = inbox_app("handoff-off");
+        off.cfg.auto_next = false;
+        off.handle_key(Key::Char('x'), &tx);
+        off.handle_key(Key::Enter, &tx);
+        assert_eq!(off.at, 2, "auto_next=off still moved");
     }
 
     #[test]

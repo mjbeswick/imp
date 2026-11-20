@@ -144,6 +144,8 @@ pub struct Config {
     pub color: ColorMode,
     /// Capture the mouse wheel in the chat.
     pub mouse: bool,
+    /// Move to the next waiting session after handing one work.
+    pub auto_next: bool,
     pub links: Links,
     pub skills_dir: Option<PathBuf>,
 }
@@ -171,6 +173,7 @@ impl Default for Config {
             thinking: false,
             color: ColorMode::Auto,
             mouse: true,
+            auto_next: true,
             links: Links::Auto,
             skills_dir: None,
         }
@@ -238,6 +241,7 @@ impl Config {
             "links" => self.links = Links::parse(value)?,
             "color" => self.color = ColorMode::parse(value)?,
             "mouse" => self.mouse = parse_bool(value)?,
+            "auto_next" => self.auto_next = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Managed profile lines were read before this pass.
             key if key.starts_with("provider.") => {}
