@@ -57,3 +57,16 @@ fn a_bang_line_on_the_deny_list_is_refused() {
     assert!(out.contains("refused"), "{out}");
     assert!(!out.contains("  mkfs-probe"), "it ran: {out}");
 }
+
+#[test]
+fn mode_lists_and_sets_the_permission_mode() {
+    let (out, err) = run("/mode\n/mode strict\n/mode\n/mode wild\n/quit\n");
+    let lists: Vec<&str> = out.split("normal").skip(1).collect();
+    assert_eq!(lists.len(), 2, "{out}");
+    assert!(lists[0].lines().next().unwrap().contains("current"), "normal not current first: {out}");
+    assert!(out.contains("mode: strict · every action asks"), "{out}");
+    let strict_row = lists[1].lines().find(|l| l.contains("strict")).unwrap();
+    assert!(strict_row.contains("current"), "strict not current: {out}");
+    assert!(err.contains("unknown mode wild; use normal, strict, or yolo"), "{err}");
+    assert!(!err.contains("127.0.0.1"), "a request was attempted: {err}");
+}

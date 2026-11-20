@@ -360,9 +360,27 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     session.cfg.thinking = !session.cfg.thinking;
                     println!("thinking: {}", if session.cfg.thinking { "on" } else { "off" });
                 }
-                "yolo" => {
-                    let line = session.toggle_yolo();
-                    println!("{line} ({})", session.cfg.permissions.as_str());
+                other if other == "mode" || other.starts_with("mode ") => {
+                    match other.strip_prefix("mode").unwrap_or("").trim() {
+                        "" => print!(
+                            "{}",
+                            value_rows(
+                                &[
+                                    ("normal".into(), "unlisted commands ask".into()),
+                                    ("strict".into(), "every action asks".into()),
+                                    ("yolo".into(), "never asks; deny list holds".into()),
+                                ],
+                                session.cfg.live_permissions().as_str(),
+                            )
+                        ),
+                        name => match config::Permissions::parse(name) {
+                            Ok(mode) => {
+                                session.set_permissions(mode);
+                                println!("{}", perm::mode_line(mode));
+                            }
+                            Err(_) => eprintln!("unknown mode {name}; use normal, strict, or yolo"),
+                        },
+                    }
                 }
                 "reload" => match session.reload() {
                     Ok(()) => println!("reloaded; prompt cache reset"),
