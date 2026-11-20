@@ -4,7 +4,7 @@
 //! They talk over two channels, and confirmations block the worker until
 //! the user answers.
 
-use crate::agent::{Hooks, Session, Ui};
+use crate::agent::{Answer, Hooks, Session, Ui};
 use crate::config::{ColorMode, Config};
 use std::ffi::{c_int, c_ulong};
 use std::io::{Read, Write};
@@ -630,7 +630,9 @@ pub enum Ev {
     },
     Confirm {
         what: String,
-        reply: Sender<bool>,
+        reply: Sender<Answer>,
+        /// Whether `a` (always) is offered.
+        always: bool,
     },
     Question {
         q: String,
@@ -688,32 +690,11 @@ impl Hooks for WorkerHooks {
     }
 
     fn confirm(&mut self, what: &str) -> bool {
-        self.waited = Duration::ZERO;
-        let opened = Instant::now();
-        let (tx, rx) = channel();
-        if self
-            .tx
-            .send(Ev::Confirm {
-                what: what.to_string(),
-                reply: tx,
-            })
-            .is_err()
-        {
-            return false;
-        }
-        let answered = wait_for_answer(&rx, CONFIRM_WAIT);
-        self.waited = opened.elapsed();
-        match answered {
-            Some(answer) => answer,
-            None => {
-                self.cancel.store(true, Ordering::Relaxed);
-                let _ = self.tx.send(Ev::Stop(format!(
-                    "no answer within {}s; nothing ran and the turn stopped",
-                    CONFIRM_WAIT.as_secs()
-                )));
-                false
-            }
-        }
+        self.answer(what, false) == Answer::Yes
+    }
+
+    fn confirm_always(&mut self, what: &str) -> Answer {
+        self.answer(what, true)
     }
 
     fn run_attached(&mut self, command: &str) -> Option<i32> {
@@ -757,8 +738,40 @@ impl Hooks for WorkerHooks {
     }
 }
 
+impl WorkerHooks {
+    fn answer(&mut self, what: &str, always: bool) -> Answer {
+        self.waited = Duration::ZERO;
+        let opened = Instant::now();
+        let (tx, rx) = channel();
+        if self
+            .tx
+            .send(Ev::Confirm {
+                what: what.to_string(),
+                reply: tx,
+                always,
+            })
+            .is_err()
+        {
+            return Answer::No;
+        }
+        let answered = wait_for_answer(&rx, CONFIRM_WAIT);
+        self.waited = opened.elapsed();
+        match answered {
+            Some(answer) => answer,
+            None => {
+                self.cancel.store(true, Ordering::Relaxed);
+                let _ = self.tx.send(Ev::Stop(format!(
+                    "no answer within {}s; nothing ran and the turn stopped",
+                    CONFIRM_WAIT.as_secs()
+                )));
+                Answer::No
+            }
+        }
+    }
+}
+
 /// Wait for an answer. `None` means none arrived in time.
-fn wait_for_answer(rx: &Receiver<bool>, wait: Duration) -> Option<bool> {
+fn wait_for_answer(rx: &Receiver<Answer>, wait: Duration) -> Option<Answer> {
     rx.recv_timeout(wait).ok()
 }
 
@@ -875,7 +888,9 @@ enum Pending {
     Pick(Picker),
     Confirm {
         what: String,
-        reply: Sender<bool>,
+        reply: Sender<Answer>,
+        /// Whether `a` (always) is offered.
+        always: bool,
     },
     Prompt {
         label: String,
@@ -1499,8 +1514,8 @@ impl App {
                 }
                 self.dirty = true;
             }
-            Ev::Confirm { what, reply } => {
-                self.pending = Some(Pending::Confirm { what, reply });
+            Ev::Confirm { what, reply, always } => {
+                self.pending = Some(Pending::Confirm { what, reply, always });
                 self.pending_since = Some(Instant::now());
                 self.bell_pending = true;
                 self.dirty = true;
@@ -2922,17 +2937,21 @@ impl App {
                 self.pending = Some(Pending::Pick(picker));
                 self.dirty = true;
             }
-            Pending::Confirm { what, reply } => {
-                let yes = matches!(key, Key::Char('y') | Key::Char('Y') | Key::Enter);
-                if matches!(key, Key::Esc) || matches!(key, Key::Char('n') | Key::Char('N')) {
+            Pending::Confirm { what, reply, always } => {
+                let answer = match key {
+                    Key::Char('y' | 'Y') | Key::Enter => Answer::Yes,
+                    Key::Char('a' | 'A') if always => Answer::Always,
+                    Key::Esc | Key::Char('n' | 'N') => Answer::No,
+                    _ => {
+                        self.pending = Some(Pending::Confirm { what, reply, always });
+                        return;
+                    }
+                };
+                // The tool row carries the result, so approval needs no row of its own.
+                if answer == Answer::No {
                     self.push(Role::Info, format!("declined: {what}"));
-                } else if yes {
-                    // The tool row carries the result, so approval needs no row of its own.
-                } else {
-                    self.pending = Some(Pending::Confirm { what, reply });
-                    return;
                 }
-                let _ = reply.send(yes);
+                let _ = reply.send(answer);
                 self.dirty = true;
             }
             Pending::Question {
@@ -3277,7 +3296,7 @@ impl App {
         if let Some(pending) = &self.pending {
             let text = match pending {
                 Pending::Pick(_) => return None,
-                Pending::Confirm { what, .. } => {
+                Pending::Confirm { what, always, .. } => {
                     // A labelled row hides the command, so the question names it.
                     let shown = self.tool.as_ref().is_none_or(|row| {
                         let command = what.split('`').nth(1).unwrap_or(what);
@@ -3287,9 +3306,10 @@ impl App {
                         verb(what).to_string()
                     } else {
                         // Leave room for the answer hint and the countdown.
-                        format!("{}?", fit(what, cols.saturating_sub(18)))
+                        format!("{}?", fit(what, cols.saturating_sub(36)))
                     };
-                    format!("{ask} y/N  ({}s)", self.seconds_left())
+                    let keys = if *always { "y yes · n no · a always" } else { "y yes · n no" };
+                    format!("{ask} {keys}  ({}s)", self.seconds_left())
                 }
                 Pending::ConfirmDelete { id, title, .. } if title.is_empty() => {
                     format!("delete {id}? y/N")
@@ -4351,11 +4371,11 @@ mod tests {
         let mut a = app();
         let long = format!("run `{}`", "cat openspec/changes/thing.md; ".repeat(8));
         let (reply, _rx) = channel();
-        a.apply(Ev::Confirm { what: long, reply });
+        a.apply(Ev::Confirm { what: long, reply, always: false });
         let out = a.frame(80, 12);
         let row = out
             .lines()
-            .find(|l| l.contains("y/N"))
+            .find(|l| l.contains("y yes · n no"))
             .unwrap_or_else(|| panic!("no answer hint in {out:?}"));
         assert!(row.contains('s'), "no seconds left: {row:?}");
         assert!(
@@ -4371,6 +4391,7 @@ mod tests {
         a.apply(Ev::Confirm {
             what: "run `ls`".into(),
             reply,
+            always: false,
         });
         a.status.streaming = true;
         let (tx, _cmds) = channel();
@@ -4378,7 +4399,7 @@ mod tests {
         assert!(a.pending.is_none(), "the prompt stayed open");
         assert_eq!(
             rx.try_recv().ok(),
-            Some(false),
+            Some(Answer::No),
             "the prompt was not refused"
         );
         assert!(!a.quit, "Esc quit the whole interface");
@@ -4391,6 +4412,7 @@ mod tests {
         a.apply(Ev::Confirm {
             what: "run `ls`".into(),
             reply,
+            always: false,
         });
         assert!(a.frame(80, 12).contains('\u{7}'), "no bell on a new prompt");
         a.bell_pending = false;
@@ -4409,9 +4431,9 @@ mod tests {
             args: "{}".into(),
         });
         let (reply, _rx) = channel();
-        a.apply(Ev::Confirm { what: "run `find . | wc -l`".into(), reply });
+        a.apply(Ev::Confirm { what: "run `find . | wc -l`".into(), reply, always: false });
         let frame = strip(&a.frame(80, 20));
-        assert!(frame.contains("run `find . | wc -l`? y/N"), "{frame:?}");
+        assert!(frame.contains("run `find . | wc -l`? y yes · n no"), "{frame:?}");
     }
 
     #[test]
@@ -4421,6 +4443,7 @@ mod tests {
         a.apply(Ev::Confirm {
             what: "run `rm -rf build`".into(),
             reply,
+            always: false,
         });
         let first = countdown(&a.frame(80, 12));
         a.pending_since = Some(a.pending_since.expect("pending") - Duration::from_secs(10));
@@ -4442,7 +4465,7 @@ mod tests {
 
     #[test]
     fn an_unanswered_prompt_times_out() {
-        let (_tx, rx) = channel::<bool>();
+        let (_tx, rx) = channel::<Answer>();
         assert_eq!(
             wait_for_answer(&rx, Duration::from_millis(50)),
             None,
@@ -4451,10 +4474,29 @@ mod tests {
     }
 
     #[test]
+    fn always_is_answered_only_where_offered() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        assert!(a.frame(80, 12).contains("y yes · n no · a always"));
+        a.handle_key(Key::Char('a'), &tx);
+        assert_eq!(rx.try_recv().ok(), Some(Answer::Always));
+
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `a && b`".into(), reply, always: false });
+        let frame = a.frame(80, 12);
+        assert!(frame.contains("y yes · n no") && !frame.contains("a always"), "{frame}");
+        a.handle_key(Key::Char('a'), &tx);
+        assert!(rx.try_recv().is_err(), "a answered a prompt that did not offer it");
+        assert!(matches!(a.pending, Some(Pending::Confirm { .. })));
+    }
+
+    #[test]
     fn an_answered_prompt_returns_at_once() {
-        let (tx, rx) = channel::<bool>();
-        tx.send(true).expect("send answer");
-        assert_eq!(wait_for_answer(&rx, Duration::from_secs(5)), Some(true));
+        let (tx, rx) = channel::<Answer>();
+        tx.send(Answer::Yes).expect("send answer");
+        assert_eq!(wait_for_answer(&rx, Duration::from_secs(5)), Some(Answer::Yes));
     }
 
     #[test]
@@ -4464,6 +4506,7 @@ mod tests {
         a.apply(Ev::Confirm {
             what: "run `ls`".into(),
             reply,
+            always: false,
         });
         a.status.streaming = true;
         a.apply(Ev::Stop("no answer within 60s".into()));
@@ -6827,9 +6870,10 @@ mod tests {
         a.apply(Ev::Confirm {
             what: "run `nmap -sV -T4 192.168.0.56`".into(),
             reply,
+            always: false,
         });
         let out = a.frame(90, 12);
-        assert!(out.contains("run it? y/N"), "no verb prompt: {out:?}");
+        assert!(out.contains("run it? y yes · n no"), "no verb prompt: {out:?}");
         assert_eq!(
             out.matches("nmap -sV -T4 192.168.0.56").count(),
             1,
@@ -6844,8 +6888,9 @@ mod tests {
         a.apply(Ev::Confirm {
             what: "overwrite /etc/hosts".into(),
             reply,
+            always: false,
         });
-        assert!(a.frame(80, 12).contains("approve? y/N"));
+        assert!(a.frame(80, 12).contains("approve? y yes · n no"));
     }
 
     #[test]
@@ -6889,6 +6934,7 @@ mod tests {
         a.apply(Ev::Confirm {
             what: "run `ls`".into(),
             reply,
+            always: false,
         });
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);

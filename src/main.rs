@@ -672,7 +672,11 @@ impl Hooks for Cli {
     }
 
     fn confirm(&mut self, what: &str) -> bool {
-        confirm(what)
+        answer(what, false) == agent::Answer::Yes
+    }
+
+    fn confirm_always(&mut self, what: &str) -> agent::Answer {
+        answer(what, true)
     }
 
     fn run_attached(&mut self, command: &str) -> Option<i32> {
@@ -792,14 +796,22 @@ fn print_ui_to<W: Write>(
     Ok(())
 }
 
-fn confirm(prompt: &str) -> bool {
-    print!("{prompt}? [y/N] ");
+fn answer(prompt: &str, always: bool) -> agent::Answer {
+    let keys = if always { "y yes · n no · a always" } else { "y yes · n no" };
+    print!("{prompt}? {keys} ");
     std::io::stdout().flush().ok();
-    let line = match read_entry(&mut std::io::stdin().lock()) {
-        Ok(Some(line)) => line,
-        _ => return false,
+    let Ok(Some(line)) = read_entry(&mut std::io::stdin().lock()) else {
+        return agent::Answer::No;
     };
-    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    parse_answer(&line, always)
+}
+
+fn parse_answer(line: &str, always: bool) -> agent::Answer {
+    match line.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => agent::Answer::Yes,
+        "a" | "always" if always => agent::Answer::Always,
+        _ => agent::Answer::No,
+    }
 }
 
 /// `--cli` wins; otherwise a real terminal decides.
@@ -830,6 +842,16 @@ fn next(args: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_answers_take_always_only_when_offered() {
+        use agent::Answer;
+        assert_eq!(parse_answer("y\n", true), Answer::Yes);
+        assert_eq!(parse_answer("a", true), Answer::Always);
+        assert_eq!(parse_answer("always", true), Answer::Always);
+        assert_eq!(parse_answer("a", false), Answer::No);
+        assert_eq!(parse_answer("", true), Answer::No);
+    }
 
     #[test]
     fn mode_selection() {
