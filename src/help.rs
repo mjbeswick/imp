@@ -22,7 +22,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ("Conversation", &["/new", "/compact", "/think", "/stash"]),
     ("Model and agent", &["/model", "/provider", "/agent", "/mode", "/reload"]),
     ("Workspace", &["/cwd", "/cd", "/image", "/shell"]),
-    ("Session", &["/sessions", "/fork", "/rename", "/quit"]),
+    ("Session", &["/sessions", "/inbox", "/fork", "/rename", "/quit"]),
     ("Interface", &["/help", "/theme", "/verbosity"]),
 ];
 
@@ -30,6 +30,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
     ("/new", "start a fresh conversation"),
     ("/sessions", "pick a session"),
+    ("/inbox", "live sessions and what they need"),
     ("/reload", "re-read instructions and skills"),
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
@@ -354,7 +355,7 @@ mod tests {
 
     #[test]
     fn every_command_sits_in_one_group() {
-        assert_eq!(COMMANDS.len(), 20);
+        assert_eq!(COMMANDS.len(), 21);
         for (name, _) in COMMANDS {
             let n = GROUPS.iter().filter(|(_, g)| g.contains(name)).count();
             assert_eq!(n, 1, "{name} is in {n} groups");

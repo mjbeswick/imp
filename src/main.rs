@@ -398,6 +398,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         },
                     }
                 }
+                "inbox" => println!("line mode runs one session; the inbox is in the chat"),
                 "reload" => match session.reload() {
                     Ok(()) => println!("reloaded; prompt cache reset"),
                     Err(e) => eprintln!("imp: {e}"),

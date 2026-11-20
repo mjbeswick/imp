@@ -886,6 +886,10 @@ pub struct App {
     worker: Option<Worker>,
     /// When the session in view last did anything, to pick one to close.
     touched: Instant,
+    /// The session in view finished a turn while out of view.
+    replied: bool,
+    /// The inbox overlay, above any prompt so a pending answer survives it.
+    inbox: Option<Picker>,
     /// Every live session in order; the one in view is `None` at `at`.
     panes: Vec<Option<Pane>>,
     at: usize,
@@ -921,6 +925,7 @@ struct Pane {
     agent: String,
     worker: Option<Worker>,
     touched: Instant,
+    replied: bool,
 }
 
 impl Pane {
@@ -946,6 +951,7 @@ impl Pane {
             agent: session.agent.name.clone(),
             worker,
             touched: Instant::now(),
+            replied: false,
         }
     }
 
@@ -1007,6 +1013,7 @@ enum PickKind {
     Theme,
     Provider,
     Mode,
+    Inbox,
 }
 
 #[derive(Clone)]
@@ -1243,6 +1250,9 @@ impl Picker {
                 "← up".into(),
                 "Esc close".into(),
             ],
+            PickKind::Inbox => {
+                return "Enter open · y n a answer · x close · Esc back".into();
+            }
             _ => vec!["Enter choose".into(), "Esc close".into()],
         };
         if let Some(item) = self.items.first() {
@@ -1415,6 +1425,8 @@ impl App {
             tool: None,
             worker: None,
             touched: Instant::now(),
+            replied: false,
+            inbox: None,
             panes: vec![None],
             at: 0,
             fresh: None,
@@ -1444,6 +1456,7 @@ impl App {
         swap(&mut self.agent, &mut p.agent);
         swap(&mut self.worker, &mut p.worker);
         swap(&mut self.touched, &mut p.touched);
+        swap(&mut self.replied, &mut p.replied);
     }
 
     /// Bring the pane at `index` into view and park the current one.
@@ -1456,6 +1469,7 @@ impl App {
         self.panes[self.at] = Some(p);
         self.at = index;
         self.touched = Instant::now();
+        self.replied = false;
         self.dirty = true;
     }
 
@@ -1466,6 +1480,9 @@ impl App {
         }
         let Some(mut p) = self.panes[index].take() else { return };
         self.swap_pane(&mut p);
+        if matches!(ev, Ev::Done(_)) {
+            self.replied = true;
+        }
         self.apply(ev);
         self.touched = Instant::now();
         self.swap_pane(&mut p);
@@ -1806,8 +1823,137 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
-        self.handle_key_inner(key, tx);
+        if self.inbox.is_some() {
+            self.inbox_key(key);
+        } else if matches!(key, Key::Ctrl('o')) {
+            self.open_inbox();
+        } else {
+            self.handle_key_inner(key, tx);
+        }
         self.sync_preview();
+    }
+
+    /// One inbox row per live session: what it is doing, and what it needs.
+    fn inbox_items(&self) -> Vec<PickItem> {
+        let mut rows: Vec<(u8, Instant, PickItem)> = (0..self.panes.len())
+            .map(|i| {
+                let (entries, status, pending, replied, touched) = match &self.panes[i] {
+                    None => (&self.entries, &self.status, &self.pending, self.replied, self.touched),
+                    Some(p) => (&p.entries, &p.status, &p.pending, p.replied, p.touched),
+                };
+                let last = entries
+                    .iter()
+                    .rev()
+                    .find(|e| e.role == Role::Assistant)
+                    .and_then(|e| e.text.lines().rev().find(|l| !l.trim().is_empty()))
+                    .unwrap_or("")
+                    .to_string();
+                let mut actions = vec![('x', "close")];
+                let (rank, state, line) = match pending {
+                    Some(Pending::Confirm { what, always, .. }) => {
+                        actions = vec![('y', "yes"), ('n', "no"), ('x', "close")];
+                        if *always {
+                            actions.insert(2, ('a', "always"));
+                        }
+                        (0, "needs approval", what.clone())
+                    }
+                    Some(Pending::Question { q, .. }) => (0, "needs approval", q.clone()),
+                    _ if replied => (1, "replied", last),
+                    _ if status.streaming => (2, "working", last),
+                    _ => (3, "idle", last),
+                };
+                let line = line.lines().next().unwrap_or("").to_string();
+                let age = age(touched.elapsed());
+                let desc = if line.is_empty() {
+                    format!("{state} · {age}")
+                } else {
+                    format!("{state} · {line} · {age}")
+                };
+                let item = PickItem { label: title_of(entries), value: i.to_string(), desc, actions };
+                (rank, touched, item)
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+        rows.into_iter().map(|(_, _, item)| item).collect()
+    }
+
+    fn open_inbox(&mut self) {
+        self.inbox = Some(Picker::new("inbox", self.inbox_items(), PickKind::Inbox));
+        self.dirty = true;
+    }
+
+    /// Rebuild the rows after something changed, keeping the highlight.
+    fn refresh_inbox(&mut self) {
+        let Some(old) = self.inbox.take() else { return };
+        let keep = old.selected().map(|i| i.value.clone());
+        let mut picker = Picker::new("inbox", self.inbox_items(), PickKind::Inbox);
+        picker.index = picker.items.iter().position(|i| Some(&i.value) == keep.as_ref()).unwrap_or(0);
+        self.inbox = Some(picker);
+        self.dirty = true;
+    }
+
+    fn inbox_key(&mut self, key: Key) {
+        let Some(picker) = self.inbox.as_mut() else { return };
+        let chosen = picker.selected().and_then(|i| i.value.parse::<usize>().ok());
+        let action = match key {
+            Key::Char(c) if picker.filter.is_empty() => picker.action(c),
+            _ => None,
+        };
+        self.dirty = true;
+        match key {
+            Key::Up => picker.move_by(-1),
+            Key::Down => picker.move_by(1),
+            Key::PageUp => picker.move_by(-(PICK_ROWS as isize)),
+            Key::PageDown => picker.move_by(PICK_ROWS as isize),
+            Key::Esc | Key::Ctrl('o') => self.inbox = None,
+            Key::Ctrl('c') => self.quit = true,
+            Key::Enter => {
+                self.inbox = None;
+                if let Some(i) = chosen {
+                    self.show(i);
+                }
+            }
+            Key::Char(c) if action.is_some() => {
+                let Some(i) = chosen else { return };
+                let busy = action == Some("close") && !self.pane_idle(i);
+                if action == Some("close") {
+                    self.close_from_inbox(i);
+                } else {
+                    self.answer_pane(i, Key::Char(c));
+                }
+                self.refresh_inbox();
+                if let (true, Some(inbox)) = (busy, self.inbox.as_mut()) {
+                    inbox.title = "inbox · stop it first".into();
+                }
+            }
+            Key::Char(c) => picker.filter_push(c),
+            Key::Backspace => picker.filter_pop(),
+            _ => {}
+        }
+    }
+
+    /// Answer a session's pending confirmation, in view or not.
+    fn answer_pane(&mut self, index: usize, key: Key) {
+        let (dummy, _) = channel();
+        if index == self.at {
+            return self.handle_key_inner(key, &dummy);
+        }
+        let Some(mut p) = self.panes[index].take() else { return };
+        self.swap_pane(&mut p);
+        self.handle_key_inner(key, &dummy);
+        self.swap_pane(&mut p);
+        self.panes[index] = Some(p);
+    }
+
+    /// `x` in the inbox: close an idle session; a busy one must stop first.
+    fn close_from_inbox(&mut self, index: usize) {
+        if !self.pane_idle(index) || self.panes.len() < 2 {
+            return;
+        }
+        if index == self.at {
+            self.show((index + 1) % self.panes.len());
+        }
+        self.close(index);
     }
 
     /// The open theme picker paints the screen in its highlighted theme; any
@@ -2715,6 +2861,7 @@ impl App {
                 );
             }
             "new" => self.new_session(tx),
+            "inbox" => self.open_inbox(),
             "cwd" => self.push(Role::Info, self.root.display().to_string()),
             "fork" => {
                 let _ = tx.send(Cmd::Fork);
@@ -3124,6 +3271,8 @@ impl App {
                                 self.set_model(&choice.value, tx);
                             }
                             PickKind::Mode => self.set_mode(&choice.value, tx),
+                            // The inbox is its own overlay and never reaches here.
+                            PickKind::Inbox => {}
                             PickKind::Verbosity => {
                                 self.verbose = choice.value == "high";
                                 self.push(Role::Info, format!("verbosity: {}", choice.value));
@@ -3610,6 +3759,7 @@ impl App {
     /// transcript, and the next full frame replaces it, leaving no residue.
     fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize)> {
         let picker = match &self.pending {
+            _ if self.inbox.is_some() => self.inbox.as_ref()?,
             Some(Pending::Pick(picker)) => picker,
             Some(Pending::ConfirmDelete { picker, .. }) => &**picker,
             _ => return None,
@@ -3840,6 +3990,15 @@ impl App {
         } else {
             fit(&left, cols)
         }
+    }
+}
+
+/// How long ago, in the largest whole unit.
+fn age(d: Duration) -> String {
+    match d.as_secs() {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s => format!("{}h", s / 3600),
     }
 }
 
@@ -4665,6 +4824,97 @@ mod tests {
         assert_eq!((a.at, a.input.as_str()), (1, "draft two"));
     }
 
+    /// Three live sessions: 0 waits for approval, 1 has replied, 2 is in view.
+    fn inbox_app(name: &str) -> (App, Receiver<Answer>) {
+        let mut a = multi_app(name);
+        let (tx, _rx) = channel();
+        a.push(Role::User, "run the tests");
+        a.status.streaming = true;
+        a.run_command("new", &tx);
+        a.push(Role::User, "summarise the log");
+        a.run_command("new", &tx);
+        a.push(Role::User, "in view");
+        let (reply, answers) = channel();
+        a.apply_to(0, Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        a.apply_to(1, Ev::Token("All done.".into()));
+        a.apply_to(1, Ev::Done(None));
+        (a, answers)
+    }
+
+    #[test]
+    fn the_inbox_orders_sessions_by_what_they_need() {
+        let (mut a, _answers) = inbox_app("order");
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Ctrl('o'), &tx);
+        let inbox = a.inbox.as_ref().expect("Ctrl+O did not open the inbox");
+        let rows: Vec<(&str, &str)> = inbox.items.iter().map(|i| (i.label.as_str(), i.desc.as_str())).collect();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].0, "run the tests");
+        assert!(rows[0].1.starts_with("needs approval · run `npm test`"), "{rows:?}");
+        assert!(rows[1].1.starts_with("replied · All done."), "{rows:?}");
+        assert!(rows[2].1.starts_with("idle"), "{rows:?}");
+        assert_eq!(inbox.index, 0);
+        assert_eq!(inbox.footer(), "Enter open · y n a answer · x close · Esc back");
+        let frame = a.frame(80, 20);
+        assert!(frame.contains("inbox"), "{frame}");
+        a.handle_key(Key::Ctrl('o'), &tx);
+        assert!(a.inbox.is_none(), "Ctrl+O did not close it");
+        a.run_command("inbox", &tx);
+        assert!(a.inbox.is_some(), "/inbox did not open it");
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.inbox.is_none(), "Esc did not close it");
+    }
+
+    #[test]
+    fn the_inbox_answers_in_place() {
+        let (mut a, answers) = inbox_app("answer");
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Ctrl('o'), &tx);
+        a.handle_key(Key::Char('a'), &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::Always));
+        assert_eq!(a.at, 2, "answering moved the view");
+        let inbox = a.inbox.as_ref().expect("the inbox closed");
+        let row = inbox.items.iter().find(|i| i.label == "run the tests").unwrap();
+        assert!(row.desc.starts_with("working"), "{}", row.desc);
+    }
+
+    #[test]
+    fn the_inbox_opens_and_closes_sessions() {
+        let (mut a, _answers) = inbox_app("open");
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Ctrl('o'), &tx);
+        a.handle_key(Key::Char('x'), &tx);
+        assert_eq!(a.panes.len(), 3, "closed a session waiting for approval");
+        assert!(a.inbox.as_ref().unwrap().title.ends_with("stop it first"));
+        a.handle_key(Key::Down, &tx);
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.inbox.is_none());
+        assert_eq!(title_of(&a.entries), "summarise the log");
+        assert!(!a.replied, "opening did not clear replied");
+        a.handle_key(Key::Ctrl('o'), &tx);
+        let row = a.inbox.as_ref().unwrap().items.iter().find(|i| i.label == "summarise the log").unwrap().clone();
+        assert!(row.desc.starts_with("idle"), "{}", row.desc);
+        // Close the idle one in view: the view moves on and two remain.
+        let at = a.inbox.as_ref().unwrap().items.iter().position(|i| i.label == "summarise the log").unwrap();
+        a.inbox.as_mut().unwrap().index = at;
+        a.handle_key(Key::Char('x'), &tx);
+        assert_eq!(a.panes.len(), 2);
+        assert_ne!(title_of(&a.entries), "summarise the log");
+    }
+
+    #[test]
+    fn a_prompt_in_view_survives_the_inbox() {
+        let mut a = multi_app("survive");
+        let (tx, _rx) = channel();
+        let (reply, answers) = channel();
+        a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
+        a.handle_key(Key::Ctrl('o'), &tx);
+        a.handle_key(Key::Esc, &tx);
+        assert!(matches!(a.pending, Some(Pending::Confirm { .. })), "the prompt was lost");
+        a.handle_key(Key::Char('y'), &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::Yes));
+    }
+
     #[test]
     fn modes_stay_per_session() {
         let mut a = multi_app("modes");
@@ -5074,7 +5324,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_o_expands_the_last_tool_call() {
+    fn ctrl_e_expands_the_last_tool_call() {
         let mut a = app();
         a.apply(Ev::ToolStart {
             name: "bash".into(),
@@ -5091,6 +5341,8 @@ mod tests {
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('o'), &tx);
         assert!(!a.entries[0].text.contains("args:"), "Ctrl+O still expands");
+        assert!(a.inbox.is_some(), "Ctrl+O did not open the inbox");
+        a.handle_key(Key::Esc, &tx);
         a.handle_key(Key::Ctrl('e'), &tx);
         let text = a.entries[0].text.clone();
         assert!(text.contains("args:"), "{text}");
