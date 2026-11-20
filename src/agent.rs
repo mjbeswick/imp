@@ -10,11 +10,14 @@ use crate::tools::Tools;
 use serde_json::{json, Value};
 use std::sync::atomic::AtomicBool;
 
-/// An answer to a confirmation that may offer `always`.
+/// An answer to a confirmation that may offer `session` and `always`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
     No,
     Yes,
+    /// This shape, for the rest of the session.
+    Session,
+    /// This shape, saved to the config for every session.
     Always,
 }
 
@@ -760,7 +763,9 @@ impl Session {
                         Decision::Ask => {
                             // `always` only for one simple command in normal.
                             let shape = perm::shape(cmd).filter(|_| mode == Permissions::Normal);
-                            let known = shape.as_ref().is_some_and(|k| self.always.contains(k));
+                            let known = shape
+                                .as_ref()
+                                .is_some_and(|k| self.always.contains(k) || self.cfg.allowed(k));
                             let what = format!("run `{cmd}`");
                             let answer = match &shape {
                                 _ if known => Answer::Yes,
@@ -772,8 +777,13 @@ impl Session {
                                 (Answer::No, _) => {
                                     return (false, "refused: the user declined to run this command".into())
                                 }
-                                (Answer::Always, Some(k)) => {
+                                (Answer::Session, Some(k)) => {
                                     self.always.insert(k);
+                                }
+                                (Answer::Always, Some(k)) => {
+                                    if let Err(e) = self.cfg.allow_always(&k) {
+                                        hooks.ui(Ui::Error(format!("allow {k} not saved: {e}")));
+                                    }
                                 }
                                 _ => {}
                             }
@@ -2184,11 +2194,13 @@ mod tests {
         }
     }
 
-    /// Answers `always` when offered, and counts what it was asked.
+    /// Answers `session` (or `always` when `save`) when offered, and counts
+    /// what it was asked.
     #[derive(Default)]
     struct AlwaysHooks {
         offered: usize,
         plain: usize,
+        save: bool,
     }
 
     impl Hooks for AlwaysHooks {
@@ -2199,7 +2211,7 @@ mod tests {
         }
         fn confirm_always(&mut self, _: &str) -> Answer {
             self.offered += 1;
-            Answer::Always
+            if self.save { Answer::Always } else { Answer::Session }
         }
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
@@ -2233,6 +2245,28 @@ mod tests {
         run(&mut strict, &mut h, "touch imp-always-x");
         run(&mut strict, &mut h, "touch imp-always-x");
         assert_eq!((h.offered, h.plain), (0, 2), "strict offered always");
+    }
+
+    #[test]
+    fn always_is_saved_for_every_session_but_not_strict() {
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Normal);
+        let mut h = AlwaysHooks { save: true, ..Default::default() };
+        let run = |s: &mut Session, h: &mut AlwaysHooks, cmd: &str| {
+            s.run_tool("bash", &json!({"command": cmd}), h);
+        };
+        run(&mut s, &mut h, "touch imp-saved-x");
+        assert_eq!(h.offered, 1);
+        assert!(s.cfg.allowed("touch imp-saved-x"), "not in the allow list");
+        s.reset();
+        run(&mut s, &mut h, "touch imp-saved-x");
+        assert_eq!(h.offered, 1, "always did not outlive /new");
+
+        let other_cfg = s.cfg.detached();
+        assert!(other_cfg.allowed("touch imp-saved-x"), "another session lost it");
+        s.cfg.set_permissions(Permissions::Strict);
+        run(&mut s, &mut h, "touch imp-saved-x");
+        assert_eq!(h.plain, 1, "an allow line skipped strict");
     }
 
     #[test]

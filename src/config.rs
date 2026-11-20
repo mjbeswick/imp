@@ -132,6 +132,10 @@ pub struct Config {
     /// The live mode, shared with the worker so a change applies mid-turn.
     pub mode: Arc<AtomicU8>,
     pub allow_sudo: bool,
+    /// Command shapes answered `a`: shared by every session, saved in the file.
+    pub allow: Arc<std::sync::Mutex<Vec<String>>>,
+    /// The file this was loaded from; `None` keeps `allow` in memory only.
+    pub file: Option<PathBuf>,
     pub prune_at: u32,
     pub compact_at: u32,
     pub max_tokens: u32,
@@ -158,6 +162,8 @@ impl Default for Config {
             permissions: Permissions::Normal,
             mode: Arc::new(AtomicU8::new(Permissions::Normal.code())),
             allow_sudo: false,
+            allow: Arc::default(),
+            file: None,
             prune_at: 45_000,
             compact_at: 60_000,
             max_tokens: 8192,
@@ -179,6 +185,7 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let mut cfg = Self::from_str(&text)?;
+        cfg.file = Some(path.to_path_buf());
         cfg.apply_env(|k| std::env::var(k).ok())?;
         Ok(cfg)
     }
@@ -222,6 +229,7 @@ impl Config {
             "base_url" => self.base_url = value.trim_end_matches('/').to_string(),
             "permissions" => self.set_permissions(Permissions::parse(value)?),
             "allow_sudo" => self.allow_sudo = parse_bool(value)?,
+            "allow" => self.allows(value),
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
             "max_tokens" => self.max_tokens = parse_u32(key, value)?,
@@ -244,6 +252,37 @@ impl Config {
         self.permissions = mode;
         self.mode
             .store(mode.code(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a command shape was answered `a`.
+    pub fn allowed(&self, shape: &str) -> bool {
+        self.allow.lock().is_ok_and(|a| a.iter().any(|s| s == shape))
+    }
+
+    fn allows(&self, shape: &str) {
+        if let Ok(mut a) = self.allow.lock() {
+            if !shape.is_empty() && !a.iter().any(|s| s == shape) {
+                a.push(shape.to_string());
+            }
+        }
+    }
+
+    /// Allow a shape in every session, and append it to the config file.
+    pub fn allow_always(&self, shape: &str) -> Result<(), String> {
+        self.allows(shape);
+        let Some(path) = &self.file else { return Ok(()) };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut f| write!(f, "{sep}allow = {shape}\n"))
+            .map_err(|e| e.to_string())
     }
 
     /// A copy whose mode no longer follows this one: another session's
@@ -790,6 +829,26 @@ mod tests {
         assert!(text.ends_with("thinking = true\n"), "{text}");
         let cfg = Config::from_str(&text).unwrap();
         assert_eq!(cfg.named, named);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn allow_lines_load_append_and_survive_a_profile_save() {
+        let dir = std::env::temp_dir().join(format!("imp-allow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config");
+        std::fs::write(&path, "# mine\nallow = cargo build").unwrap();
+        let cfg = Config::load(&path).unwrap();
+        assert!(cfg.allowed("cargo build"));
+        assert!(!cfg.allowed("npm test"));
+        let other = cfg.detached();
+        cfg.allow_always("npm test").unwrap();
+        assert!(other.allowed("npm test"), "another session did not see it");
+        save_named(&path, &[]).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# mine\nallow = cargo build\nallow = npm test\n"), "{text}");
+        assert!(Config::load(&path).unwrap().allowed("npm test"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
