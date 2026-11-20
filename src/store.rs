@@ -734,6 +734,34 @@ pub fn session_row(meta: &Meta, now_secs: u64) -> (String, String) {
     )
 }
 
+/// Sessions whose user or assistant text contains `query`, newest first, each
+/// with a one-line snippet around the first hit.
+// ponytail: ASCII case folding keeps byte offsets valid; full Unicode folding if asked.
+pub fn search(dir: &Path, query: &str, limit: usize) -> Vec<(Meta, String)> {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for meta in Log::list(dir) {
+        let Some(log) = Log::open(dir, &meta.id) else { continue };
+        let hit = log.load().into_iter().filter(|m| matches!(m.role, Role::User | Role::Assistant)).find_map(|m| {
+            let text = m.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let at = text.to_ascii_lowercase().find(&needle)?;
+            let start = text[..at].char_indices().rev().nth(24).map_or(0, |(i, _)| i);
+            let snippet: String = text[start..].chars().take(needle.len() + 48).collect();
+            Some(if start > 0 { format!("…{snippet}") } else { snippet })
+        });
+        if let Some(snippet) = hit {
+            out.push((meta, snippet));
+            if out.len() == limit {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// Sessions as aligned text rows no wider than `width`: titles give way,
 /// counts stay whole and end in one column.
 pub fn session_table(metas: &[Meta], now_secs: u64, width: usize) -> String {
@@ -986,6 +1014,22 @@ mod session_tests {
         log.retitle("fix the parser").unwrap();
         assert_eq!(log.meta().title, "fix the parser");
         assert!(log.retitle("   ").is_err());
+    }
+
+    #[test]
+    fn search_finds_message_text_with_a_snippet() {
+        let dir = tmp();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.append(&Message::system("wttr secret prompt"));
+        log.append(&Message::user("what is the weather"));
+        log.append(&Message::assistant("I asked wttr.in and it says rain in Woking"));
+        Log::create(&dir, &dir, "deepseek-flash").append(&Message::user("unrelated"));
+        let hits = search(&dir, "WTTR", 20);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.id, log.id);
+        assert!(hits[0].1.contains("wttr.in"), "{:?}", hits[0].1);
+        assert!(search(&dir, "prompt", 20).is_empty(), "system text matched");
+        assert!(search(&dir, "nothing like this", 20).is_empty());
     }
 
     #[test]

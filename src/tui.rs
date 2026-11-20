@@ -2314,6 +2314,23 @@ impl App {
         Picker::new("sessions", options, PickKind::Session)
     }
 
+    /// Sessions whose text mentions `query`, each row ending in a snippet.
+    fn search_picker(&self, query: &str) -> Picker {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let items = crate::store::search(&self.sessions_dir, query, 20)
+            .into_iter()
+            .map(|(mut m, snippet)| {
+                m.title = snippet;
+                let (label, desc) = crate::store::session_row(&m, now);
+                PickItem { label, value: m.id, actions: Vec::new(), desc }
+            })
+            .collect();
+        Picker::new(format!("search \"{}\"", query.trim()), items, PickKind::Session)
+    }
+
     /// The value a picker of this kind should open on.
     fn current_value(&self, kind: PickKind) -> String {
         match kind {
@@ -3231,6 +3248,14 @@ impl App {
                         return;
                     }
                     Key::Enter => {
+                        if picker.kind == PickKind::Session
+                            && picker.selected().is_none()
+                            && !picker.filter.trim().is_empty()
+                        {
+                            self.pending = Some(Pending::Pick(self.search_picker(&picker.filter)));
+                            self.dirty = true;
+                            return;
+                        }
                         let Some(choice) = picker.selected().cloned() else {
                             self.pending = Some(Pending::Pick(picker));
                             self.dirty = true;
@@ -4809,6 +4834,38 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(a.entries.iter().any(|e| e.text.contains("stored question")), "no replay");
+    }
+
+    #[test]
+    fn enter_with_no_title_match_searches_session_text() {
+        let mut a = multi_app("search");
+        let (tx, _rx) = channel();
+        let log = crate::store::Log::create(&a.sessions_dir, &a.root, "m");
+        log.append(&crate::api::Message::user("weather please"));
+        log.append(&crate::api::Message::assistant("wttr.in says rain"));
+        a.run_command("sessions", &tx);
+        for c in "WTTR".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Enter, &tx);
+        let Some(Pending::Pick(p)) = &a.pending else { panic!("picker closed") };
+        assert_eq!(p.title, "search \"WTTR\"");
+        assert!(p.filter.is_empty());
+        assert_eq!(p.items.len(), 1);
+        assert!(p.items[0].label.contains("wttr.in"), "{}", p.items[0].label);
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!((a.panes.len(), a.at), (2, 1), "the hit did not open");
+
+        a.run_command("sessions", &tx);
+        for c in "zzqx".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Enter, &tx);
+        let Some(Pending::Pick(p)) = &a.pending else { panic!("picker closed") };
+        assert!(p.items.is_empty());
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(a.pending, Some(Pending::Pick(_))), "Enter on no hits closed it");
+        assert_eq!(a.panes.len(), 2);
     }
 
     #[test]
