@@ -8,6 +8,7 @@ use crate::agent::{Answer, Hooks, Session, Ui};
 use crate::config::{ColorMode, Config};
 use std::ffi::{c_int, c_ulong};
 use std::io::{Read, Write};
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
@@ -774,6 +775,68 @@ enum Line {
     Spans(Vec<crate::render::Span>),
 }
 
+/// One entry's rows at `cols`, led by a blank row when `gap` opens a turn.
+fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Role, Line)> {
+    let mut lines = Vec::new();
+    if gap {
+        lines.push((Role::User, Line::Text(String::new())));
+    }
+    if entry.role == Role::Assistant {
+        for row in crate::render::lines(&entry.text, cols, markdown) {
+            lines.push((entry.role, Line::Spans(row)));
+        }
+        return lines;
+    }
+    // A finished tool row: wrap the summary, then set its duration
+    // at the right edge of the last summary line, or under it.
+    let mut timed: Option<String> = None;
+    // Tool output and thinking never drive the terminal; TIME stays.
+    let mut text: String = entry
+        .text
+        .split(TIME)
+        .map(|part| crate::render::clean(part).replace('\t', "    "))
+        .collect::<Vec<_>>()
+        .join(&TIME.to_string());
+    let mut head_rows = 0;
+    if let Some(at) = text.find(TIME) {
+        let end = text[at..].find('\n').map_or(text.len(), |n| at + n);
+        timed = Some(text[at + TIME.len_utf8()..end].to_string());
+        text.replace_range(at..end, "");
+        // The summary may span lines, as a heredoc does.
+        head_rows = wrap(&text[..at], cols.saturating_sub(2)).len();
+    }
+    for (i, part) in wrap(&text, cols.saturating_sub(2))
+        .into_iter()
+        .enumerate()
+    {
+        let prefix = if i == 0 {
+            match entry.role {
+                Role::User => "> ",
+                Role::Thinking => "~ ",
+                _ => "",
+            }
+        } else if entry.role == Role::Info {
+            // Info text lays itself out, as `/help` does.
+            ""
+        } else {
+            "  "
+        };
+        let row = format!("{prefix}{part}");
+        match &timed {
+            Some(time) if i + 1 == head_rows => {
+                if row.chars().count() + 2 + time.chars().count() <= cols {
+                    lines.push((entry.role, Line::Timed(row, time.clone())));
+                } else {
+                    lines.push((entry.role, Line::Text(row)));
+                    lines.push((entry.role, Line::Timed(String::new(), time.clone())));
+                }
+            }
+            _ => lines.push((entry.role, Line::Text(row))),
+        }
+    }
+    lines
+}
+
 /// Separates a tool summary from its duration in the stored row text.
 const TIME: char = '\u{1}';
 
@@ -876,6 +939,8 @@ pub struct App {
     dirty: bool,
     quit: bool,
     spinner: usize,
+    /// Rendered rows per entry, keyed by a hash of what shapes them.
+    drawn: Vec<(u64, Vec<(Role, Line)>)>,
     tool: Option<ToolRow>,
     /// The worker for the session in view; `None` in tests.
     worker: Option<Worker>,
@@ -1422,6 +1487,7 @@ impl App {
             dirty: true,
             quit: false,
             spinner: 0,
+            drawn: Vec::new(),
             tool: None,
             worker: None,
             touched: Instant::now(),
@@ -3541,77 +3607,30 @@ impl App {
         let body_rows = rows.saturating_sub(1 + rule + composer.len()).max(1);
 
         let markdown = self.cfg.links.supported();
-        let mut lines: Vec<(Role, Line)> = Vec::new();
+        // Only entries whose text, role, width, or turn gap changed render again.
+        self.drawn.truncate(self.entries.len());
         let mut spoke = false;
-        for entry in &self.entries {
-            if entry.role == Role::User {
-                // One blank row opens every turn after the first.
-                if spoke {
-                    lines.push((Role::User, Line::Text(String::new())));
-                }
-                spoke = true;
-            }
-            if entry.role == Role::Assistant {
-                for row in crate::render::lines(&entry.text, cols, markdown) {
-                    lines.push((entry.role, Line::Spans(row)));
-                }
-                continue;
-            }
-            // A finished tool row: wrap the summary, then set its duration
-            // at the right edge of the last summary line, or under it.
-            let mut timed: Option<String> = None;
-            // Tool output and thinking never drive the terminal; TIME stays.
-            let mut text: String = entry
-                .text
-                .split(TIME)
-                .map(|part| crate::render::clean(part).replace('\t', "    "))
-                .collect::<Vec<_>>()
-                .join(&TIME.to_string());
-            let mut head_rows = 0;
-            if let Some(at) = text.find(TIME) {
-                let end = text[at..].find('\n').map_or(text.len(), |n| at + n);
-                timed = Some(text[at + TIME.len_utf8()..end].to_string());
-                text.replace_range(at..end, "");
-                // The summary may span lines, as a heredoc does.
-                head_rows = wrap(&text[..at], cols.saturating_sub(2)).len();
-            }
-            for (i, part) in wrap(&text, cols.saturating_sub(2))
-                .into_iter()
-                .enumerate()
-            {
-                let prefix = if i == 0 {
-                    match entry.role {
-                        Role::User => "> ",
-                        Role::Thinking => "~ ",
-                        _ => "",
-                    }
-                } else if entry.role == Role::Info {
-                    // Info text lays itself out, as `/help` does.
-                    ""
+        for (i, entry) in self.entries.iter().enumerate() {
+            // One blank row opens every turn after the first.
+            let gap = entry.role == Role::User && spoke;
+            spoke |= entry.role == Role::User;
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (cols, markdown, gap, entry.role as u8, &entry.text).hash(&mut h);
+            let key = h.finish();
+            if self.drawn.get(i).map(|slot| slot.0) != Some(key) {
+                let slot = (key, entry_lines(entry, cols, markdown, gap));
+                if i < self.drawn.len() {
+                    self.drawn[i] = slot;
                 } else {
-                    "  "
-                };
-                let row = format!("{prefix}{part}");
-                match &timed {
-                    Some(time) if i + 1 == head_rows => {
-                        if row.chars().count() + 2 + time.chars().count() <= cols {
-                            lines.push((entry.role, Line::Timed(row, time.clone())));
-                        } else {
-                            lines.push((entry.role, Line::Text(row)));
-                            lines.push((entry.role, Line::Timed(String::new(), time.clone())));
-                        }
-                    }
-                    _ => lines.push((entry.role, Line::Text(row))),
+                    self.drawn.push(slot);
                 }
             }
         }
+        // A quiet hint until the first message. The status line says where.
+        let hint = (Role::Thinking, Line::Text("imp · / for commands".into()));
+        let hint = self.entries.is_empty().then_some(&hint);
 
-        if self.entries.is_empty() {
-            // A quiet hint until the first message. The status line says where.
-            lines.push((Role::Thinking, Line::Text("imp · / for commands".into())));
-        }
-
-        let total = lines.len();
+        let total = self.drawn.iter().map(|slot| slot.1.len()).sum::<usize>() + usize::from(hint.is_some());
         let max_top = total.saturating_sub(body_rows);
         self.body_rows = body_rows;
         self.max_top = max_top;
@@ -3620,15 +3639,20 @@ impl App {
         }
         self.top = self.top.min(max_top);
         self.unseen = total.saturating_sub(self.top + body_rows);
-        let start = self.top;
-        let end = (start + body_rows).min(total);
-        let visible = &lines[start..end];
+        let visible: Vec<&(Role, Line)> = self
+            .drawn
+            .iter()
+            .flat_map(|slot| slot.1.iter())
+            .chain(hint)
+            .skip(self.top)
+            .take(body_rows)
+            .collect();
 
         let mut screen = String::from("\x1b[?25l\x1b[?7l\x1b[H");
         for _ in 0..body_rows.saturating_sub(visible.len()) {
             screen.push_str("\x1b[2K\r\n");
         }
-        for (role, line) in visible.iter().take(body_rows) {
+        for (role, line) in visible {
             screen.push_str("\x1b[2K");
             match line {
                 Line::Text(text) => screen.push_str(&self.marked(*role, &fit(text, cols))),
@@ -5481,6 +5505,48 @@ mod tests {
             let visible = strip(line);
             assert!(visible.chars().count() <= 40, "{visible:?}");
         }
+    }
+
+    #[test]
+    fn frames_reuse_rows_until_an_entry_changes() {
+        let mut a = app();
+        for i in 0..50 {
+            a.push(Role::User, format!("question {i}"));
+            a.push(Role::Assistant, format!("**answer** {i}\n\n- one\n- two"));
+        }
+        let full = a.frame(60, 20);
+        assert_eq!(a.frame(60, 20), full, "a cached frame differs");
+        a.drawn.clear();
+        assert_eq!(a.frame(60, 20), full, "a fresh frame differs");
+
+        // A marked slot survives while its entry is unchanged.
+        a.drawn[0].1 = vec![(Role::Info, Line::Text("cached".into()))];
+        a.frame(60, 20);
+        assert!(matches!(&a.drawn[0].1[0].1, Line::Text(t) if t == "cached"), "re-rendered");
+        a.entries[0].text.push('!');
+        a.frame(60, 20);
+        assert!(matches!(&a.drawn[0].1[0].1, Line::Text(t) if t == "> question 0!"), "stale row kept");
+        // A new width renders everything again.
+        a.drawn[2].1.clear();
+        a.frame(50, 20);
+        assert!(!a.drawn[2].1.is_empty());
+    }
+
+    #[test]
+    #[ignore]
+    fn time_a_long_transcript() {
+        let mut a = app();
+        for i in 0..400 {
+            a.push(Role::User, format!("question {i} about the parser"));
+            a.push(Role::Assistant, "**answer** with `code` and a list\n\n- one\n- two\n".repeat(3));
+        }
+        a.frame(80, 24);
+        let t = Instant::now();
+        for _ in 0..50 {
+            a.entries.last_mut().unwrap().text.push_str(" more");
+            a.frame(80, 24);
+        }
+        eprintln!("{:?} per streamed frame", t.elapsed() / 50);
     }
 
     #[test]
