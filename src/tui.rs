@@ -1890,6 +1890,11 @@ impl App {
         match key {
             Key::Ctrl('c') => self.quit = true,
             Key::Ctrl('d') => self.quit = true,
+            Key::Ctrl('n') | Key::Ctrl('p') if self.panes.len() > 1 => {
+                let n = self.panes.len();
+                let step = if matches!(key, Key::Ctrl('n')) { 1 } else { n - 1 };
+                self.show((self.at + step) % n);
+            }
             Key::Ctrl('e') => {
                 self.toggle_tool();
                 self.dirty = true;
@@ -3817,8 +3822,14 @@ impl App {
         } else {
             format!("{} ({})", self.cfg.model, self.status.served)
         };
+        // With several live sessions, which one this is comes first.
+        let place = if self.panes.len() > 1 {
+            format!("{}/{} {} · ", self.at + 1, self.panes.len(), fit(&title_of(&self.entries), 20))
+        } else {
+            String::new()
+        };
         let left = format!(
-            "{model} · {} tok{money}{unseen}{thinking}",
+            "{place}{model} · {} tok{money}{unseen}{thinking}",
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
@@ -3830,6 +3841,15 @@ impl App {
             fit(&left, cols)
         }
     }
+}
+
+/// A live session's name: its first message, or `new` before one.
+fn title_of(entries: &[Entry]) -> String {
+    entries
+        .iter()
+        .find(|e| e.role == Role::User)
+        .map(|e| e.text.lines().next().unwrap_or("").to_string())
+        .unwrap_or_else(|| "new".into())
 }
 
 /// Tool time: `12ms` under a second, `1.4s` from there.
@@ -4623,6 +4643,26 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(a.entries.iter().any(|e| e.text.contains("stored question")), "no replay");
+    }
+
+    #[test]
+    fn ctrl_n_and_p_switch_sessions_and_keep_drafts() {
+        let mut a = multi_app("switch");
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Ctrl('n'), &tx);
+        assert_eq!(a.panes.len(), 1, "one session must not switch");
+        assert!(a.status_line(80).starts_with(&a.cfg.model), "{}", a.status_line(80));
+        a.push(Role::User, "fix the parser");
+        a.input = "draft one".into();
+        a.cursor = a.input.len();
+        a.run_command("new", &tx);
+        a.input = "draft two".into();
+        assert!(a.status_line(80).starts_with("2/2 new · "), "{}", a.status_line(80));
+        a.handle_key(Key::Ctrl('n'), &tx);
+        assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
+        assert!(a.status_line(80).starts_with("1/2 fix the parser · "), "{}", a.status_line(80));
+        a.handle_key(Key::Ctrl('p'), &tx);
+        assert_eq!((a.at, a.input.as_str()), (1, "draft two"));
     }
 
     #[test]
