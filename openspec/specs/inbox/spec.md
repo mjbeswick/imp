@@ -1,9 +1,9 @@
 # inbox Specification
 
 ## Purpose
-Several imp sessions run side by side in one process, and one view shows
-which of them need the user, so nobody juggles terminal tabs to find the
-session waiting for a `y`.
+Several imp sessions run side by side in one process, and one key walks
+the user through the ones waiting on them, oldest first, so nobody juggles
+terminal tabs to find the session waiting for a `y`.
 
 ## Requirements
 
