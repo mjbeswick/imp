@@ -848,11 +848,11 @@ fn spinner_frame(tick: usize) -> char {
 }
 
 /// Put a spinner frame before the count of each working session's row, and
-/// take it off the rest.
+/// two spaces before the rest, so titles keep their width.
 fn spin_rows(items: &mut [PickItem], working: &[String], frame: char) {
     for item in items {
         let count = item.desc.trim_start_matches(|c| SPINNER.contains(&c) || c == ' ');
-        item.desc = if working.contains(&item.value) { format!("{frame} {count}") } else { count.to_string() };
+        item.desc = if working.contains(&item.value) { format!("{frame} {count}") } else { format!("  {count}") };
     }
 }
 
@@ -4682,15 +4682,22 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>
         .as_ref()
         .and_then(|w| w.2.lock().ok().map(|slot| slot.clone()))
         .filter(|id| !id.is_empty());
-    for i in 0..app.panes.len() {
-        if let Some(Some(p)) = app.panes.get(i) {
-            if let Some((tx, _, _)) = &p.worker {
-                let _ = tx.send(Cmd::Quit);
-            }
+    // Stop every worker and wait up to a second for them to end, so each
+    // session drops and its background jobs stop before imp exits.
+    let mut workers = vec![(&app.cancel, &app.worker)];
+    workers.extend(app.panes.iter().flatten().map(|p| (&p.cancel, &p.worker)));
+    for (cancel, worker) in &workers {
+        cancel.store(true, Ordering::Relaxed);
+        if let Some((tx, _, _)) = worker {
+            let _ = tx.send(Cmd::Quit);
         }
     }
-    if let Some((tx, _, _)) = &app.worker {
-        let _ = tx.send(Cmd::Quit);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    for (_, worker) in workers {
+        if let Some((_, rx, _)) = worker {
+            // Disconnected means the worker ended and dropped its session.
+            while rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).is_ok() {}
+        }
     }
     Ok(id)
 }
@@ -4962,7 +4969,8 @@ mod tests {
         a.status.streaming = false;
         a.last_redraw = Instant::now() - Duration::from_millis(200);
         assert!(a.spin_sessions());
-        assert!(desc(&a).ends_with("msgs") && desc(&a).starts_with(char::is_numeric), "{}", desc(&a));
+        assert!(desc(&a).ends_with("msgs") && desc(&a).starts_with("  "), "{}", desc(&a));
+        assert_eq!(desc(&a).chars().count(), first.chars().count(), "the cell changed width");
         a.last_redraw = Instant::now() - Duration::from_millis(200);
         assert!(!a.spin_sessions(), "an idle picker repainted");
     }

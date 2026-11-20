@@ -745,6 +745,12 @@ pub fn search(dir: &Path, query: &str, limit: usize) -> Vec<(Meta, String)> {
     let mut out = Vec::new();
     for meta in Log::list(dir) {
         let Some(log) = Log::open(dir, &meta.id) else { continue };
+        // A byte scan first: most logs miss, and parsing them is the slow part
+        // on a Pi. Words with JSON escapes cannot be checked raw.
+        let raw = std::fs::read_to_string(&log.path).unwrap_or_default().to_ascii_lowercase();
+        if !needle.split_whitespace().all(|w| w.contains(['"', '\\']) || raw.contains(w)) {
+            continue;
+        }
         let hit = log.load().into_iter().filter(|m| matches!(m.role, Role::User | Role::Assistant)).find_map(|m| {
             let text = m.content.split_whitespace().collect::<Vec<_>>().join(" ");
             let at = text.to_ascii_lowercase().find(&needle)?;

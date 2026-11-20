@@ -363,11 +363,15 @@ The system SHALL apply the 16 MB memory and 64 MB spill limits for output buffer
 
 ### Requirement: Background jobs end with their session
 
-The system SHALL stop every running background job of a session when that session closes to make room, by signalling the job's process group.
+The system SHALL stop every running background job of a session when that session closes to make room or imp exits, by signalling the job's process group.
 
 #### Scenario: Closed for room
 - **WHEN** a session with a running background job closes to make room for a fifth
 - **THEN** the job's process group receives SIGTERM
+
+#### Scenario: Exit
+- **WHEN** the user quits imp while a session has a running background job
+- **THEN** the job's process group receives SIGTERM before imp exits
 
 #### Scenario: Finished jobs
 - **WHEN** a session whose jobs have all exited closes

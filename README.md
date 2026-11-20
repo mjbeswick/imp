@@ -54,7 +54,7 @@ Ctrl+O next waiting · Ctrl+N/Ctrl+P next or previous session · ? keys, from an
 
 `/new` and resuming from `/sessions` open another live session beside the
 current one, up to four; the oldest idle one closes to make room and stays in
-`/sessions`, and its background jobs stop. Ctrl+N and Ctrl+P switch between
+`/sessions`, and its background jobs stop, as every session's do when imp exits. Ctrl+N and Ctrl+P switch between
 them, and the status line shows which one is in view, such as
 `2/3 fix the parser`, and how many others are `waiting`. There is no close
 command: `/new` moves on, and the pool makes room by itself.
