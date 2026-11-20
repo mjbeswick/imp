@@ -1,7 +1,7 @@
 # memory Specification
 
 ## Purpose
-Keeps durable facts as plain markdown files that any editor can open, with no frontmatter, no schema, and no standing prompt cost.
+Keeps durable facts as plain markdown files that any editor can open, with no frontmatter, no schema, and a standing prompt cost of one index line per note, capped at forty.
 
 ## Requirements
 
