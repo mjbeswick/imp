@@ -1908,7 +1908,7 @@ impl App {
         let Some(picker) = self.inbox.as_mut() else { return };
         let chosen = picker.selected().and_then(|i| i.value.parse::<usize>().ok());
         let action = match key {
-            Key::Char(c) if picker.filter.is_empty() => picker.action(c),
+            Key::Char(c) => picker.action(c),
             _ => None,
         };
         self.dirty = true;
@@ -1938,8 +1938,14 @@ impl App {
                     inbox.title = "inbox · stop it first".into();
                 }
             }
-            Key::Char(c) => picker.filter_push(c),
-            Key::Backspace => picker.filter_pop(),
+            // Numbers match the status line's `2/3`, not the card order.
+            Key::Char(c @ '1'..='9') => {
+                let i = c as usize - '1' as usize;
+                if i < self.panes.len() {
+                    self.inbox = None;
+                    self.show(i);
+                }
+            }
             _ => {}
         }
     }
@@ -5115,6 +5121,21 @@ mod tests {
         assert!(narrow.lines().all(|l| l.chars().count() <= 40), "{narrow}");
         assert!(narrow.contains("▸ 3"), "the highlight scrolled away: {narrow}");
         assert_eq!(squeeze("abcdefghij", 7), "abc…hij");
+    }
+
+    #[test]
+    fn number_keys_jump_and_other_letters_do_nothing() {
+        let (mut a, answers) = inbox_app("jump");
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Ctrl('o'), &tx);
+        a.handle_key(Key::Char('q'), &tx);
+        a.handle_key(Key::Char('9'), &tx);
+        assert!(a.inbox.is_some(), "a stray key closed the inbox");
+        assert_eq!(a.inbox.as_ref().unwrap().filter, "", "the filter is back");
+        assert!(answers.try_recv().is_err());
+        a.handle_key(Key::Char('2'), &tx);
+        assert!(a.inbox.is_none());
+        assert_eq!((a.at, title_of(&a.entries).as_str()), (1, "summarise the log"));
     }
 
     #[test]
