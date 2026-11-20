@@ -7,7 +7,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard only
 
-The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+O to expand the last tool output, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
+The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand the last tool output, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -60,6 +60,10 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 #### Scenario: Page keys
 - **WHEN** the terminal sends `CSI 5~` or `CSI 6~`
 - **THEN** the transcript pages up or down and no `5~` or `6~` text reaches the composer
+
+#### Scenario: Expand moved
+- **WHEN** the user presses Ctrl+E after a tool call
+- **THEN** the last tool output expands, and Ctrl+O opens the inbox instead
 
 ### Requirement: Every rendered line fits the terminal
 
@@ -813,13 +817,13 @@ After a successful `edit` or `write`, the system SHALL draw the changed lines un
 - **WHEN** an edit is refused because a match failed
 - **THEN** no diff is drawn and the existing error preview is shown
 
-### Requirement: Twenty slash commands, no more
+### Requirement: Twenty-one slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/inbox`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all twenty commands appear with a one-line description
+- **THEN** all twenty-one commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -1254,3 +1258,19 @@ The system SHALL remove control characters and escape sequences, other than newl
 #### Scenario: Colour codes in tool output
 - **WHEN** a command prints ANSI colour codes
 - **THEN** its preview shows the plain text without the codes
+
+### Requirement: Keys are discoverable
+
+The system SHALL open a keys card listing the chat keys in the picker overlay when the user types `?` into an empty composer, SHALL close it with Esc or `?`, and SHALL show the keys that act in every overlay, the inbox, and confirmation in that view's bottom edge or hint.
+
+#### Scenario: Keys card
+- **WHEN** the composer is empty and the user types `?`
+- **THEN** the keys card opens and nothing is sent
+
+#### Scenario: Question mark in text
+- **WHEN** the composer holds `why` and the user types `?`
+- **THEN** the composer reads `why?` and no card opens
+
+#### Scenario: Inbox hint
+- **WHEN** the inbox is open
+- **THEN** its bottom edge reads `Enter open · y n a answer · x close · Esc back`
