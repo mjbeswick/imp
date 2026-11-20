@@ -58,10 +58,11 @@ current one, up to four; the oldest idle one closes to make room and stays in
 which one is in view, such as `2/3 fix the parser`, and how many others are
 `waiting`.
 
-Ctrl+O or `/inbox` lists every live session with what it is doing:
-`needs approval`, `replied`, `working`, or `idle`. Answer an approval in place
-with `y`, `n`, `s`, or `a`, open a session with Enter, and close an idle one with
-`x`. A prompt out of view waits; its 60 second deadline starts when you see it.
+Ctrl+O or `/inbox` fills the screen with one card per live session: its
+number, title, state (`needs approval`, `replied`, `working`, or `idle`), and
+what it needs, such as the command waiting for approval or the end of the
+reply. Answer an approval in place with `y`, `n`, `s`, or `a`, open a session
+with Enter or its number, and close an idle one with `x`. A prompt out of view waits; its 60 second deadline starts when you see it.
 Approvals (except `a`), modes, and buffers belong to each session, and all sessions share
 one 16 MB output buffer budget.
 
