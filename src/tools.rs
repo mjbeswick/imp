@@ -68,22 +68,38 @@ struct Buffers {
     order: VecDeque<u64>,
     mem: usize,
     spill: usize,
+    /// Bytes held by every session sharing this budget, this one included.
+    totals: std::sync::Arc<Totals>,
     next: u64,
     mem_cap: usize,
     spill_cap: usize,
 }
 
+/// The process-wide byte counts behind one shared buffer budget.
+#[derive(Default)]
+struct Totals {
+    mem: std::sync::atomic::AtomicUsize,
+    spill: std::sync::atomic::AtomicUsize,
+}
+
+/// Every live session's buffers count against the same caps.
+fn shared_totals() -> std::sync::Arc<Totals> {
+    static SHARED: std::sync::OnceLock<std::sync::Arc<Totals>> = std::sync::OnceLock::new();
+    SHARED.get_or_init(Default::default).clone()
+}
+
 impl Buffers {
     fn new() -> Self {
-        Self::with_caps(MEM_CAP, SPILL_CAP)
+        Self::with_caps(MEM_CAP, SPILL_CAP, shared_totals())
     }
 
-    fn with_caps(mem_cap: usize, spill_cap: usize) -> Self {
+    fn with_caps(mem_cap: usize, spill_cap: usize, totals: std::sync::Arc<Totals>) -> Self {
         Self {
             map: HashMap::new(),
             order: VecDeque::new(),
             mem: 0,
             spill: 0,
+            totals,
             next: 0,
             mem_cap,
             spill_cap,
@@ -94,14 +110,14 @@ impl Buffers {
         let id = self.next;
         self.next += 1;
         if text.len() <= self.mem_cap {
-            while self.mem + text.len() > self.mem_cap {
+            while self.used().0 + text.len() > self.mem_cap {
                 if !self.demote() {
                     break;
                 }
             }
         }
-        if text.len() <= self.mem_cap && self.mem + text.len() <= self.mem_cap {
-            self.mem += text.len();
+        if text.len() <= self.mem_cap && self.used().0 + text.len() <= self.mem_cap {
+            self.grow(text.len() as isize, 0);
             self.map.insert(id, Buffer::Memory(text));
             self.order.push_back(id);
         } else {
@@ -122,11 +138,11 @@ impl Buffers {
         let Some(Buffer::Memory(text)) = self.map.remove(&id) else {
             return false;
         };
-        self.mem -= text.len();
+        self.grow(-(text.len() as isize), 0);
         let Some(file) = temp_file(id, &text) else {
             return true;
         };
-        self.spill += text.len();
+        self.grow(0, text.len() as isize);
         self.map.insert(
             id,
             Buffer::File {
@@ -134,7 +150,7 @@ impl Buffers {
                 len: text.len(),
             },
         );
-        while self.spill > self.spill_cap {
+        while self.used().1 > self.spill_cap {
             if !self.drop_oldest_file() {
                 break;
             }
@@ -146,7 +162,7 @@ impl Buffers {
         let Some(file) = temp_file(id, &text) else {
             return;
         };
-        self.spill += text.len();
+        self.grow(0, text.len() as isize);
         self.map.insert(
             id,
             Buffer::File {
@@ -155,7 +171,7 @@ impl Buffers {
             },
         );
         self.order.push_back(id);
-        while self.spill > self.spill_cap {
+        while self.used().1 > self.spill_cap {
             if !self.drop_oldest_file() {
                 break;
             }
@@ -175,7 +191,7 @@ impl Buffers {
             self.order.remove(pos);
         }
         if let Some(buffer) = self.map.remove(&id) {
-            self.spill = self.spill.saturating_sub(buffer.len());
+            self.grow(0, -(buffer.len().min(self.spill) as isize));
             true
         } else {
             false
@@ -199,8 +215,34 @@ impl Buffers {
     fn clear(&mut self) {
         self.map.clear();
         self.order.clear();
-        self.mem = 0;
-        self.spill = 0;
+        self.grow(-(self.mem as isize), -(self.spill as isize));
+    }
+
+    /// Memory and spill bytes across every session sharing the budget.
+    fn used(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (self.totals.mem.load(Relaxed), self.totals.spill.load(Relaxed))
+    }
+
+    /// Change this session's counts and the shared ones together.
+    fn grow(&mut self, mem: isize, spill: isize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.mem = self.mem.saturating_add_signed(mem);
+        self.spill = self.spill.saturating_add_signed(spill);
+        for (total, delta) in [(&self.totals.mem, mem), (&self.totals.spill, spill)] {
+            if delta >= 0 {
+                total.fetch_add(delta as usize, Relaxed);
+            } else {
+                total.fetch_sub(delta.unsigned_abs(), Relaxed);
+            }
+        }
+    }
+}
+
+/// A closed session's bytes leave the shared budget.
+impl Drop for Buffers {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 
@@ -962,7 +1004,7 @@ mod tests {
 
     #[test]
     fn buffers_demote_and_expire() {
-        let mut b = Buffers::with_caps(8, 8);
+        let mut b = Buffers::with_caps(8, 8, Default::default());
         let a = b.store("aaaa".into());
         let second = b.store("bbbb".into());
         let _c = b.store("cccc".into());
@@ -972,6 +1014,23 @@ mod tests {
         assert!(b.read(second, 0, 10).is_none(), "spill cap kept the oldest");
         assert!(b.read(a, 0, 10).is_some(), "recently read buffer was dropped");
         assert!(b.read(f, 0, 10).unwrap().contains("eeee"));
+    }
+
+    #[test]
+    fn sessions_share_one_buffer_budget() {
+        let totals: std::sync::Arc<Totals> = Default::default();
+        let mut one = Buffers::with_caps(10, 100, totals.clone());
+        let mut two = Buffers::with_caps(10, 100, totals.clone());
+        let first = one.store("x".repeat(8));
+        let second = two.store("y".repeat(8));
+        let (mem, spill) = one.used();
+        assert!(mem <= 10, "memory {mem} passed the shared cap");
+        assert_eq!(mem + spill, 16);
+        assert!(one.read(first, 0, 20).unwrap().contains("xxxx"));
+        assert!(two.read(second, 0, 20).unwrap().contains("yyyy"));
+        assert!(two.read(second + 1, 0, 20).is_none(), "addresses are per session");
+        drop(two);
+        assert_eq!(one.used(), (8, 0), "a closed session kept its bytes");
     }
 
     #[test]
