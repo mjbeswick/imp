@@ -2,20 +2,25 @@
 
 ## Shape
 
-- `App` keeps what belongs to the screen: palette, size, overlay, inbox state,
-  and a `Vec<Pane>`. A `Pane` holds what belongs to one session: transcript
-  lines, composer draft, scroll, pending prompt, state, title, and its
-  command sender.
-- Each pane has its own worker thread running a `Session`, as today. Workers
-  send `(pane id, Ev)` on one shared event channel, so the event loop stays
-  single-threaded and draws only the pane in view.
-- A confirmation already blocks its worker on a reply channel, so answering
-  from the inbox sends on that pane's reply channel; nothing new is needed in
-  the agent loop.
-- The deadline counts only while the pane is in view: the pending prompt
-  stores when it was first shown, not when it arrived.
-- The buffer store moves behind a shared handle with per-session address
-  spaces, so limits apply to the sum.
+- `App`'s per-session fields always hold the session in view. Sessions out
+  of view are `Pane`s holding the same fields; switching swaps them, and an
+  event for a pane out of view is applied by swapping it in, calling `apply`,
+  and swapping it back, so one code path serves both and no redraw happens.
+- Each session has its own worker from `spawn_worker`, with its own command
+  sender and event receiver; the main loop polls every receiver. `Ev` needs
+  no pane id.
+- A new session is built by the current worker, which owns the system prompt,
+  roster, and memory, and sent back as `Ev::Spawn`. It gets its own mode
+  handle, so `/mode` stays per session, its own cancel flag, so Esc stops one
+  session, and its own job directory, so job logs never collide.
+- Answering from the inbox sends on that pane's pending reply; the agent loop
+  is unchanged.
+- The confirmation deadline moves from the worker to the UI: the worker waits
+  without a limit, and the UI answers `n`, cancels the turn, and says why when
+  a prompt has been in view for 60 seconds.
+- Buffers keep separate address spaces per session; a process-wide byte count
+  makes each session evict its own least recently used buffers when the total
+  passes the cap.
 
 ## Order
 

@@ -3797,33 +3797,13 @@ fn send_replay(tx: &Sender<Ev>, history: &[crate::api::Message]) {
 }
 
 /// Run the interface until the user quits. Returns the final session id.
-pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
-    install_guards();
-    MOUSE.store(cfg.mouse, Ordering::Relaxed);
-    let _raw = RawMode::enter();
-    if std::env::var_os("IMP_FORCE_PANIC").is_some() {
-        panic!("forced panic for the terminal-guard test");
-    }
-    // Only a first run needs the guess; a saved theme or COLORFGBG answers it.
-    let hinted = std::env::var("COLORFGBG")
-        .ok()
-        .and_then(|v| crate::theme::light_from_colorfgbg(&v))
-        .is_some();
-    if crate::theme::saved().is_none() && !hinted {
-        crate::theme::set_light(query_light().unwrap_or(false));
-    }
-    let mut app = App::new(
-        cfg,
-        session.cancel.clone(),
-        session.cols.clone(),
-        session.tools.root.clone(),
-        session.agent.name.clone(),
-    );
+/// A worker thread for one session: its command sender, its event receiver,
+/// and the id of the session it is logging to.
+type Worker = (Sender<Cmd>, Receiver<Ev>, std::sync::Arc<std::sync::Mutex<String>>);
 
+fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel::<Ev>();
-
-    let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
     let mut worker_session = session;
     if worker_session
         .history
@@ -4084,6 +4064,34 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
             }
         }
     });
+    (cmd_tx, ev_rx, session_id)
+}
+
+pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
+    install_guards();
+    MOUSE.store(cfg.mouse, Ordering::Relaxed);
+    let _raw = RawMode::enter();
+    if std::env::var_os("IMP_FORCE_PANIC").is_some() {
+        panic!("forced panic for the terminal-guard test");
+    }
+    // Only a first run needs the guess; a saved theme or COLORFGBG answers it.
+    let hinted = std::env::var("COLORFGBG")
+        .ok()
+        .and_then(|v| crate::theme::light_from_colorfgbg(&v))
+        .is_some();
+    if crate::theme::saved().is_none() && !hinted {
+        crate::theme::set_light(query_light().unwrap_or(false));
+    }
+    let mut app = App::new(
+        cfg,
+        session.cancel.clone(),
+        session.cols.clone(),
+        session.tools.root.clone(),
+        session.agent.name.clone(),
+    );
+
+    let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
+    let (cmd_tx, ev_rx, session_id) = spawn_worker(session, sessions_dir);
 
     // Key reader.
     let (key_tx, key_rx) = channel::<Vec<u8>>();
