@@ -8,4 +8,4 @@
 - [x] 1.6 The inbox: Ctrl+O and `/inbox`, rows, states, order, Enter, `y` `n` `a`, `x`. Verify: inbox tests for each scenario.
 - [x] 1.7 Attention: the waiting count, one bell, no deadline out of view. Verify: tests for the count and the paused deadline.
 - [x] 1.8 The `?` keys card and bottom-edge hints. Verify: card and hint tests.
-- [ ] 1.9 Help, README, checks, size recorded, and reinstall. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
+- [x] 1.9 Help, README, checks, size recorded, and reinstall. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.

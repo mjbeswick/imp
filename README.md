@@ -47,13 +47,29 @@ Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L 
 Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
 Ctrl+E expand the last tool call · Ctrl+D leaves line mode
+Ctrl+O inbox · Ctrl+N/Ctrl+P next or previous session · ? keys, from an empty composer
 ```
+
+### Several sessions
+
+`/new` and resuming from `/sessions` open another live session beside the
+current one, up to four; the oldest idle one closes to make room and stays in
+`/sessions`. Ctrl+N and Ctrl+P switch between them, and the status line shows
+which one is in view, such as `2/3 fix the parser`, and how many others are
+`waiting`.
+
+Ctrl+O or `/inbox` lists every live session with what it is doing:
+`needs approval`, `replied`, `working`, or `idle`. Answer an approval in place
+with `y`, `n`, or `a`, open a session with Enter, and close an idle one with
+`x`. A prompt out of view waits; its 60 second deadline starts when you see it.
+Approvals, modes, and buffers belong to each session, and all sessions share
+one 16 MB output buffer budget.
 
 ### Commands
 
 ```
 /help      keys and commands     /agent     switch profile
-/new       fresh conversation    /reload    re-read instructions and skills
+/new       another live session  /reload    re-read instructions and skills
 /sessions  pick a session        /compact   compact now
 /think     thinking toggle       /mode      normal, strict, or yolo
 /verbosity level: low or high    /cwd       show the session directory
@@ -62,6 +78,7 @@ Ctrl+E expand the last tool call · Ctrl+D leaves line mode
 /shell     open a shell          /model     set or pick the session model
 /provider  manage providers      /stash     park a message for this session
 /rename    rename this session   /quit      leave
+/inbox     live sessions
 ```
 
 `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` are

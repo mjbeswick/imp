@@ -31,7 +31,7 @@ const GROUPS: &[(&str, &[&str])] = &[
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
-    ("/new", "start a fresh conversation"),
+    ("/new", "start another live session"),
     ("/sessions", "pick a session"),
     ("/inbox", "live sessions and what they need"),
     ("/reload", "re-read instructions and skills"),
