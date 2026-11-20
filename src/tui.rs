@@ -1000,6 +1000,7 @@ enum PickKind {
     Provider,
     Mode,
     Inbox,
+    Keys,
 }
 
 #[derive(Clone)]
@@ -1239,6 +1240,7 @@ impl Picker {
             PickKind::Inbox => {
                 return "Enter open · y n a answer · x close · Esc back".into();
             }
+            PickKind::Keys => return "? or Esc close".into(),
             _ => vec!["Enter choose".into(), "Esc close".into()],
         };
         if let Some(item) = self.items.first() {
@@ -2013,6 +2015,31 @@ impl App {
         // Clicks and unknown sequences do nothing, and must not answer a prompt.
         if matches!(key, Key::Unknown) {
             return;
+        }
+        // `?` on an empty composer shows the keys; `?` again closes them.
+        if matches!(key, Key::Char('?')) {
+            match &self.pending {
+                None if self.input.is_empty() => {
+                    let rows = crate::help::KEYS
+                        .iter()
+                        .map(|(k, what)| PickItem {
+                            label: k.to_string(),
+                            value: k.to_string(),
+                            desc: what.to_string(),
+                            actions: Vec::new(),
+                        })
+                        .collect();
+                    self.pending = Some(Pending::Pick(Picker::new("keys", rows, PickKind::Keys)));
+                    self.dirty = true;
+                    return;
+                }
+                Some(Pending::Pick(p)) if p.kind == PickKind::Keys => {
+                    self.pending = None;
+                    self.dirty = true;
+                    return;
+                }
+                _ => {}
+            }
         }
         if matches!(key, Key::WheelUp | Key::WheelDown) {
             match &mut self.pending {
@@ -3298,7 +3325,7 @@ impl App {
                             }
                             PickKind::Mode => self.set_mode(&choice.value, tx),
                             // The inbox is its own overlay and never reaches here.
-                            PickKind::Inbox => {}
+                            PickKind::Inbox | PickKind::Keys => {}
                             PickKind::Verbosity => {
                                 self.verbose = choice.value == "high";
                                 self.push(Role::Info, format!("verbosity: {}", choice.value));
@@ -4958,6 +4985,26 @@ mod tests {
         a.expire();
         assert!(answers.try_recv().is_err(), "expired as soon as it was shown");
         assert!(a.status_line(120).contains(" · 1 waiting"), "{}", a.status_line(120));
+    }
+
+    #[test]
+    fn question_mark_opens_the_keys_card_only_from_an_empty_composer() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.handle_key(Key::Char('?'), &tx);
+        let Some(Pending::Pick(p)) = &a.pending else { panic!("no keys card") };
+        assert_eq!(p.kind, PickKind::Keys);
+        assert!(p.items.iter().any(|i| i.label == "Ctrl+O"));
+        assert_eq!(p.footer(), "? or Esc close");
+        assert!(a.input.is_empty(), "the ? reached the composer");
+        a.handle_key(Key::Char('?'), &tx);
+        assert!(a.pending.is_none(), "? did not close the card");
+        for c in "why".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Char('?'), &tx);
+        assert_eq!(a.input, "why?");
+        assert!(a.pending.is_none());
     }
 
     #[test]
