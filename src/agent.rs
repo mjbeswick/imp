@@ -10,9 +10,23 @@ use crate::tools::Tools;
 use serde_json::{json, Value};
 use std::sync::atomic::AtomicBool;
 
+/// An answer to a confirmation that may offer `always`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    No,
+    Yes,
+    Always,
+}
+
 pub trait Hooks {
     fn ui(&mut self, event: Ui);
     fn confirm(&mut self, what: &str) -> bool;
+
+    /// A confirmation that also offers `always`. Front-ends that cannot show it
+    /// answer as `confirm` does.
+    fn confirm_always(&mut self, what: &str) -> Answer {
+        if self.confirm(what) { Answer::Yes } else { Answer::No }
+    }
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String>;
 
     /// Time the last confirmation kept the user, which is not the tool's cost.
@@ -123,6 +137,8 @@ pub struct Session {
     pub job_dir: std::path::PathBuf,
     /// Hosts the user approved for `fetch` in this session.
     fetch_hosts: std::collections::HashSet<String>,
+    /// Command shapes answered `always` in this session.
+    always: std::collections::HashSet<String>,
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
     pub last_model: Option<String>,
@@ -169,6 +185,7 @@ impl Session {
             jobs: Jobs::default(),
             job_dir,
             fetch_hosts: std::collections::HashSet::new(),
+            always: std::collections::HashSet::new(),
             log: None,
             last_usage: (0, 0, 0),
             last_model: None,
@@ -207,6 +224,8 @@ impl Session {
             .cloned()
             .collect();
         self.history = system;
+        self.fetch_hosts.clear();
+        self.always.clear();
     }
 
     /// Load a session by id and continue it.
@@ -739,8 +758,24 @@ impl Session {
                     match decision {
                         Decision::Deny(why) => return (false, why),
                         Decision::Ask => {
-                            if !hooks.confirm(&format!("run `{cmd}`")) {
-                                return (false, "refused: the user declined to run this command".into());
+                            // `always` only for one simple command in normal.
+                            let shape = perm::shape(cmd).filter(|_| mode == Permissions::Normal);
+                            let known = shape.as_ref().is_some_and(|k| self.always.contains(k));
+                            let what = format!("run `{cmd}`");
+                            let answer = match &shape {
+                                _ if known => Answer::Yes,
+                                Some(_) => hooks.confirm_always(&what),
+                                None if hooks.confirm(&what) => Answer::Yes,
+                                None => Answer::No,
+                            };
+                            match (answer, shape) {
+                                (Answer::No, _) => {
+                                    return (false, "refused: the user declined to run this command".into())
+                                }
+                                (Answer::Always, Some(k)) => {
+                                    self.always.insert(k);
+                                }
+                                _ => {}
                             }
                         }
                         Decision::Allow => {}
@@ -2147,6 +2182,57 @@ mod tests {
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
         }
+    }
+
+    /// Answers `always` when offered, and counts what it was asked.
+    #[derive(Default)]
+    struct AlwaysHooks {
+        offered: usize,
+        plain: usize,
+    }
+
+    impl Hooks for AlwaysHooks {
+        fn ui(&mut self, _: Ui) {}
+        fn confirm(&mut self, _: &str) -> bool {
+            self.plain += 1;
+            true
+        }
+        fn confirm_always(&mut self, _: &str) -> Answer {
+            self.offered += 1;
+            Answer::Always
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn always_skips_the_same_shape_for_the_session() {
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Normal);
+        let mut h = AlwaysHooks::default();
+        let run = |s: &mut Session, h: &mut AlwaysHooks, cmd: &str| {
+            s.run_tool("bash", &json!({"command": cmd}), h);
+        };
+        run(&mut s, &mut h, "printf a");
+        assert_eq!((h.offered, h.plain), (0, 0), "printf is safe-listed");
+        run(&mut s, &mut h, "touch imp-always-x");
+        run(&mut s, &mut h, "touch imp-always-x");
+        assert_eq!(h.offered, 1, "the same shape asked again");
+        run(&mut s, &mut h, "touch imp-always-y");
+        assert_eq!(h.offered, 2, "another argument did not ask");
+        run(&mut s, &mut h, "touch imp-always-x && true");
+        assert_eq!((h.offered, h.plain), (2, 1), "a compound command offered always");
+        s.reset();
+        run(&mut s, &mut h, "touch imp-always-x");
+        assert_eq!(h.offered, 3, "always outlived /new");
+
+        let (mut strict, _f) = scripted(vec![]);
+        strict.cfg.set_permissions(Permissions::Strict);
+        let mut h = AlwaysHooks::default();
+        run(&mut strict, &mut h, "touch imp-always-x");
+        run(&mut strict, &mut h, "touch imp-always-x");
+        assert_eq!((h.offered, h.plain), (0, 2), "strict offered always");
     }
 
     #[test]
