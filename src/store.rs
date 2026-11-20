@@ -611,8 +611,38 @@ impl Memory {
         Self { dirs }
     }
 
+    /// Slug and title of each note, project notes first, sorted, capped.
+    pub fn index(&self, limit: usize) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for dir in &self.dirs {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            let mut notes: Vec<(String, String)> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
+                .filter_map(|p| {
+                    let stem = p.file_stem()?.to_string_lossy().to_string();
+                    let body = std::fs::read_to_string(&p).ok()?;
+                    let title = body
+                        .lines()
+                        .find_map(|l| l.strip_prefix("# "))
+                        .map(|t| t.trim().to_string())
+                        .unwrap_or_else(|| stem.clone());
+                    Some((stem, title))
+                })
+                .collect();
+            notes.sort();
+            out.extend(notes);
+        }
+        out.truncate(limit);
+        out
+    }
+
     pub fn search(&self, query: &str, limit: usize) -> Vec<(PathBuf, String)> {
-        let needle = query.to_lowercase();
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let needle = words.first().cloned().unwrap_or_default();
         let mut hits = Vec::new();
         for dir in &self.dirs {
             let Ok(entries) = std::fs::read_dir(dir) else {
@@ -627,7 +657,8 @@ impl Memory {
                     continue;
                 };
                 let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-                if name.to_lowercase().contains(&needle) || body.to_lowercase().contains(&needle) {
+                let hay = format!("{} {}", name.to_lowercase(), body.to_lowercase());
+                if words.iter().all(|w| hay.contains(w.as_str())) {
                     hits.push((path, excerpt(&body, &needle)));
                 }
                 if hits.len() >= limit {

@@ -49,6 +49,13 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
         "\nMemory: notes are plain markdown files. Search them with the memory tool before guessing. \
          Save only when asked, or when a lasting preference appears.\n",
     );
+    let notes = crate::store::Memory::discover(cfg, root).index(40);
+    if !notes.is_empty() {
+        prompt.push_str("Notes (search for the body when one applies):\n");
+        for (slug, title) in &notes {
+            prompt.push_str(&format!("- {slug}: {title}\n"));
+        }
+    }
 
     let skills = crate::store::load_skills(cfg, root);
     if !skills.is_empty() {
@@ -132,6 +139,32 @@ mod tests {
         let index: Vec<&str> = tail.lines().filter(|l| l.starts_with("- ")).collect();
         assert!(index.len() <= 40);
         assert!(index.iter().any(|l| l.contains("does thing 0")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn notes_are_indexed_by_title_and_capped() {
+        let d = std::env::temp_dir().join(format!("imp-notes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let mem = d.join(".imp").join("memory");
+        std::fs::create_dir_all(&mem).unwrap();
+        std::fs::write(
+            mem.join("user-location-woking-uk.md"),
+            "# User location: Woking, UK\n\nThe user lives in Woking.\n",
+        )
+        .unwrap();
+        let text = compose(&d, &crate::config::Config::default());
+        assert!(text.contains("- user-location-woking-uk: User location: Woking, UK"), "{text}");
+        assert!(!text.contains("The user lives in Woking"), "a body leaked into the prompt");
+
+        for i in 0..45 {
+            std::fs::write(mem.join(format!("n{i:02}.md")), format!("# note {i}\n")).unwrap();
+        }
+        let m = crate::store::Memory { dirs: vec![mem.clone()] };
+        assert_eq!(m.index(40).len(), 40);
+        assert_eq!(m.index(40)[0].0, "n00", "not sorted");
+        let hits = m.search("woking location", 5);
+        assert_eq!(hits.len(), 1, "words apart were not found");
         let _ = std::fs::remove_dir_all(&d);
     }
 
