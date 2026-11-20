@@ -54,9 +54,14 @@ Ctrl+O next waiting · Ctrl+N/Ctrl+P next or previous session · ? keys, from an
 
 `/new` and resuming from `/sessions` open another live session beside the
 current one, up to four; the oldest idle one closes to make room and stays in
-`/sessions`. Ctrl+N and Ctrl+P switch between them, and the status line shows
-which one is in view, such as `2/3 fix the parser`, and how many others are
-`waiting`.
+`/sessions`, and its background jobs stop. Ctrl+N and Ctrl+P switch between
+them, and the status line shows which one is in view, such as
+`2/3 fix the parser`, and how many others are `waiting`. There is no close
+command: `/new` moves on, and the pool makes room by itself.
+
+In `/sessions`, a spinner marks a live session that is still working. When the
+filter matches no title, Enter searches what was said in every session and
+lists the hits with a snippet.
 
 Ctrl+O or `/next` goes to the session that has waited longest for you: an
 approval, a question, or a reply that finished out of view. Pressing it again
