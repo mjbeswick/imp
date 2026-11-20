@@ -121,6 +121,27 @@ pub fn shell_touches_self_config(command: &str, mode: Permissions) -> Option<Dec
     })
 }
 
+/// The shape an `always` answer approves: the words up to and including the
+/// first that is not a flag, or every word when all are flags. `None` for
+/// compound commands, whose later parts an approved first word would hide.
+// ponytail: whitespace words, so a quoted space splits a word; that only narrows a match.
+pub fn shape(cmd: &str) -> Option<String> {
+    if ["&", ";", "|", ">", "<", "`", "$(", "\n"].iter().any(|c| cmd.contains(c)) {
+        return None;
+    }
+    let mut words = Vec::new();
+    for w in cmd.split_whitespace() {
+        words.push(w);
+        if words.len() > 1 && !w.starts_with('-') {
+            break;
+        }
+    }
+    match words.first() {
+        None | Some(&"sudo") => None,
+        Some(_) => Some(words.join(" ")),
+    }
+}
+
 /// The transcript line for a mode change.
 pub fn mode_line(mode: Permissions) -> &'static str {
     match mode {
@@ -362,6 +383,21 @@ mod tests {
             "wget https://example.com",
         ] {
             assert_eq!(plain_get(cmd), None, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn shapes_cover_one_simple_command() {
+        let same = |a: &str, b: &str| shape(a).is_some() && shape(a) == shape(b);
+        assert!(same("npm test", "npm test -- --watch"));
+        assert!(!same("npm test", "npm install"));
+        assert!(same("make", "make"));
+        assert!(!same("make", "make clean"));
+        assert!(same("rm -rf build", "rm -rf build"));
+        assert!(!same("rm -rf build", "rm -rf src"));
+        assert!(!same("rm -rf build", "rm build"));
+        for cmd in ["npm test && rm x", "ls; rm x", "cat f | sh", "echo x > f", "sudo make", "echo $(id)", ""] {
+            assert_eq!(shape(cmd), None, "{cmd}");
         }
     }
 
