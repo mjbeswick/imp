@@ -41,17 +41,23 @@ impl Job {
     }
 }
 
+/// Job ids are unique across the process, so sessions running side by side
+/// never share a `job-<id>.log`.
+static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_id() -> u64 {
+    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
 #[derive(Default)]
 pub struct Jobs {
     map: BTreeMap<u64, Job>,
-    next: u64,
 }
 
 impl Jobs {
     pub fn start(&mut self, command: &str, dir: &Path) -> Result<u64, String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        self.next += 1;
-        let id = self.next;
+        let id = next_id();
         let output = dir.join(format!("job-{id}.log"));
         let file = std::fs::File::create(&output).map_err(|e| e.to_string())?;
 
@@ -86,8 +92,7 @@ impl Jobs {
 
     /// Take over a command that is already running, logging to `output`.
     pub fn adopt(&mut self, command: &str, child: Child, output: PathBuf) -> u64 {
-        self.next += 1;
-        let id = self.next;
+        let id = next_id();
         self.map.insert(
             id,
             Job {

@@ -168,7 +168,7 @@ fn run() -> Result<(), String> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
     ));
-    let mut session = Session::new(cfg, root.clone(), out_dir, system, agent, roster, cols);
+    let mut session = Session::new(cfg, root.clone(), out_dir.clone(), system.clone(), agent, roster, cols);
 
     match existing {
         Some(log) => {
@@ -193,7 +193,23 @@ fn run() -> Result<(), String> {
             let interactive = unsafe { isatty(0) } != 0 && unsafe { isatty(1) } != 0;
             let chat = wants_chat(mode, interactive);
             if chat {
-                match tui::run(session, tui_cfg) {
+                // Builds each further live session, with its own mode and buffers.
+                let fresh: tui::Fresh = {
+                    let (cfg, out_dir, system) = (session.cfg.detached(), out_dir.clone(), system.clone());
+                    let (agent, roster, cols) = (session.agent.clone(), session.roster.clone(), session.cols.clone());
+                    Box::new(move |root: &std::path::Path| {
+                        Session::new(
+                            cfg.detached(),
+                            root.to_path_buf(),
+                            out_dir.clone(),
+                            system.clone(),
+                            agent.clone(),
+                            roster.clone(),
+                            cols.clone(),
+                        )
+                    })
+                };
+                match tui::run(session, tui_cfg, fresh) {
                     Ok(id) => (Ok(()), id),
                     Err(e) => (Err(e), None),
                 }

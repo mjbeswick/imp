@@ -882,6 +882,76 @@ pub struct App {
     quit: bool,
     spinner: usize,
     tool: Option<ToolRow>,
+    /// The worker for the session in view; `None` in tests.
+    worker: Option<Worker>,
+    /// When the session in view last did anything, to pick one to close.
+    touched: Instant,
+    /// Every live session in order; the one in view is `None` at `at`.
+    panes: Vec<Option<Pane>>,
+    at: usize,
+    /// Builds a further live session; `None` keeps `/new` in one session.
+    fresh: Option<Fresh>,
+}
+
+/// Builds a session for a working directory, for another live session.
+pub type Fresh = Box<dyn Fn(&std::path::Path) -> Session>;
+
+/// The most live sessions at once; the Pi Zero has 512 MB.
+const MAX_PANES: usize = 4;
+
+/// A live session out of view: the fields `App` holds for the one in view.
+struct Pane {
+    cfg: Config,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    entries: Vec<Entry>,
+    input: String,
+    cursor: usize,
+    hist_pos: Option<usize>,
+    follow: bool,
+    top: usize,
+    max_top: usize,
+    unseen: usize,
+    pending: Option<Pending>,
+    pending_since: Option<Instant>,
+    stash: Vec<String>,
+    bell_pending: bool,
+    status: Status,
+    tool: Option<ToolRow>,
+    root: std::path::PathBuf,
+    agent: String,
+    worker: Option<Worker>,
+    touched: Instant,
+}
+
+impl Pane {
+    fn new(session: &Session, worker: Option<Worker>) -> Self {
+        Self {
+            cfg: session.cfg.clone(),
+            cancel: session.cancel.clone(),
+            entries: Vec::new(),
+            input: String::new(),
+            cursor: 0,
+            hist_pos: None,
+            follow: true,
+            top: 0,
+            max_top: 0,
+            unseen: 0,
+            pending: None,
+            pending_since: None,
+            stash: Vec::new(),
+            bell_pending: false,
+            status: Status::default(),
+            tool: None,
+            root: session.tools.root.clone(),
+            agent: session.agent.name.clone(),
+            worker,
+            touched: Instant::now(),
+        }
+    }
+
+    fn idle(&self) -> bool {
+        !self.status.streaming && self.pending.is_none()
+    }
 }
 
 enum Pending {
@@ -1273,6 +1343,7 @@ fn is_image_name(name: &str) -> bool {
         .any(|ext| lower.ends_with(ext))
 }
 
+#[derive(Default)]
 struct Status {
     tokens: u64,
     hit: u64,
@@ -1342,6 +1413,190 @@ impl App {
             quit: false,
             spinner: 0,
             tool: None,
+            worker: None,
+            touched: Instant::now(),
+            panes: vec![None],
+            at: 0,
+            fresh: None,
+        }
+    }
+
+    /// Exchange the per-session fields with a pane's.
+    fn swap_pane(&mut self, p: &mut Pane) {
+        use std::mem::swap;
+        swap(&mut self.cfg, &mut p.cfg);
+        swap(&mut self.cancel, &mut p.cancel);
+        swap(&mut self.entries, &mut p.entries);
+        swap(&mut self.input, &mut p.input);
+        swap(&mut self.cursor, &mut p.cursor);
+        swap(&mut self.hist_pos, &mut p.hist_pos);
+        swap(&mut self.follow, &mut p.follow);
+        swap(&mut self.top, &mut p.top);
+        swap(&mut self.max_top, &mut p.max_top);
+        swap(&mut self.unseen, &mut p.unseen);
+        swap(&mut self.pending, &mut p.pending);
+        swap(&mut self.pending_since, &mut p.pending_since);
+        swap(&mut self.stash, &mut p.stash);
+        swap(&mut self.bell_pending, &mut p.bell_pending);
+        swap(&mut self.status, &mut p.status);
+        swap(&mut self.tool, &mut p.tool);
+        swap(&mut self.root, &mut p.root);
+        swap(&mut self.agent, &mut p.agent);
+        swap(&mut self.worker, &mut p.worker);
+        swap(&mut self.touched, &mut p.touched);
+    }
+
+    /// Bring the pane at `index` into view and park the current one.
+    fn show(&mut self, index: usize) {
+        if index == self.at {
+            return;
+        }
+        let Some(mut p) = self.panes[index].take() else { return };
+        self.swap_pane(&mut p);
+        self.panes[self.at] = Some(p);
+        self.at = index;
+        self.touched = Instant::now();
+        self.dirty = true;
+    }
+
+    /// Apply a worker event to a pane out of view, through the same code.
+    fn apply_to(&mut self, index: usize, ev: Ev) {
+        if index == self.at {
+            return self.apply(ev);
+        }
+        let Some(mut p) = self.panes[index].take() else { return };
+        self.swap_pane(&mut p);
+        self.apply(ev);
+        self.touched = Instant::now();
+        self.swap_pane(&mut p);
+        self.panes[index] = Some(p);
+    }
+
+    /// Apply every waiting worker event, in view or not. True when any arrived.
+    fn poll(&mut self) -> bool {
+        let mut any = false;
+        for i in 0..self.panes.len() {
+            let worker = match &self.panes[i] {
+                None => self.worker.as_ref(),
+                Some(p) => p.worker.as_ref(),
+            };
+            let Some((_, rx, _)) = worker else { continue };
+            let mut events = Vec::new();
+            let mut gone = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(ev) => events.push(ev),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        gone = true;
+                        break;
+                    }
+                }
+            }
+            any |= !events.is_empty();
+            for ev in events {
+                self.apply_to(i, ev);
+            }
+            if gone && i == self.at {
+                self.quit = true;
+            }
+        }
+        any
+    }
+
+    /// Whether the pane at `index` is neither working nor waiting.
+    fn pane_idle(&self, index: usize) -> bool {
+        match &self.panes[index] {
+            None => !self.status.streaming && self.pending.is_none(),
+            Some(p) => p.idle(),
+        }
+    }
+
+    fn pane_touched(&self, index: usize) -> Instant {
+        self.panes[index].as_ref().map_or(self.touched, |p| p.touched)
+    }
+
+    /// Stop a pane's worker and drop it; the session stays in `/sessions`.
+    fn close(&mut self, index: usize) {
+        if index == self.at {
+            return;
+        }
+        if let Some(Some(p)) = self.panes.get(index) {
+            if let Some((tx, _, _)) = &p.worker {
+                let _ = tx.send(Cmd::Quit);
+            }
+        }
+        self.panes.remove(index);
+        if index < self.at {
+            self.at -= 1;
+        }
+        self.dirty = true;
+    }
+
+    /// Open a session in a new live pane, closing the oldest idle one for room.
+    fn open(&mut self, session: Session) -> bool {
+        let mut victim = None;
+        if self.panes.len() >= MAX_PANES {
+            victim = (0..self.panes.len())
+                .filter(|&i| self.pane_idle(i))
+                .min_by_key(|&i| self.pane_touched(i));
+            if victim.is_none() {
+                self.push(Role::Error, "all four sessions are busy; answer or stop one first");
+                return false;
+            }
+        }
+        let mut pane = Pane::new(&session, None);
+        pane.worker = Some(spawn_worker(session, self.sessions_dir.clone()));
+        self.panes.push(Some(pane));
+        self.show(self.panes.len() - 1);
+        // After the switch the victim is out of view, even if it was in view.
+        if let Some(v) = victim {
+            self.close(v);
+        }
+        true
+    }
+
+    /// Start another live session, or reset this one without a factory.
+    fn new_session(&mut self, tx: &Sender<Cmd>) {
+        let Some(fresh) = &self.fresh else {
+            let _ = tx.send(Cmd::Reset);
+            self.entries.clear();
+            self.push(Role::Info, "new conversation");
+            return;
+        };
+        let mut session = fresh(&self.root);
+        session.attach_log(crate::store::Log::create(&self.sessions_dir, &self.root, &session.cfg.model));
+        if self.open(session) {
+            self.push(Role::Info, "new conversation");
+        }
+    }
+
+    /// The session picker's `n`: a new logged session, as before without a factory.
+    fn new_session_from_picker(&mut self, tx: &Sender<Cmd>) {
+        if self.fresh.is_some() {
+            return self.new_session(tx);
+        }
+        let _ = tx.send(Cmd::NewSession);
+        self.entries.clear();
+        self.push(Role::Info, "new conversation");
+    }
+
+    /// Resume a stored session in another live pane, or in this one.
+    fn resume(&mut self, id: String, tx: &Sender<Cmd>) {
+        let Some(fresh) = &self.fresh else {
+            self.entries.clear();
+            self.push(Role::Info, format!("resuming {id}"));
+            let _ = tx.send(Cmd::Resume(id));
+            return;
+        };
+        let mut session = fresh(&self.root);
+        match session.resume_id(&self.sessions_dir, &id) {
+            Ok(()) => {
+                if self.open(session) {
+                    self.push(Role::Info, format!("resumed {id}"));
+                }
+            }
+            Err(e) => self.push(Role::Error, e),
         }
     }
 
@@ -2440,8 +2695,7 @@ impl App {
             }
             other if other.starts_with("sessions ") => {
                 let id = other["sessions".len()..].trim().to_string();
-                self.entries.clear();
-                let _ = tx.send(Cmd::Resume(id));
+                self.resume(id, tx);
             }
             "compact" => {
                 let _ = tx.send(Cmd::Compact);
@@ -2455,11 +2709,7 @@ impl App {
                     format!("thinking: {}", if self.cfg.thinking { "on" } else { "off" }),
                 );
             }
-            "new" => {
-                let _ = tx.send(Cmd::Reset);
-                self.entries.clear();
-                self.push(Role::Info, "new conversation");
-            }
+            "new" => self.new_session(tx),
             "cwd" => self.push(Role::Info, self.root.display().to_string()),
             "fork" => {
                 let _ = tx.send(Cmd::Fork);
@@ -2775,11 +3025,7 @@ impl App {
                     }
                     Key::Char(c) if picker.filter.is_empty() && picker.action(c).is_some() => {
                         match picker.action(c) {
-                            Some("new") => {
-                                let _ = tx.send(Cmd::NewSession);
-                                self.entries.clear();
-                                self.push(Role::Info, "new conversation");
-                            }
+                            Some("new") => self.new_session_from_picker(tx),
                             Some("rename") => {
                                 if let Some(choice) = picker.selected() {
                                     let id = choice.value.clone();
@@ -2868,11 +3114,7 @@ impl App {
                                 let _ = tx.send(Cmd::SetAgent(choice.value.clone()));
                                 self.push(Role::Info, format!("agent: {}", choice.value));
                             }
-                            PickKind::Session => {
-                                self.entries.clear();
-                                self.push(Role::Info, format!("resuming {}", choice.value));
-                                let _ = tx.send(Cmd::Resume(choice.value));
-                            }
+                            PickKind::Session => self.resume(choice.value, tx),
                             PickKind::Model => {
                                 self.set_model(&choice.value, tx);
                             }
@@ -4067,7 +4309,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
     (cmd_tx, ev_rx, session_id)
 }
 
-pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
+pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>, String> {
     install_guards();
     MOUSE.store(cfg.mouse, Ordering::Relaxed);
     let _raw = RawMode::enter();
@@ -4091,7 +4333,8 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
     );
 
     let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
-    let (cmd_tx, ev_rx, session_id) = spawn_worker(session, sessions_dir);
+    app.worker = Some(spawn_worker(session, sessions_dir));
+    app.fresh = Some(fresh);
 
     // Key reader.
     let (key_tx, key_rx) = channel::<Vec<u8>>();
@@ -4119,7 +4362,9 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
             Ok(bytes) => {
                 pending_bytes.extend(bytes);
                 for key in decode(&mut pending_bytes) {
-                    app.handle_key(key, &cmd_tx);
+                    // The session in view can change with any key.
+                    let Some(tx) = app.worker.as_ref().map(|w| w.0.clone()) else { break };
+                    app.handle_key(key, &tx);
                 }
                 redraw = true;
             }
@@ -4134,18 +4379,8 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
-        loop {
-            match ev_rx.try_recv() {
-                Ok(ev) => {
-                    app.apply(ev);
-                    redraw = true;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    app.quit = true;
-                    break;
-                }
-            }
+        if app.poll() {
+            redraw = true;
         }
 
         // A resize has to be noticed without repainting on a timer.
@@ -4159,12 +4394,21 @@ pub fn run(session: Session, cfg: Config) -> Result<Option<String>, String> {
         }
     }
 
-    let _ = cmd_tx.send(Cmd::Quit);
-    let id = session_id
-        .lock()
-        .ok()
-        .map(|slot| slot.clone())
+    let id = app
+        .worker
+        .as_ref()
+        .and_then(|w| w.2.lock().ok().map(|slot| slot.clone()))
         .filter(|id| !id.is_empty());
+    for i in 0..app.panes.len() {
+        if let Some(Some(p)) = app.panes.get(i) {
+            if let Some((tx, _, _)) = &p.worker {
+                let _ = tx.send(Cmd::Quit);
+            }
+        }
+    }
+    if let Some((tx, _, _)) = &app.worker {
+        let _ = tx.send(Cmd::Quit);
+    }
     Ok(id)
 }
 
@@ -4317,6 +4561,104 @@ mod tests {
 
     fn app() -> App {
         app_at(std::env::temp_dir())
+    }
+
+    /// An app that opens real live sessions, logging under a scratch directory.
+    fn multi_app(name: &str) -> App {
+        let dir = std::env::temp_dir().join(format!("imp-panes-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut a = app_at(dir.clone());
+        a.sessions_dir = dir.join("sessions");
+        let out = dir.join("out");
+        a.fresh = Some(Box::new(move |root: &std::path::Path| {
+            let mut cfg = Config::default();
+            cfg.color = ColorMode::Never;
+            Session::new(
+                cfg,
+                root.to_path_buf(),
+                out.clone(),
+                String::new(),
+                crate::store::Agent::builtin(),
+                Vec::new(),
+                std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+            )
+        }));
+        a
+    }
+
+    #[test]
+    fn new_opens_a_second_live_session() {
+        let mut a = multi_app("second");
+        let (tx, _rx) = channel();
+        a.push(Role::User, "first question");
+        a.status.streaming = true;
+        a.run_command("new", &tx);
+        assert_eq!((a.panes.len(), a.at), (2, 1));
+        assert!(!a.status.streaming, "the new session inherited the turn");
+        assert!(!a.entries.iter().any(|e| e.text == "first question"));
+        let first = a.panes[0].as_ref().unwrap();
+        assert!(first.status.streaming, "the first session stopped");
+        assert!(first.entries.iter().any(|e| e.text == "first question"));
+        // An event for the first lands there, not in view.
+        a.apply_to(0, Ev::Info("from the first".into()));
+        assert!(!a.entries.iter().any(|e| e.text == "from the first"));
+        assert!(a.panes[0].as_ref().unwrap().entries.iter().any(|e| e.text == "from the first"));
+    }
+
+    #[test]
+    fn resuming_opens_another_live_session() {
+        let mut a = multi_app("resume");
+        let (tx, _rx) = channel();
+        let log = crate::store::Log::create(&a.sessions_dir, &a.root, "m");
+        log.append(&crate::api::Message::user("stored question"));
+        a.push(Role::User, "live question");
+        a.run_command(&format!("sessions {}", log.id), &tx);
+        assert_eq!((a.panes.len(), a.at), (2, 1));
+        assert!(a.panes[0].as_ref().unwrap().entries.iter().any(|e| e.text == "live question"));
+        // The worker replays the stored turn into the new pane.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !a.entries.iter().any(|e| e.text.contains("stored question")) && Instant::now() < deadline {
+            a.poll();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(a.entries.iter().any(|e| e.text.contains("stored question")), "no replay");
+    }
+
+    #[test]
+    fn modes_stay_per_session() {
+        let mut a = multi_app("modes");
+        let (tx, _rx) = channel();
+        a.run_command("new", &tx);
+        a.run_command("mode yolo", &tx);
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Yolo);
+        assert_eq!(
+            a.panes[0].as_ref().unwrap().cfg.live_permissions(),
+            crate::config::Permissions::Normal,
+            "/mode leaked into another session"
+        );
+    }
+
+    #[test]
+    fn a_fifth_session_closes_the_oldest_idle_one() {
+        let mut a = multi_app("room");
+        let (tx, _rx) = channel();
+        for _ in 0..3 {
+            a.status.streaming = true;
+            a.run_command("new", &tx);
+        }
+        assert_eq!(a.panes.len(), 4);
+        // Session 0 is busy, 1 and 2 busy, the one in view is idle.
+        a.run_command("new", &tx);
+        assert_eq!(a.panes.len(), 4, "no room was made");
+        assert!(a.panes.iter().flatten().all(|p| p.status.streaming), "an idle session survived");
+
+        a.status.streaming = true;
+        a.run_command("new", &tx);
+        assert_eq!(a.panes.len(), 4);
+        let last = a.entries.last().unwrap();
+        assert_eq!(last.role, Role::Error);
+        assert!(last.text.starts_with("all four sessions are busy"), "{}", last.text);
     }
 
     fn app_at(root: std::path::PathBuf) -> App {

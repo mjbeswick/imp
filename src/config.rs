@@ -246,6 +246,14 @@ impl Config {
             .store(mode.code(), std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// A copy whose mode no longer follows this one: another session's
+    /// `/mode` must not change it.
+    pub fn detached(&self) -> Self {
+        let mut copy = self.clone();
+        copy.mode = Arc::new(AtomicU8::new(self.live_permissions().code()));
+        copy
+    }
+
     /// The mode as of this read, not as of the session's start.
     pub fn live_permissions(&self) -> Permissions {
         Permissions::from_code(self.mode.load(std::sync::atomic::Ordering::Relaxed))
