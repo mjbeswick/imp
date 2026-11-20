@@ -683,6 +683,14 @@ mod tests {
     }
 
     #[test]
+    fn a_weather_reply_draws_a_box() {
+        let reply = "**Woking, UK**\n\nNow: **5°C** (feels 3°C)\n\n| Day | Low–High | Conditions | Rain |\n|---|---|---|---|\n| Today | 3–8°C | Patchy rain nearby | 29% |\n| Tomorrow | 1–8°C | Partly cloudy | 15% |";
+        let rows: Vec<String> = lines(reply, 60, true).iter().map(|r| text(r)).collect();
+        assert!(rows.iter().any(|r| r.contains("│ Tomorrow")), "{rows:#?}");
+        assert!(!rows.iter().any(|r| r.contains("|---")), "{rows:#?}");
+    }
+
+    #[test]
     fn a_fence_keeps_its_body() {
         let text = "before\n```\n**not bold**\n```\nafter";
         let rows = lines(text, 80, false);
