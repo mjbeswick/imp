@@ -7,7 +7,7 @@ Lets the user choose command values and paths in a centred overlay instead of ty
 
 ### Requirement: One picker serves command values
 
-The system SHALL provide a single picker with a title, a filter, a scrolling list, a highlighted row, and cancel, SHALL open it in the chat for `/agent`, `/sessions`, `/verbosity`, `/model`, `/theme`, and `/provider` with no value, and after a command word and space when that command has values, SHALL apply a typed value directly, SHALL filter case-insensitively, SHALL move with Up/Down and page with PgUp/PgDn, SHALL choose with Enter, and SHALL cancel with Esc unchanged.
+The system SHALL provide a single picker with a title, a filter, a scrolling list, a highlighted row, and cancel, SHALL open it in the chat for `/agent`, `/sessions`, `/verbosity`, `/model`, `/theme`, `/provider`, and `/mode` with no value, and after a command word and space when that command has values, SHALL apply a typed value directly, SHALL filter case-insensitively, SHALL move with Up/Down and page with PgUp/PgDn, SHALL choose with Enter, and SHALL cancel with Esc unchanged.
 
 #### Scenario: Agent picker
 - **WHEN** the user runs `/agent`
@@ -28,6 +28,10 @@ The system SHALL provide a single picker with a title, a filter, a scrolling lis
 #### Scenario: Theme and provider pickers
 - **WHEN** the user runs `/theme` or `/provider` with no value in the chat
 - **THEN** the picker opens with the current entry highlighted
+
+#### Scenario: Mode picker
+- **WHEN** the user runs `/mode` with no value in the chat
+- **THEN** the picker lists `normal`, `strict`, and `yolo` with a description each, opens on the current mode, and marks it `current`
 
 #### Scenario: Subcommand with an argument
 - **WHEN** the user types `/provider add work` and presses Enter

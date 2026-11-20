@@ -811,7 +811,7 @@ After a successful `edit` or `write`, the system SHALL draw the changed lines un
 
 ### Requirement: Twenty slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/yolo`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/mode`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
@@ -989,23 +989,31 @@ The system SHALL start every tool row with its mark in column one, SHALL place t
 
 ### Requirement: Yolo applies when the command runs
 
-The system SHALL apply `/yolo` to the shared mode before its worker command is handled, SHALL stop confirmations for the rest of the running turn, SHALL switch back to the launch mode on the next `/yolo`, SHALL label the session and launch modes in the transcript, and SHALL keep the deny list and sudo gate in force.
+The system SHALL apply `/mode <name>` to the shared mode before its worker command is handled, SHALL honour the new mode for the rest of the running turn, SHALL keep it for the session only without saving it, SHALL name the new mode in the transcript, SHALL report an unknown name as an error listing `normal`, `strict`, and `yolo`, and SHALL keep the deny list and sudo gate in force.
 
 #### Scenario: Enabled mid-turn
-- **WHEN** a confirmation would appear and the user has just run `/yolo`
+- **WHEN** a confirmation would appear and the user has just run `/mode yolo`
 - **THEN** the call runs without a prompt
 
 #### Scenario: Disabled
-- **WHEN** the user runs `/yolo` again
-- **THEN** the launch mode returns and later calls ask as before
+- **WHEN** the user runs `/mode normal`
+- **THEN** later calls ask as before
 
 #### Scenario: No double toggle
-- **WHEN** `/yolo` commands are queued while a turn runs
+- **WHEN** `/mode` commands are queued while a turn runs
 - **THEN** each carries its target mode and the last one wins
 
 #### Scenario: Hard stops
 - **WHEN** the mode is yolo and a command is on the deny list
 - **THEN** it is still refused
+
+#### Scenario: Strict mid-session
+- **WHEN** the user runs `/mode strict`
+- **THEN** every later command asks, and the config file is unchanged
+
+#### Scenario: Unknown mode
+- **WHEN** the user runs `/mode wild`
+- **THEN** an error lists `normal`, `strict`, and `yolo` and the mode is unchanged
 
 ### Requirement: The status line shows the session directory
 
@@ -1116,11 +1124,11 @@ The system SHALL align every description in one help output to one column two sp
 The system SHALL paint the composer prompt glyph and the rule above the composer in the error colour while the live mode is `yolo`, SHALL paint the line-mode prompt the same way, SHALL leave the status line text unchanged, and SHALL emit nothing extra when colour is off.
 
 #### Scenario: Yolo on
-- **WHEN** the user runs `/yolo` in a colour terminal
+- **WHEN** the user runs `/mode yolo` in a colour terminal
 - **THEN** the next frame paints `> ` and the rule in the error colour
 
 #### Scenario: Back to normal
-- **WHEN** the user runs `/yolo` again
+- **WHEN** the user runs `/mode normal`
 - **THEN** the glyph and rule return to their usual colours
 
 #### Scenario: No colour
