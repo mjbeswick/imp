@@ -144,12 +144,12 @@ static SAVED: std::sync::Mutex<Option<Termios>> = std::sync::Mutex::new(None);
 const RESTORE: &str = "\x1b[?1006l\x1b[?1000l\x1b[<u\x1b[?25h\x1b[?1049l";
 
 extern "C" {
-    fn write(fd: std::ffi::c_int, buf: *const u8, len: usize) -> isize;
+    fn write(fd: std::ffi::c_int, buf: *const std::ffi::c_void, len: usize) -> isize;
     fn _exit(code: std::ffi::c_int) -> !;
     fn signal(sig: std::ffi::c_int, handler: usize) -> usize;
     fn tcgetattr(fd: c_int, termios: *mut Termios) -> c_int;
     fn tcsetattr(fd: c_int, action: c_int, termios: *const Termios) -> c_int;
-    fn read(fd: c_int, buf: *mut u8, len: usize) -> isize;
+    fn read(fd: c_int, buf: *mut std::ffi::c_void, len: usize) -> isize;
     fn pipe(fds: *mut c_int) -> c_int;
 }
 
@@ -166,12 +166,12 @@ fn query_light() -> Option<bool> {
     timed.cc[flags::VTIME] = 1;
     unsafe { tcsetattr(0, TCSANOW, &timed) };
     let ask = b"\x1b]11;?\x07";
-    unsafe { write(1, ask.as_ptr(), ask.len()) };
+    unsafe { write(1, ask.as_ptr().cast(), ask.len()) };
     let start = Instant::now();
     let mut reply = Vec::new();
     let mut buf = [0u8; 64];
     while start.elapsed() < Duration::from_millis(100) {
-        let n = unsafe { read(0, buf.as_mut_ptr(), buf.len()) };
+        let n = unsafe { read(0, buf.as_mut_ptr().cast(), buf.len()) };
         if n <= 0 {
             break;
         }
@@ -204,7 +204,7 @@ extern "C" fn on_signal(_: std::ffi::c_int) {
         }
     }
     unsafe {
-        write(1, RESTORE.as_ptr(), RESTORE.len());
+        write(1, RESTORE.as_ptr().cast(), RESTORE.len());
         _exit(1);
     }
 }
@@ -218,7 +218,7 @@ extern "C" fn on_winch(_: std::ffi::c_int) {
     if fd >= 0 {
         // write(2) is async-signal-safe; a full pipe already means "wake".
         unsafe {
-            write(fd, [1u8].as_ptr(), 1);
+            write(fd, [1u8].as_ptr().cast(), 1);
         }
     }
 }
@@ -236,7 +236,7 @@ fn wake_on_resize(tx: Sender<Vec<u8>>) {
     }
     std::thread::spawn(move || {
         let mut byte = [0u8; 1];
-        while unsafe { read(fds[0], byte.as_mut_ptr(), 1) } > 0 {
+        while unsafe { read(fds[0], byte.as_mut_ptr().cast(), 1) } > 0 {
             if tx.send(Vec::new()).is_err() {
                 break;
             }
@@ -251,7 +251,7 @@ fn install_guards() {
     std::panic::set_hook(Box::new(|info| {
         restore_terminal();
         unsafe {
-            write(1, RESTORE.as_ptr(), RESTORE.len());
+            write(1, RESTORE.as_ptr().cast(), RESTORE.len());
         }
         eprintln!("{info}");
     }));
