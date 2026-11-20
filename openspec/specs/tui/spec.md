@@ -63,7 +63,7 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 
 #### Scenario: Expand moved
 - **WHEN** the user presses Ctrl+E after a tool call
-- **THEN** the last tool output expands, and Ctrl+O opens the inbox instead
+- **THEN** the last tool output expands, and Ctrl+O goes to the next waiting session instead
 
 ### Requirement: Every rendered line fits the terminal
 
@@ -823,7 +823,7 @@ After a successful `edit` or `write`, the system SHALL draw the changed lines un
 
 ### Requirement: Twenty-one slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/inbox`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
@@ -1263,9 +1263,9 @@ The system SHALL remove control characters and escape sequences, other than newl
 - **WHEN** a command prints ANSI colour codes
 - **THEN** its preview shows the plain text without the codes
 
-### Requirement: Keys are discoverable
+### Requirement: A keys card lists the chat keys
 
-The system SHALL open a keys card listing the chat keys in the picker overlay when the user types `?` into an empty composer, SHALL close it with Esc or `?`, and SHALL show the keys that act in every overlay, the inbox, and confirmation in that view's bottom edge or hint.
+The system SHALL open a keys card listing the chat keys in the picker overlay when the user types `?` into an empty composer, SHALL close it with Esc or `?`, and SHALL show the keys that act in every overlay and confirmation in that view's bottom edge or hint.
 
 #### Scenario: Keys card
 - **WHEN** the composer is empty and the user types `?`
@@ -1274,7 +1274,3 @@ The system SHALL open a keys card listing the chat keys in the picker overlay wh
 #### Scenario: Question mark in text
 - **WHEN** the composer holds `why` and the user types `?`
 - **THEN** the composer reads `why?` and no card opens
-
-#### Scenario: Inbox hint
-- **WHEN** the inbox is open
-- **THEN** its bottom edge reads `Enter open · y n a answer · x close · Esc back`
