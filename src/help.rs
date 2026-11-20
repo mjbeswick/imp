@@ -8,7 +8,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Ctrl+C", "clear the draft, or quit"),
     ("Ctrl+L", "clear the screen"),
     ("Ctrl+E", "expand the last tool call"),
-    ("Ctrl+O", "inbox: live sessions and what they need"),
+    ("Ctrl+O", "next session waiting on you"),
     ("Ctrl+N, Ctrl+P", "next or previous live session"),
     ("?", "this list, from an empty composer"),
     ("Up, Down", "history"),
@@ -25,7 +25,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ("Conversation", &["/new", "/compact", "/think", "/stash"]),
     ("Model and agent", &["/model", "/provider", "/agent", "/mode", "/reload"]),
     ("Workspace", &["/cwd", "/cd", "/image", "/shell"]),
-    ("Session", &["/sessions", "/inbox", "/fork", "/rename", "/quit"]),
+    ("Session", &["/sessions", "/next", "/fork", "/rename", "/quit"]),
     ("Interface", &["/help", "/theme", "/verbosity"]),
 ];
 
@@ -33,7 +33,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "show keys and commands"),
     ("/new", "start another live session"),
     ("/sessions", "pick a session"),
-    ("/inbox", "live sessions and what they need"),
+    ("/next", "next session waiting on you"),
     ("/reload", "re-read instructions and skills"),
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),

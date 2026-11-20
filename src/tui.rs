@@ -874,8 +874,8 @@ pub struct App {
     touched: Instant,
     /// The session in view finished a turn while out of view.
     replied: bool,
-    /// The inbox overlay, above any prompt so a pending answer survives it.
-    inbox: Option<Picker>,
+    /// When this session started waiting on the user; orders the queue.
+    since: Instant,
     /// Every live session in order; the one in view is `None` at `at`.
     panes: Vec<Option<Pane>>,
     at: usize,
@@ -912,6 +912,7 @@ struct Pane {
     worker: Option<Worker>,
     touched: Instant,
     replied: bool,
+    since: Instant,
 }
 
 impl Pane {
@@ -938,11 +939,17 @@ impl Pane {
             worker,
             touched: Instant::now(),
             replied: false,
+            since: Instant::now(),
         }
     }
 
     fn idle(&self) -> bool {
         !self.status.streaming && self.pending.is_none()
+    }
+
+    /// Waiting on the user: a reply not yet seen, or an open prompt.
+    fn waits(&self) -> bool {
+        self.replied || matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. }))
     }
 }
 
@@ -999,7 +1006,6 @@ enum PickKind {
     Theme,
     Provider,
     Mode,
-    Inbox,
     Keys,
 }
 
@@ -1411,7 +1417,7 @@ impl App {
             worker: None,
             touched: Instant::now(),
             replied: false,
-            inbox: None,
+            since: Instant::now(),
             panes: vec![None],
             at: 0,
             fresh: None,
@@ -1442,6 +1448,7 @@ impl App {
         swap(&mut self.worker, &mut p.worker);
         swap(&mut self.touched, &mut p.touched);
         swap(&mut self.replied, &mut p.replied);
+        swap(&mut self.since, &mut p.since);
     }
 
     /// Bring the pane at `index` into view and park the current one.
@@ -1471,6 +1478,7 @@ impl App {
         self.swap_pane(&mut p);
         if matches!(ev, Ev::Done(_)) {
             self.replied = true;
+            self.since = Instant::now();
         }
         self.apply(ev);
         self.touched = Instant::now();
@@ -1505,13 +1513,31 @@ impl App {
         )));
     }
 
-    /// Sessions out of view that need an answer or have replied.
-    fn waiting(&self) -> usize {
-        self.panes
+    /// Sessions out of view waiting on the user, longest wait first.
+    fn queue(&self) -> Vec<usize> {
+        let mut q: Vec<(Instant, usize)> = self
+            .panes
             .iter()
-            .flatten()
-            .filter(|p| p.replied || matches!(p.pending, Some(Pending::Confirm { .. } | Pending::Question { .. })))
-            .count()
+            .enumerate()
+            .filter_map(|(i, p)| p.as_ref().filter(|p| p.waits()).map(|p| (p.since, i)))
+            .collect();
+        q.sort();
+        q.into_iter().map(|(_, i)| i).collect()
+    }
+
+    fn waiting(&self) -> usize {
+        self.queue().len()
+    }
+
+    /// Ctrl+O: the session that has waited longest. A reply in view counts as
+    /// read; an open prompt in view goes to the back of the queue, unanswered.
+    fn next_waiting(&mut self) -> Option<usize> {
+        if self.pending.is_some() {
+            self.since = Instant::now();
+        }
+        let next = *self.queue().first()?;
+        self.show(next);
+        Some(next)
     }
 
     /// Apply every waiting worker event, in view or not. True when any arrived.
@@ -1814,6 +1840,7 @@ impl App {
             Ev::Confirm { what, reply, always } => {
                 self.pending = Some(Pending::Confirm { what, reply, always });
                 self.pending_since = Some(Instant::now());
+                self.since = Instant::now();
                 self.bell_pending = true;
                 self.dirty = true;
             }
@@ -1826,6 +1853,7 @@ impl App {
                     typed: String::new(),
                 });
                 self.pending_since = Some(Instant::now());
+                self.since = Instant::now();
                 self.bell_pending = true;
                 self.dirty = true;
             }
@@ -1848,130 +1876,19 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
-        if self.inbox.is_some() {
-            self.inbox_key(key);
-        } else if matches!(key, Key::Ctrl('o')) {
-            self.open_inbox();
+        if matches!(key, Key::Ctrl('o')) && !matches!(self.pending, Some(Pending::Pick(_))) {
+            self.go_next();
         } else {
             self.handle_key_inner(key, tx);
         }
         self.sync_preview();
     }
 
-    /// One inbox row per live session: what it is doing, and what it needs.
-    fn inbox_items(&self) -> Vec<PickItem> {
-        let mut rows: Vec<(u8, Instant, PickItem)> = (0..self.panes.len())
-            .map(|i| {
-                let (entries, status, pending, replied, touched) = match &self.panes[i] {
-                    None => (&self.entries, &self.status, &self.pending, self.replied, self.touched),
-                    Some(p) => (&p.entries, &p.status, &p.pending, p.replied, p.touched),
-                };
-                let mut actions = vec![('x', "close")];
-                let (rank, state) = match pending {
-                    Some(Pending::Confirm { always, .. }) => {
-                        actions = vec![('y', "yes"), ('n', "no"), ('x', "close")];
-                        if *always {
-                            actions.splice(2..2, [('s', "session"), ('a', "always")]);
-                        }
-                        (0, "needs approval")
-                    }
-                    Some(Pending::Question { .. }) => (0, "needs approval"),
-                    _ if replied => (1, "replied"),
-                    _ if status.streaming => (2, "working"),
-                    _ => (3, "idle"),
-                };
-                let desc = format!("{state} · {}", age(touched.elapsed()));
-                let item = PickItem { label: title_of(entries), value: i.to_string(), desc, actions };
-                (rank, touched, item)
-            })
-            .collect();
-        rows.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
-        rows.into_iter().map(|(_, _, item)| item).collect()
-    }
-
-    fn open_inbox(&mut self) {
-        self.inbox = Some(Picker::new("inbox", self.inbox_items(), PickKind::Inbox));
+    fn go_next(&mut self) {
+        if self.next_waiting().is_none() {
+            self.push(Role::Info, "nothing waiting");
+        }
         self.dirty = true;
-    }
-
-    /// Rebuild the rows after something changed, keeping the highlight.
-    fn refresh_inbox(&mut self) {
-        let Some(old) = self.inbox.take() else { return };
-        let keep = old.selected().map(|i| i.value.clone());
-        let mut picker = Picker::new("inbox", self.inbox_items(), PickKind::Inbox);
-        picker.index = picker.items.iter().position(|i| Some(&i.value) == keep.as_ref()).unwrap_or(0);
-        self.inbox = Some(picker);
-        self.dirty = true;
-    }
-
-    fn inbox_key(&mut self, key: Key) {
-        let Some(picker) = self.inbox.as_mut() else { return };
-        let chosen = picker.selected().and_then(|i| i.value.parse::<usize>().ok());
-        let action = match key {
-            Key::Char(c) => picker.action(c),
-            _ => None,
-        };
-        self.dirty = true;
-        match key {
-            Key::Up => picker.move_by(-1),
-            Key::Down => picker.move_by(1),
-            Key::PageUp => picker.move_by(-(PICK_ROWS as isize)),
-            Key::PageDown => picker.move_by(PICK_ROWS as isize),
-            Key::Esc | Key::Ctrl('o') => self.inbox = None,
-            Key::Ctrl('c') => self.quit = true,
-            Key::Enter => {
-                self.inbox = None;
-                if let Some(i) = chosen {
-                    self.show(i);
-                }
-            }
-            Key::Char(c) if action.is_some() => {
-                let Some(i) = chosen else { return };
-                let busy = action == Some("close") && !self.pane_idle(i);
-                if action == Some("close") {
-                    self.close_from_inbox(i);
-                } else {
-                    self.answer_pane(i, Key::Char(c));
-                }
-                self.refresh_inbox();
-                if let (true, Some(inbox)) = (busy, self.inbox.as_mut()) {
-                    inbox.title = "inbox · stop it first".into();
-                }
-            }
-            // Numbers match the status line's `2/3`, not the card order.
-            Key::Char(c @ '1'..='9') => {
-                let i = c as usize - '1' as usize;
-                if i < self.panes.len() {
-                    self.inbox = None;
-                    self.show(i);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Answer a session's pending confirmation, in view or not.
-    fn answer_pane(&mut self, index: usize, key: Key) {
-        let (dummy, _) = channel();
-        if index == self.at {
-            return self.handle_key_inner(key, &dummy);
-        }
-        let Some(mut p) = self.panes[index].take() else { return };
-        self.swap_pane(&mut p);
-        self.handle_key_inner(key, &dummy);
-        self.swap_pane(&mut p);
-        self.panes[index] = Some(p);
-    }
-
-    /// `x` in the inbox: close an idle session; a busy one must stop first.
-    fn close_from_inbox(&mut self, index: usize) {
-        if !self.pane_idle(index) || self.panes.len() < 2 {
-            return;
-        }
-        if index == self.at {
-            self.show((index + 1) % self.panes.len());
-        }
-        self.close(index);
     }
 
     /// The open theme picker paints the screen in its highlighted theme; any
@@ -2904,7 +2821,7 @@ impl App {
                 );
             }
             "new" => self.new_session(tx),
-            "inbox" => self.open_inbox(),
+            "next" => self.go_next(),
             "cwd" => self.push(Role::Info, self.root.display().to_string()),
             "fork" => {
                 let _ = tx.send(Cmd::Fork);
@@ -3314,8 +3231,7 @@ impl App {
                                 self.set_model(&choice.value, tx);
                             }
                             PickKind::Mode => self.set_mode(&choice.value, tx),
-                            // The inbox is its own overlay and never reaches here.
-                            PickKind::Inbox | PickKind::Keys => {}
+                            PickKind::Keys => {}
                             PickKind::Verbosity => {
                                 self.verbose = choice.value == "high";
                                 self.push(Role::Info, format!("verbosity: {}", choice.value));
@@ -3533,16 +3449,6 @@ impl App {
 
     /// One frame as bytes. No terminal access, so it can be tested.
     pub fn frame(&mut self, cols: usize, rows: usize) -> String {
-        if self.inbox.is_some() {
-            let mut screen = String::from("\x1b[?25l\x1b[?7l\x1b[H");
-            for row in self.inbox_rows(cols, rows.saturating_sub(1).max(1)) {
-                screen.push_str(&format!("\x1b[2K{row}\r\n"));
-            }
-            screen.push_str("\x1b[2K\x1b[J");
-            screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
-            screen.push_str("\x1b[?7h");
-            return screen;
-        }
         let composer = self.composer(cols, rows.saturating_sub(1).max(1));
         // A rule sets the composer apart, unless the screen is too short.
         let rule = usize::from(rows >= 8);
@@ -3785,114 +3691,6 @@ impl App {
             row.push_str(&format!("{}{key}{}", p.paint(Role::Thinking, "["), p.paint(Role::Thinking, &format!("] {l}"))));
         }
         row
-    }
-
-    /// The inbox, full screen above the status line: a header, one card per
-    /// session, and a footer for the highlighted card.
-    fn inbox_rows(&self, cols: usize, rows: usize) -> Vec<String> {
-        let Some(picker) = &self.inbox else { return Vec::new() };
-        let p = &self.palette;
-        let width = cols.saturating_sub(5);
-        let mut body: Vec<String> = Vec::new();
-        let (mut hl_start, mut hl_end) = (0, 0);
-        for (n, item) in picker.items.iter().enumerate() {
-            let Ok(i) = item.value.parse::<usize>() else { continue };
-            let here = n == picker.index;
-            if here {
-                hl_start = body.len();
-            }
-            let right = if i == self.at { format!("{} · in view", item.desc) } else { item.desc.clone() };
-            let state = item.desc.split(" · ").next().unwrap_or("");
-            let tone = match state {
-                "needs approval" => Role::Info,
-                "replied" => Role::Success,
-                "working" => Role::Tool,
-                _ => Role::Thinking,
-            };
-            let lead = format!("{} {}  ", if here { "▸" } else { " " }, i + 1);
-            let room = cols.saturating_sub(lead.chars().count() + right.chars().count() + 2);
-            let title = fit(&item.label, room);
-            let gap = cols.saturating_sub(lead.chars().count() + title.chars().count() + right.chars().count());
-            let title = if here {
-                let t = p.paint(Role::Info, &title);
-                if p.on { format!("\x1b[1m{t}") } else { t }
-            } else {
-                p.paint(Role::Assistant, &title)
-            };
-            body.push(format!("{}{title}{}{}", p.paint(Role::Info, &lead), " ".repeat(gap.max(1)), p.paint(tone, &right)));
-            let (lines, chips) = self.card_detail(i, width);
-            for line in lines {
-                body.push(format!("     {}", p.paint(Role::Thinking, &line)));
-            }
-            if let Some(always) = chips {
-                let set: &[(&str, &str)] = if always { &ALL_CHIPS } else { &ALL_CHIPS[..2] };
-                // Narrow screens keep the keys and drop the labels.
-                let bare: Vec<(&str, &str)> = set.iter().map(|(k, _)| (*k, "")).collect();
-                let set = if chip_text(set).chars().count() <= width { set } else { &bare[..] };
-                body.push(format!("     {}", self.paint_chips(set)));
-            }
-            if here {
-                hl_end = body.len();
-            }
-        }
-        // Header and footer take two rows; scroll so the highlight shows.
-        let space = rows.saturating_sub(2).max(1);
-        let start = if hl_end > space { (hl_end - space).min(hl_start) } else { 0 };
-        let title = if picker.title == "inbox" {
-            format!("inbox · {} live", self.panes.len())
-        } else {
-            picker.title.clone()
-        };
-        let back = "Esc back";
-        let gap = cols.saturating_sub(title.chars().count() + back.len());
-        let mut out = vec![format!("{}{}{}", p.paint(Role::Info, &fit(&title, cols)), " ".repeat(gap), p.paint(Role::Thinking, back))];
-        out.extend(body.into_iter().skip(start).take(space));
-        while out.len() < rows.saturating_sub(1) {
-            out.push(String::new());
-        }
-        out.push(p.paint(Role::Thinking, &fit(&self.inbox_footer(), cols)));
-        out
-    }
-
-    /// The keys that work on the highlighted card, and no others.
-    fn inbox_footer(&self) -> String {
-        let mut parts = vec!["Enter open".to_string()];
-        let actions = self.inbox.as_ref().and_then(|p| p.selected()).map(|i| i.actions.clone()).unwrap_or_default();
-        parts.extend(actions.iter().map(|(k, l)| format!("{k} {l}")));
-        if self.panes.len() > 1 {
-            parts.push(format!("1-{} jump", self.panes.len()));
-        }
-        parts.join(" · ")
-    }
-
-    /// What a session needs or is doing, and whether it shows answer chips.
-    fn card_detail(&self, i: usize, width: usize) -> (Vec<String>, Option<bool>) {
-        let (entries, status, pending, replied, tool) = match &self.panes[i] {
-            None => (&self.entries, &self.status, &self.pending, self.replied, &self.tool),
-            Some(p) => (&p.entries, &p.status, &p.pending, p.replied, &p.tool),
-        };
-        let reply = |n: usize| -> Vec<String> {
-            let text = entries.iter().rev().find(|e| e.role == Role::Assistant).map(|e| e.text.as_str()).unwrap_or("");
-            let mut lines: Vec<String> = text
-                .lines()
-                .rev()
-                .filter(|l| !l.trim().is_empty())
-                .take(n)
-                .map(|l| fit(&crate::render::clean(l.trim()), width))
-                .collect();
-            lines.reverse();
-            lines
-        };
-        match pending {
-            Some(Pending::Confirm { what, always, .. }) => (vec![squeeze(what, width)], Some(*always)),
-            Some(Pending::Question { q, .. }) => (vec![fit(&crate::render::clean(q), width)], None),
-            _ if replied => (reply(2), None),
-            _ if status.streaming => match tool {
-                Some(row) => (vec![squeeze(&crate::render::clean(&row.summary), width)], None),
-                None => (reply(1), None),
-            },
-            _ => (reply(1), None),
-        }
     }
 
     /// A single row for an open question or confirmation, if any.
@@ -4192,15 +3990,6 @@ impl App {
     }
 }
 
-/// How long ago, in the largest whole unit.
-fn age(d: Duration) -> String {
-    match d.as_secs() {
-        s if s < 60 => format!("{s}s"),
-        s if s < 3600 => format!("{}m", s / 60),
-        s => format!("{}h", s / 3600),
-    }
-}
-
 /// A live session's name: its first message, or `new` before one.
 fn title_of(entries: &[Entry]) -> String {
     entries
@@ -4258,20 +4047,6 @@ const ALL_CHIPS: [(&str, &str); 4] = [("y", "yes"), ("n", "no"), ("s", "session"
 
 fn chip_text(chips: &[(&str, &str)]) -> String {
     chips.iter().map(|(k, l)| format!("[{k}] {l}")).collect::<Vec<_>>().join("  ")
-}
-
-/// Cut the middle out of a long line, keeping both ends.
-fn squeeze(text: &str, cols: usize) -> String {
-    let text = text.replace('\n', " ");
-    let count = text.chars().count();
-    if count <= cols || cols < 3 {
-        return fit(&text, cols);
-    }
-    let head = (cols - 1) / 2;
-    let tail = cols - 1 - head;
-    let front: String = text.chars().take(head).collect();
-    let back: String = text.chars().skip(count - tail).collect();
-    format!("{front}…{back}")
 }
 
 fn fit(text: &str, cols: usize) -> String {
@@ -5058,128 +4833,38 @@ mod tests {
     }
 
     #[test]
-    fn the_inbox_orders_sessions_by_what_they_need() {
-        let (mut a, _answers) = inbox_app("order");
+    fn ctrl_o_walks_the_queue_oldest_first() {
+        let (mut a, answers) = inbox_app("queue");
         let (tx, _rx) = channel();
+        assert_eq!(a.queue(), vec![0, 1], "the approval came first");
         a.handle_key(Key::Ctrl('o'), &tx);
-        let inbox = a.inbox.as_ref().expect("Ctrl+O did not open the inbox");
-        let rows: Vec<(&str, &str)> = inbox.items.iter().map(|i| (i.label.as_str(), i.desc.as_str())).collect();
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].0, "run the tests");
-        assert!(rows[0].1.starts_with("needs approval · "), "{rows:?}");
-        assert!(rows[1].1.starts_with("replied · "), "{rows:?}");
-        assert!(rows[2].1.starts_with("idle"), "{rows:?}");
-        assert_eq!(inbox.index, 0);
-        assert_eq!(
-            a.inbox_footer(),
-            "Enter open · y yes · n no · s session · a always · x close · 1-3 jump"
-        );
-        let frame = strip(&a.frame(80, 20));
-        assert!(frame.contains("inbox · 3 live"), "{frame}");
-        assert!(frame.contains("All done."), "the reply is missing: {frame}");
-        assert!(frame.lines().last().unwrap().contains("3/3"), "the status line went: {frame}");
+        assert_eq!(a.at, 0);
+        assert!(matches!(a.pending, Some(Pending::Confirm { .. })));
+        // Moving on leaves the approval open and sends it to the back.
         a.handle_key(Key::Ctrl('o'), &tx);
-        assert!(a.inbox.is_none(), "Ctrl+O did not close it");
-        a.run_command("inbox", &tx);
-        assert!(a.inbox.is_some(), "/inbox did not open it");
-        a.handle_key(Key::Esc, &tx);
-        assert!(a.inbox.is_none(), "Esc did not close it");
+        assert_eq!(a.at, 1, "the reply was skipped");
+        assert!(answers.try_recv().is_err(), "moving on answered the approval");
+        assert_eq!(a.queue(), vec![0]);
+        // The reply in view counts as read once the user moves on.
+        a.handle_key(Key::Ctrl('o'), &tx);
+        assert_eq!(a.at, 0);
+        assert!(!a.panes[1].as_ref().unwrap().waits(), "the read reply still waits");
+        a.handle_key(Key::Char('y'), &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::Yes));
+        a.handle_key(Key::Ctrl('o'), &tx);
+        assert_eq!(a.at, 0, "moved with nothing waiting");
+        assert_eq!(a.entries.last().unwrap().text, "nothing waiting");
+        a.run_command("next", &tx);
+        assert_eq!(a.entries.last().unwrap().text, "nothing waiting", "/next differs from Ctrl+O");
     }
 
     #[test]
-    fn the_inbox_answers_in_place() {
-        let (mut a, answers) = inbox_app("answer");
-        let (tx, _rx) = channel();
-        a.handle_key(Key::Ctrl('o'), &tx);
-        a.handle_key(Key::Char('a'), &tx);
-        assert_eq!(answers.try_recv().ok(), Some(Answer::Always));
-        assert_eq!(a.at, 2, "answering moved the view");
-        let footer = a.inbox_footer();
-        assert!(!footer.contains("y yes"), "a working card offers answers: {footer}");
-        let inbox = a.inbox.as_ref().expect("the inbox closed");
-        let row = inbox.items.iter().find(|i| i.label == "run the tests").unwrap();
-        assert!(row.desc.starts_with("working"), "{}", row.desc);
-    }
-
-    #[test]
-    fn inbox_cards_show_titles_commands_and_chips() {
-        let (mut a, _answers) = inbox_app("cards");
-        let (tx, _rx) = channel();
-        a.entries.clear();
-        a.push(Role::User, "Give me the weather for Woking");
-        a.handle_key(Key::Ctrl('o'), &tx);
-        let frame = strip(&a.frame(80, 20));
-        assert!(frame.contains("3  Give me the weather for Woking"), "{frame}");
-        assert!(frame.contains("idle · 0s · in view"), "{frame}");
-        assert!(frame.contains("run `npm test`"), "no command: {frame}");
-        assert!(frame.contains("[y] yes  [n] no  [s] session  [a] always"), "no chips: {frame}");
-        assert!(frame.contains("▸ 1  run the tests"), "{frame}");
-        a.handle_key(Key::Down, &tx);
-        a.handle_key(Key::Down, &tx);
-        assert_eq!(a.inbox_footer(), "Enter open · x close · 1-3 jump");
-        let narrow = strip(&a.frame(40, 8));
-        assert!(narrow.lines().all(|l| l.chars().count() <= 40), "{narrow}");
-        assert!(narrow.contains("▸ 3"), "the highlight scrolled away: {narrow}");
-        assert_eq!(squeeze("abcdefghij", 7), "abc…hij");
-    }
-
-    #[test]
-    fn number_keys_jump_and_other_letters_do_nothing() {
-        let (mut a, answers) = inbox_app("jump");
-        let (tx, _rx) = channel();
-        a.handle_key(Key::Ctrl('o'), &tx);
-        a.handle_key(Key::Char('q'), &tx);
-        a.handle_key(Key::Char('9'), &tx);
-        assert!(a.inbox.is_some(), "a stray key closed the inbox");
-        assert_eq!(a.inbox.as_ref().unwrap().filter, "", "the filter is back");
-        assert!(answers.try_recv().is_err());
-        a.handle_key(Key::Char('2'), &tx);
-        assert!(a.inbox.is_none());
-        assert_eq!((a.at, title_of(&a.entries).as_str()), (1, "summarise the log"));
-    }
-
-    #[test]
-    fn the_inbox_answers_for_the_session() {
-        let (mut a, answers) = inbox_app("session");
-        let (tx, _rx) = channel();
-        a.handle_key(Key::Ctrl('o'), &tx);
-        a.handle_key(Key::Char('s'), &tx);
-        assert_eq!(answers.try_recv().ok(), Some(Answer::Session));
-        assert!(a.inbox.is_some(), "the inbox closed");
-    }
-
-    #[test]
-    fn the_inbox_opens_and_closes_sessions() {
-        let (mut a, _answers) = inbox_app("open");
-        let (tx, _rx) = channel();
-        a.handle_key(Key::Ctrl('o'), &tx);
-        a.handle_key(Key::Char('x'), &tx);
-        assert_eq!(a.panes.len(), 3, "closed a session waiting for approval");
-        assert!(a.inbox.as_ref().unwrap().title.ends_with("stop it first"));
-        a.handle_key(Key::Down, &tx);
-        a.handle_key(Key::Enter, &tx);
-        assert!(a.inbox.is_none());
-        assert_eq!(title_of(&a.entries), "summarise the log");
-        assert!(!a.replied, "opening did not clear replied");
-        a.handle_key(Key::Ctrl('o'), &tx);
-        let row = a.inbox.as_ref().unwrap().items.iter().find(|i| i.label == "summarise the log").unwrap().clone();
-        assert!(row.desc.starts_with("idle"), "{}", row.desc);
-        // Close the idle one in view: the view moves on and two remain.
-        let at = a.inbox.as_ref().unwrap().items.iter().position(|i| i.label == "summarise the log").unwrap();
-        a.inbox.as_mut().unwrap().index = at;
-        a.handle_key(Key::Char('x'), &tx);
-        assert_eq!(a.panes.len(), 2);
-        assert_ne!(title_of(&a.entries), "summarise the log");
-    }
-
-    #[test]
-    fn a_prompt_in_view_survives_the_inbox() {
+    fn a_prompt_in_view_survives_ctrl_o() {
         let mut a = multi_app("survive");
         let (tx, _rx) = channel();
         let (reply, answers) = channel();
         a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
         a.handle_key(Key::Ctrl('o'), &tx);
-        a.handle_key(Key::Esc, &tx);
         assert!(matches!(a.pending, Some(Pending::Confirm { .. })), "the prompt was lost");
         a.handle_key(Key::Char('y'), &tx);
         assert_eq!(answers.try_recv().ok(), Some(Answer::Yes));
@@ -5665,8 +5350,7 @@ mod tests {
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('o'), &tx);
         assert!(!a.entries[0].text.contains("args:"), "Ctrl+O still expands");
-        assert!(a.inbox.is_some(), "Ctrl+O did not open the inbox");
-        a.handle_key(Key::Esc, &tx);
+        assert_eq!(a.entries.last().unwrap().text, "nothing waiting");
         a.handle_key(Key::Ctrl('e'), &tx);
         let text = a.entries[0].text.clone();
         assert!(text.contains("args:"), "{text}");
