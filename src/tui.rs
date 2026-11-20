@@ -648,7 +648,6 @@ const CONFIRM_WAIT: Duration = Duration::from_secs(60);
 
 struct WorkerHooks {
     tx: Sender<Ev>,
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     waited: Duration,
 }
 
@@ -754,26 +753,13 @@ impl WorkerHooks {
         {
             return Answer::No;
         }
-        let answered = wait_for_answer(&rx, CONFIRM_WAIT);
+        // The deadline is the UI's: it counts only while the prompt is in view.
+        let answered = rx.recv().unwrap_or(Answer::No);
         self.waited = opened.elapsed();
-        match answered {
-            Some(answer) => answer,
-            None => {
-                self.cancel.store(true, Ordering::Relaxed);
-                let _ = self.tx.send(Ev::Stop(format!(
-                    "no answer within {}s; nothing ran and the turn stopped",
-                    CONFIRM_WAIT.as_secs()
-                )));
-                Answer::No
-            }
-        }
+        answered
     }
 }
 
-/// Wait for an answer. `None` means none arrived in time.
-fn wait_for_answer(rx: &Receiver<Answer>, wait: Duration) -> Option<Answer> {
-    rx.recv_timeout(wait).ok()
-}
 
 struct Entry {
     role: Role,
@@ -1470,6 +1456,10 @@ impl App {
         self.at = index;
         self.touched = Instant::now();
         self.replied = false;
+        // A prompt's deadline counts from when it is in view.
+        if self.pending_since.is_some() {
+            self.pending_since = Some(Instant::now());
+        }
         self.dirty = true;
     }
 
@@ -1485,8 +1475,44 @@ impl App {
         }
         self.apply(ev);
         self.touched = Instant::now();
+        // The bell rings once, now, rather than again when the pane is shown.
+        let ring = std::mem::take(&mut self.bell_pending);
         self.swap_pane(&mut p);
         self.panes[index] = Some(p);
+        self.bell_pending |= ring;
+    }
+
+    /// Refuse a prompt that has been in view for the whole deadline.
+    fn expire(&mut self) {
+        let due = self.pending_since.is_some_and(|t| t.elapsed() >= CONFIRM_WAIT);
+        if !due {
+            return;
+        }
+        match self.pending.take() {
+            Some(Pending::Confirm { reply, .. }) => {
+                let _ = reply.send(Answer::No);
+            }
+            Some(Pending::Question { reply, .. }) => {
+                let _ = reply.send(None);
+            }
+            other => {
+                self.pending = other;
+                return;
+            }
+        }
+        self.apply(Ev::Stop(format!(
+            "no answer within {}s; nothing ran and the turn stopped",
+            CONFIRM_WAIT.as_secs()
+        )));
+    }
+
+    /// Sessions out of view that need an answer or have replied.
+    fn waiting(&self) -> usize {
+        self.panes
+            .iter()
+            .flatten()
+            .filter(|p| p.replied || matches!(p.pending, Some(Pending::Confirm { .. } | Pending::Question { .. })))
+            .count()
     }
 
     /// Apply every waiting worker event, in view or not. True when any arrived.
@@ -3978,8 +4004,12 @@ impl App {
         } else {
             String::new()
         };
+        let waiting = match self.waiting() {
+            0 => String::new(),
+            n => format!(" · {n} waiting"),
+        };
         let left = format!(
-            "{place}{model} · {} tok{money}{unseen}{thinking}",
+            "{place}{model} · {} tok{money}{unseen}{thinking}{waiting}",
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
@@ -4255,7 +4285,6 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                 Ok(Cmd::Prompt(text)) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
-                        cancel: worker_session.cancel.clone(),
                         waited: Duration::ZERO,
                     };
                     let result = worker_session.turn(&text, &mut hooks);
@@ -4278,7 +4307,6 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     if let Some(agent) = found {
                         let mut hooks = WorkerHooks {
                             tx: ev_tx.clone(),
-                            cancel: worker_session.cancel.clone(),
                             waited: Duration::ZERO,
                         };
                         let applied = worker_session.switch_agent(agent);
@@ -4393,7 +4421,6 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                 Ok(Cmd::Compact) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
-                        cancel: worker_session.cancel.clone(),
                         waited: Duration::ZERO,
                     };
                     if let Err(e) = worker_session.compact(&mut hooks) {
@@ -4427,7 +4454,6 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
-                        cancel: worker_session.cancel.clone(),
                         waited: Duration::ZERO,
                     };
                     let code = hooks.run_attached(&shell);
@@ -4561,6 +4587,7 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>
         if app.poll() {
             redraw = true;
         }
+        app.expire();
 
         // A resize has to be noticed without repainting on a timer.
         let (cols, rows) = size();
@@ -4916,6 +4943,24 @@ mod tests {
     }
 
     #[test]
+    fn sessions_out_of_view_ask_for_attention() {
+        let (mut a, answers) = inbox_app("attention");
+        assert!(a.status_line(120).contains(" · 2 waiting"), "{}", a.status_line(120));
+        assert!(a.bell_pending, "no bell for a session out of view");
+        assert!(!a.panes[0].as_ref().unwrap().bell_pending, "the bell would ring again on switching");
+        // Out of view, the prompt never expires, however old.
+        a.panes[0].as_mut().unwrap().pending_since = Some(Instant::now() - CONFIRM_WAIT * 10);
+        a.expire();
+        assert!(answers.try_recv().is_err(), "a prompt out of view expired");
+        // In view, its deadline starts from now.
+        a.show(0);
+        assert!(a.seconds_left() >= 59, "{}", a.seconds_left());
+        a.expire();
+        assert!(answers.try_recv().is_err(), "expired as soon as it was shown");
+        assert!(a.status_line(120).contains(" · 1 waiting"), "{}", a.status_line(120));
+    }
+
+    #[test]
     fn modes_stay_per_session() {
         let mut a = multi_app("modes");
         let (tx, _rx) = channel();
@@ -5118,16 +5163,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unanswered_prompt_times_out() {
-        let (_tx, rx) = channel::<Answer>();
-        assert_eq!(
-            wait_for_answer(&rx, Duration::from_millis(50)),
-            None,
-            "a silent prompt did not time out"
-        );
-    }
-
-    #[test]
     fn always_is_answered_only_where_offered() {
         let mut a = app();
         let (tx, _cmds) = channel();
@@ -5147,10 +5182,19 @@ mod tests {
     }
 
     #[test]
-    fn an_answered_prompt_returns_at_once() {
-        let (tx, rx) = channel::<Answer>();
-        tx.send(Answer::Yes).expect("send answer");
-        assert_eq!(wait_for_answer(&rx, Duration::from_secs(5)), Some(Answer::Yes));
+    fn an_unanswered_prompt_in_view_stops_the_turn() {
+        let mut a = app();
+        let (reply, answers) = channel();
+        a.status.streaming = true;
+        a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
+        a.expire();
+        assert!(a.pending.is_some(), "expired at once");
+        a.pending_since = Some(Instant::now() - CONFIRM_WAIT);
+        a.expire();
+        assert_eq!(answers.try_recv().ok(), Some(Answer::No));
+        assert!(a.pending.is_none() && !a.status.streaming);
+        assert!(a.cancel.load(Ordering::Relaxed), "the turn was not cancelled");
+        assert!(a.entries.last().unwrap().text.starts_with("no answer within 60s"));
     }
 
     #[test]

@@ -6,6 +6,6 @@
 - [x] 1.4 Ctrl+N and Ctrl+P switching with drafts and scroll kept, and the status line position. Verify: switching tests.
 - [x] 1.5 Share the buffer budget across panes with separate addresses, and free a closed pane's buffers. Verify: buffer tests.
 - [x] 1.6 The inbox: Ctrl+O and `/inbox`, rows, states, order, Enter, `y` `n` `a`, `x`. Verify: inbox tests for each scenario.
-- [ ] 1.7 Attention: the waiting count, one bell, no deadline out of view. Verify: tests for the count and the paused deadline.
+- [x] 1.7 Attention: the waiting count, one bell, no deadline out of view. Verify: tests for the count and the paused deadline.
 - [ ] 1.8 The `?` keys card and bottom-edge hints. Verify: card and hint tests.
 - [ ] 1.9 Help, README, checks, size recorded, and reinstall. Verify: `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh` pass.
