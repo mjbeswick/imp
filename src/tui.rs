@@ -150,6 +150,7 @@ extern "C" {
     fn tcgetattr(fd: c_int, termios: *mut Termios) -> c_int;
     fn tcsetattr(fd: c_int, action: c_int, termios: *const Termios) -> c_int;
     fn read(fd: c_int, buf: *mut u8, len: usize) -> isize;
+    fn pipe(fds: *mut c_int) -> c_int;
 }
 
 /// Ask the terminal for its background with OSC 11, waiting at most about
@@ -209,6 +210,43 @@ extern "C" fn on_signal(_: std::ffi::c_int) {
 }
 
 /// Restore on panic and on SIGTERM/SIGINT, not only on a clean drop.
+/// The write end of the resize pipe, for the signal handler.
+static WINCH_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+extern "C" fn on_winch(_: std::ffi::c_int) {
+    let fd = WINCH_FD.load(Ordering::Relaxed);
+    if fd >= 0 {
+        // write(2) is async-signal-safe; a full pipe already means "wake".
+        unsafe {
+            write(fd, [1u8].as_ptr(), 1);
+        }
+    }
+}
+
+/// Turn SIGWINCH into an empty message on the key channel, so a resize wakes
+/// an idle loop at once.
+fn wake_on_resize(tx: Sender<Vec<u8>>) {
+    let mut fds = [0 as c_int; 2];
+    if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
+        return;
+    }
+    WINCH_FD.store(fds[1], Ordering::Relaxed);
+    unsafe {
+        signal(SIGWINCH, on_winch as *const () as usize);
+    }
+    std::thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        while unsafe { read(fds[0], byte.as_mut_ptr(), 1) } > 0 {
+            if tx.send(Vec::new()).is_err() {
+                break;
+            }
+        }
+    });
+}
+
+/// SIGWINCH is 28 on macOS and Linux.
+const SIGWINCH: c_int = 28;
+
 fn install_guards() {
     std::panic::set_hook(Box::new(|info| {
         restore_terminal();
@@ -3566,6 +3604,20 @@ impl App {
         p.items.iter().zip(&before).any(|(i, b)| &i.desc != b)
     }
 
+    /// How long the loop may wait for a key: short while anything moves,
+    /// longer while a prompt counts down, long when idle. `quiet` is the time
+    /// since the last key or event.
+    fn loop_wait(&self, quiet: Duration) -> Duration {
+        let streaming = self.status.streaming || self.panes.iter().flatten().any(|p| p.status.streaming);
+        if streaming || self.tool.as_ref().is_some_and(|row| row.running) || quiet < Duration::from_secs(2) {
+            Duration::from_millis(50)
+        } else if self.pending_since.is_some() {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(5)
+        }
+    }
+
     /// Advance the running row's glyph in place.
     fn tick_spinner(&mut self) {
         self.spinner += 1;
@@ -4617,6 +4669,7 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>
 
     // Key reader.
     let (key_tx, key_rx) = channel::<Vec<u8>>();
+    let key_tx_resize = key_tx.clone();
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin();
         let mut buf = [0u8; 64];
@@ -4632,12 +4685,15 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>
         }
     });
 
+    wake_on_resize(key_tx_resize);
+
     let mut pending_bytes: Vec<u8> = Vec::new();
+    let mut busy = Instant::now();
 
     app.render();
     while !app.quit {
         let mut redraw = false;
-        match key_rx.recv_timeout(Duration::from_millis(50)) {
+        match key_rx.recv_timeout(app.loop_wait(busy.elapsed())) {
             Ok(bytes) => {
                 pending_bytes.extend(bytes);
                 for key in decode(&mut pending_bytes) {
@@ -4663,6 +4719,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>
 
         if app.poll() {
             redraw = true;
+        }
+        if redraw {
+            busy = Instant::now();
         }
         app.expire();
 
@@ -7762,6 +7821,20 @@ mod tests {
         assert!(a.quit, "Ctrl+C did not exit mid-turn");
     }
 
+    #[test]
+    fn the_loop_sleeps_when_nothing_moves() {
+        let mut a = app();
+        let quiet = Duration::from_secs(3);
+        assert_eq!(a.loop_wait(quiet), Duration::from_secs(5));
+        assert_eq!(a.loop_wait(Duration::from_millis(500)), Duration::from_millis(50), "a recent key");
+        a.status.streaming = true;
+        assert_eq!(a.loop_wait(quiet), Duration::from_millis(50));
+        a.status.streaming = false;
+        a.pending_since = Some(Instant::now());
+        assert_eq!(a.loop_wait(quiet), Duration::from_secs(1));
+    }
+
+    #[test]
     fn ctrl_c_exits_at_once_when_idle() {
         let mut a = app();
         let (tx, _cmds) = channel();
