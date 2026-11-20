@@ -60,9 +60,9 @@ which one is in view, such as `2/3 fix the parser`, and how many others are
 
 Ctrl+O or `/inbox` lists every live session with what it is doing:
 `needs approval`, `replied`, `working`, or `idle`. Answer an approval in place
-with `y`, `n`, or `a`, open a session with Enter, and close an idle one with
+with `y`, `n`, `s`, or `a`, open a session with Enter, and close an idle one with
 `x`. A prompt out of view waits; its 60 second deadline starts when you see it.
-Approvals, modes, and buffers belong to each session, and all sessions share
+Approvals (except `a`), modes, and buffers belong to each session, and all sessions share
 one 16 MB output buffer budget.
 
 ### Commands
@@ -152,6 +152,7 @@ wins when set.
 # base_url=https://api.deepseek.com
 # permissions=normal        # normal | strict | yolo
 # allow_sudo=false
+# allow=npm test          # one line per shape; written by `a` at a prompt
 # thinking=false
 # compact_at=60000
 # color=auto
@@ -225,10 +226,12 @@ other providers show tokens and no cost.
 | `strict` | allow | ask | ask |
 | `yolo` | allow | allow, jail off | allow |
 
-A command prompt answers `y`, `n`, or `a` for always: in `normal`, `a` lets
-the same command shape run without asking for the rest of the session, so
-`npm test` covers `npm test -- --watch` but not `npm install`. Pipes, `&&`,
-`;`, and redirects never offer `a`.
+A command prompt reads `run it?   [y] yes  [n] no  [s] session  [a] always`.
+In `normal`, `s` lets the same command shape run without asking for the rest
+of the session, so `npm test` covers `npm test -- --watch` but not
+`npm install`. `a` does the same for every session and appends
+`allow = npm test` to the config; delete the line to undo it. Pipes, `&&`,
+`;`, and redirects never offer `s` or `a`, and `strict` ignores `allow`.
 
 Switch for the session with `/mode`; the config and `--permissions` set the
 starting mode.
