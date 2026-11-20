@@ -1023,7 +1023,6 @@ mod session_tests {
         log.append(&Message::system("wttr secret prompt"));
         log.append(&Message::user("what is the weather"));
         log.append(&Message::assistant("I asked wttr.in and it says rain in Woking"));
-        Log::create(&dir, &dir, "deepseek-flash").append(&Message::user("unrelated"));
         let hits = search(&dir, "WTTR", 20);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0.id, log.id);

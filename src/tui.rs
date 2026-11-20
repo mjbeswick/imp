@@ -784,6 +784,15 @@ fn spinner_frame(tick: usize) -> char {
     SPINNER[tick % SPINNER.len()]
 }
 
+/// Put a spinner frame before the count of each working session's row, and
+/// take it off the rest.
+fn spin_rows(items: &mut [PickItem], working: &[String], frame: char) {
+    for item in items {
+        let count = item.desc.trim_start_matches(|c| SPINNER.contains(&c) || c == ' ');
+        item.desc = if working.contains(&item.value) { format!("{frame} {count}") } else { count.to_string() };
+    }
+}
+
 /// The tool call on screen: one row, updated in place when it finishes.
 struct ToolRow {
     index: usize,
@@ -2311,6 +2320,7 @@ impl App {
             })
             .collect();
         options.truncate(20);
+        spin_rows(&mut options, &self.working_ids(), spinner_frame(self.spinner));
         Picker::new("sessions", options, PickKind::Session)
     }
 
@@ -2327,7 +2337,9 @@ impl App {
                 let (label, desc) = crate::store::session_row(&m, now);
                 PickItem { label, value: m.id, actions: Vec::new(), desc }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let mut items = items;
+        spin_rows(&mut items, &self.working_ids(), spinner_frame(self.spinner));
         Picker::new(format!("search \"{}\"", query.trim()), items, PickKind::Session)
     }
 
@@ -3453,6 +3465,39 @@ impl App {
     fn spinner_due(&self) -> bool {
         self.tool.as_ref().is_some_and(|row| row.running)
             && self.last_redraw.elapsed() >= Duration::from_millis(100)
+    }
+
+    /// Ids of live sessions whose agent is working.
+    fn working_ids(&self) -> Vec<String> {
+        (0..self.panes.len())
+            .filter_map(|i| {
+                let (worker, busy) = match &self.panes[i] {
+                    None => (self.worker.as_ref(), self.status.streaming),
+                    Some(p) => (p.worker.as_ref(), p.status.streaming),
+                };
+                let id = worker?.2.lock().ok()?.clone();
+                (busy && !id.is_empty()).then_some(id)
+            })
+            .collect()
+    }
+
+    /// Repaint the spinners in an open session picker, ten times a second.
+    /// True when a row changed.
+    fn spin_sessions(&mut self) -> bool {
+        if self.last_redraw.elapsed() < Duration::from_millis(100)
+            || !matches!(&self.pending, Some(Pending::Pick(p)) if p.kind == PickKind::Session)
+        {
+            return false;
+        }
+        let working = self.working_ids();
+        if !self.tool.as_ref().is_some_and(|row| row.running) {
+            self.spinner += 1;
+        }
+        let frame = spinner_frame(self.spinner);
+        let Some(Pending::Pick(p)) = &mut self.pending else { return false };
+        let before: Vec<String> = p.items.iter().map(|i| i.desc.clone()).collect();
+        spin_rows(&mut p.items, &working, frame);
+        p.items.iter().zip(&before).any(|(i, b)| &i.desc != b)
     }
 
     /// Advance the running row's glyph in place.
@@ -4581,6 +4626,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 // Ten frames a second is enough for a spinner. Repainting faster
                 // flickers under software terminal renderers.
+                if app.spin_sessions() {
+                    redraw = true;
+                }
                 if app.spinner_due() {
                     app.tick_spinner();
                     redraw = true;
@@ -4866,6 +4914,33 @@ mod tests {
         a.handle_key(Key::Enter, &tx);
         assert!(matches!(a.pending, Some(Pending::Pick(_))), "Enter on no hits closed it");
         assert_eq!(a.panes.len(), 2);
+    }
+
+    #[test]
+    fn working_sessions_spin_in_the_session_picker() {
+        let mut a = multi_app("spin");
+        let (tx, _rx) = channel();
+        a.run_command("new", &tx);
+        let id = a.worker.as_ref().unwrap().2.lock().unwrap().clone();
+        // A session is listed once its log has a line.
+        std::fs::write(a.sessions_dir.join(format!("{id}.jsonl")), "").unwrap();
+        a.status.streaming = true;
+        a.run_command("sessions", &tx);
+        let desc = |a: &App| {
+            let Some(Pending::Pick(p)) = &a.pending else { panic!("no picker") };
+            p.items.iter().find(|i| i.value == id).expect("row").desc.clone()
+        };
+        let first = desc(&a);
+        assert!(SPINNER.contains(&first.chars().next().unwrap()), "{first}");
+        a.last_redraw = Instant::now() - Duration::from_millis(200);
+        assert!(a.spin_sessions());
+        assert_ne!(desc(&a), first, "the frame did not advance");
+        a.status.streaming = false;
+        a.last_redraw = Instant::now() - Duration::from_millis(200);
+        assert!(a.spin_sessions());
+        assert!(desc(&a).ends_with("msgs") && desc(&a).starts_with(char::is_numeric), "{}", desc(&a));
+        a.last_redraw = Instant::now() - Duration::from_millis(200);
+        assert!(!a.spin_sessions(), "an idle picker repainted");
     }
 
     #[test]
