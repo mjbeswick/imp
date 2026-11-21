@@ -24,8 +24,8 @@ The system SHALL keep up to four live sessions in one process, each with its own
 - **THEN** the transcript says all four are busy and nothing closes
 
 #### Scenario: Separate approvals
-- **WHEN** the user approved `wttr.in` in one session
-- **THEN** a fetch from `wttr.in` in another session still asks
+- **WHEN** the user answered `s` to `npm test` in one session
+- **THEN** `npm test` in another session still asks
 
 ### Requirement: Switch sessions by key
 

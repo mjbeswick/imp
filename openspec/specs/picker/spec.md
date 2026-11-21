@@ -23,7 +23,7 @@ The system SHALL provide a single picker with a title, a filter, a scrolling lis
 
 #### Scenario: Verbosity picker
 - **WHEN** the user runs `/verbosity` with no level
-- **THEN** the picker lists `low` and `high` and choosing one applies it
+- **THEN** the picker lists `low`, `medium`, and `high` and choosing one applies it
 
 #### Scenario: Theme and provider pickers
 - **WHEN** the user runs `/theme` or `/provider` with no value in the chat

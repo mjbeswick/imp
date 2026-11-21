@@ -95,7 +95,7 @@ one 16 MB output buffer budget.
 /new       another live session  /reload    re-read instructions and skills
 /sessions  pick a session        /compact   compact now
 /think     thinking toggle       /mode      normal, strict, or yolo
-/verbosity low, medium, high      /cwd       show the session directory
+/verbosity low, medium, high     /cwd       show the session directory
 /cd        browse or change cwd  /image     browse or attach an image
 /fork      copy the session      /theme     set the colour theme
 /shell     open a shell          /model     set or pick the session model

@@ -695,11 +695,11 @@ The system SHALL print the session root for `/cwd`, SHALL change it for `/cd <pa
 
 ### Requirement: Verbosity controls tool detail
 
-The system SHALL keep a per-session verbosity with two levels, `low` and `high`, SHALL default to `low`, SHALL change it with `/verbosity low` or `/verbosity high`, SHALL show one summary line at `low`, every call's arguments and capped output at `high` in both front-ends, SHALL apply the level to later calls, and SHALL NOT write it to the config file.
+The system SHALL keep a per-session verbosity of `low`, `medium`, or `high`, starting from the config's `verbosity` and defaulting to `medium`, SHALL change it with `/verbosity <level>` without writing the config, SHALL show one line per step at `low`, add a short result at `medium`, and add each call's arguments and capped output at `high` in both front-ends, and SHALL apply the level to later calls.
 
 #### Scenario: Default
-- **WHEN** a session starts and the user has run no verbosity command
-- **THEN** tool calls render as one summary line each
+- **WHEN** a session starts and the config sets no verbosity
+- **THEN** tool calls render as one summary line each, followed by a short result such as `→ 200 json · 12 KB`
 
 #### Scenario: High
 - **WHEN** the user runs `/verbosity high` and the next tool call runs
@@ -707,7 +707,11 @@ The system SHALL keep a per-session verbosity with two levels, `low` and `high`,
 
 #### Scenario: Back to low
 - **WHEN** the user runs `/verbosity low`
-- **THEN** later calls return to one summary line and earlier rows stay as they were drawn
+- **THEN** later calls return to one summary line without a result and earlier rows stay as they were drawn
+
+#### Scenario: Fetch label
+- **WHEN** the model fetches a URL with a long query string
+- **THEN** the row names the host and path without the query
 
 #### Scenario: Line mode
 - **WHEN** the user runs `/verbosity high` in line mode
@@ -715,7 +719,7 @@ The system SHALL keep a per-session verbosity with two levels, `low` and `high`,
 
 #### Scenario: No argument
 - **WHEN** the user runs `/verbosity` with no level in the chat interface
-- **THEN** the picker lists `low` and `high` with the current level highlighted and choosing one applies it
+- **THEN** the picker lists `low`, `medium`, and `high` with the current level highlighted and choosing one applies it
 
 #### Scenario: Line mode no argument
 - **WHEN** the user runs `/verbosity` with no level in line mode
@@ -723,7 +727,7 @@ The system SHALL keep a per-session verbosity with two levels, `low` and `high`,
 
 #### Scenario: Unknown level
 - **WHEN** the user runs `/verbosity loud`
-- **THEN** the transcript refuses the value and names `low` and `high`
+- **THEN** the transcript refuses the value and names `low`, `medium`, and `high`
 
 ### Requirement: Line mode uses the role palette
 

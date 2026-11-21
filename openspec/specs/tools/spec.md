@@ -271,11 +271,11 @@ The system SHALL provide a `search` tool, on providers that implement it, that q
 
 ### Requirement: Fetch returns page text as markdown
 
-The system SHALL provide a local `fetch` tool for every provider that makes one GET request over `http` or `https` with a 15 second limit, SHALL return the status line and the body, SHALL return JSON, XML, and text unchanged and HTML as its title and readable text, and SHALL apply the 4 KB cap and spill rule.
+The system SHALL provide a local `fetch` tool for every provider that makes one `http` or `https` GET with a 15 second limit and returns the status line and body, SHALL return JSON and text unchanged, HTML as markdown with absolute links and without scripts, menus, or footers, and RSS and Atom as a list of title, date, and link, and SHALL apply the 4 KB cap and spill rule.
 
 #### Scenario: Reading an article
 - **WHEN** the model fetches an HTML page
-- **THEN** it receives the status line, the page title, and the page text without scripts or tags
+- **THEN** it receives the status line, the page title as a heading, and the text as markdown without scripts, tags, or navigation
 
 #### Scenario: A markdown file
 - **WHEN** the model fetches a `.md` file with headings
@@ -292,6 +292,14 @@ The system SHALL provide a local `fetch` tool for every provider that makes one 
 #### Scenario: Other schemes
 - **WHEN** the model fetches `file:///etc/passwd`
 - **THEN** it is refused and no request is made
+
+#### Scenario: A feed
+- **WHEN** the model fetches `https://feeds.bbci.co.uk/news/rss.xml`
+- **THEN** it receives one line per item with its title, date, and link, and no XML
+
+#### Scenario: Links
+- **WHEN** a page links `/news/123` with the text `Budget`
+- **THEN** the markdown holds `[Budget](https://host/news/123)`
 
 ### Requirement: Search failures are bounded
 
