@@ -828,7 +828,7 @@ impl Tools {
         self.read_paths.insert(path);
         Outcome {
             ok: true,
-            text: format!("edited {raw} ({} changes)", edits.len()),
+            text: format!("edited {raw} ({} change{})", edits.len(), if edits.len() == 1 { "" } else { "s" }),
             code: None,
             full: None,
         }

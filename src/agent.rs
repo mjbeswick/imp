@@ -137,11 +137,21 @@ fn diff_detail(name: &str, args: &Value) -> String {
             for edit in args.get("edits").and_then(Value::as_array).into_iter().flatten() {
                 let old = edit.get("old").and_then(Value::as_str).unwrap_or("");
                 let new = edit.get("new").and_then(Value::as_str).unwrap_or("");
-                for line in old.lines() {
+                let (old, new): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+                // Lines both sides share are context, not change; keep one each side.
+                let head = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+                let tail = old[head..].iter().rev().zip(new[head..].iter().rev()).take_while(|(a, b)| a == b).count();
+                if head > 0 {
+                    lines.push(format!(" {}", old[head - 1]));
+                }
+                for line in &old[head..old.len() - tail] {
                     lines.push(format!("-{line}"));
                 }
-                for line in new.lines() {
+                for line in &new[head..new.len() - tail] {
                     lines.push(format!("+{line}"));
+                }
+                if tail > 0 {
+                    lines.push(format!(" {}", old[old.len() - tail]));
                 }
                 lines.push(String::new());
             }
@@ -1635,7 +1645,7 @@ pub fn describe(name: &str, args: &Value) -> String {
                 .and_then(Value::as_array)
                 .map(|a| a.len())
                 .unwrap_or(0);
-            format!("edit {} ({edits} changes)", flatten(text("path")))
+            format!("edit {} ({edits} change{})", flatten(text("path")), if edits == 1 { "" } else { "s" })
         }
         "write" => format!(
             "write {} ({} lines)",
@@ -1813,6 +1823,8 @@ mod tests {
         assert!(detail.contains("-a"), "{detail}");
         assert!(detail.contains("-b"), "{detail}");
         assert!(detail.contains("+c"), "{detail}");
+        let trimmed = diff_detail("edit", &json!({"edits": [{"old": "a\nb\nc", "new": "a\nx\nc"}]}));
+        assert_eq!(trimmed.trim_end(), " a\n-b\n+x\n c");
         let write = diff_detail("write", &json!({"path": "x", "content": "one\ntwo"}));
         assert_eq!(write, "+one\n+two");
         assert!(diff_detail("read", &json!({})).is_empty());
@@ -1917,7 +1929,7 @@ mod tests {
             (
                 "edit",
                 json!({"path": "a.rs", "edits": [{"old": "a", "new": "b"}]}),
-                "edit a.rs (1 changes)",
+                "edit a.rs (1 change)",
             ),
             ("fetch", json!({"url": "https://x/y.md"}), "fetch x/y.md"),
             ("search", json!({"op": "search", "query": "woking"}), "search \"woking\""),

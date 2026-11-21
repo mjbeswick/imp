@@ -1019,11 +1019,19 @@ fn preview_detail(text: &str) -> Vec<String> {
     lines
 }
 
+/// A result that only restates the step past tense, word for word after the verb.
+fn echoes(summary: &str, preview: &str) -> bool {
+    matches!((summary.split_once(' '), preview.split_once(' ')), (Some((_, a)), Some((_, b))) if a == b)
+}
+
 fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
     let mark = if row.ok { "✓" } else { "✗" };
     // At medium a success says what came back, on the same line.
     let result = match level {
-        Verbosity::Medium if row.ok && !row.preview.is_empty() && !row.expanded => format!(" → {}", row.preview),
+        // `edit x (1 change)` → `edited x (1 change)` says it twice.
+        Verbosity::Medium if row.ok && !row.preview.is_empty() && !row.expanded && !echoes(&row.summary, &row.preview) => {
+            format!(" → {}", row.preview)
+        }
         _ => String::new(),
     };
     let mut text = format!("{mark} {}{result}{TIME}{}", row.summary, duration(row.ms));
@@ -1858,6 +1866,16 @@ impl App {
         true
     }
 
+    /// One diff row, indented under its tool row like a failure's reason.
+    fn push_diff(&mut self, line: String) {
+        let role = match line.chars().next() {
+            Some('+') => Role::Add,
+            Some('-') => Role::Delete,
+            _ => Role::Thinking,
+        };
+        self.push(role, format!("  {line}"));
+    }
+
     /// Start another live session, or reset this one without a factory.
     fn new_session(&mut self, tx: &Sender<Cmd>) {
         let Some(fresh) = &self.fresh else {
@@ -2041,14 +2059,7 @@ impl App {
                             row.detail_count = preview.len();
                             row.detail_start = Some(start);
                             for line in preview {
-                                let role = if line.starts_with('+') {
-                                    Role::Add
-                                } else if line.starts_with('-') {
-                                    Role::Delete
-                                } else {
-                                    Role::Thinking
-                                };
-                                self.push(role, line);
+                                self.push_diff(line);
                             }
                         }
                         let text = tool_row_text(&row, self.verbosity);
@@ -2443,14 +2454,7 @@ impl App {
                 };
                 row.detail_count = lines.len();
                 for line in lines {
-                    let role = if line.starts_with('+') {
-                        Role::Add
-                    } else if line.starts_with('-') {
-                        Role::Delete
-                    } else {
-                        Role::Thinking
-                    };
-                    self.push(role, line);
+                    self.push_diff(line);
                 }
             }
         }
@@ -6781,6 +6785,12 @@ mod tests {
         a.handle_key(Key::Tab, &tx);
         let Some(Pending::Pick(p)) = &a.pending else { panic!("Tab did not open the mode values") };
         assert_eq!(p.title, "mode");
+    }
+
+    #[test]
+    fn a_result_that_restates_the_step_is_dropped() {
+        assert!(echoes("edit x.txt (1 change)", "edited x.txt (1 change)"));
+        assert!(!echoes("run `ls`", "exit 0"));
     }
 
     #[test]
