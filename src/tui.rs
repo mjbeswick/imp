@@ -395,6 +395,8 @@ pub enum Role {
     Info,
     Add,
     Delete,
+    /// Diff context and notes under a step: muted, without thinking's `~`.
+    Context,
     Border,
     Success,
     Code,
@@ -470,7 +472,7 @@ impl Palette {
         let slot = match role {
             Role::User => Slot::User,
             Role::Assistant => Slot::Text,
-            Role::Thinking => Slot::Muted,
+            Role::Thinking | Role::Context => Slot::Muted,
             Role::Tool => Slot::Tool,
             Role::Error | Role::Delete => Slot::Error,
             Role::Info => Slot::Accent,
@@ -483,16 +485,20 @@ impl Palette {
         let fallback = crate::theme::to_256([r, g, b]);
         // Diff lines: plain text on a tint, so they never read as a ✓.
         if matches!(role, Role::Add | Role::Delete) {
+            // The indent stays on the terminal background; the tint starts at the sign.
+            let body = text.trim_start_matches(' ');
+            let lead = &text[..text.len() - body.len()];
+            let text = body;
             let fg = self.theme.rgb(Slot::Text);
             let bg = crate::theme::tint([r, g, b], fg);
             return if self.truecolor {
                 format!(
-                    "\x1b[48;2;{};{};{}m\x1b[38;2;{};{};{}m{text}\x1b[0m",
+                    "{lead}\x1b[48;2;{};{};{}m\x1b[38;2;{};{};{}m{text}\x1b[0m",
                     bg[0], bg[1], bg[2], fg[0], fg[1], fg[2]
                 )
             } else {
                 let (bg, fg) = crate::theme::tint_256([r, g, b], fg);
-                format!("\x1b[48;5;{bg}m\x1b[38;5;{fg}m{text}\x1b[0m")
+                format!("{lead}\x1b[48;5;{bg}m\x1b[38;5;{fg}m{text}\x1b[0m")
             };
         }
         if self.truecolor {
@@ -1871,7 +1877,7 @@ impl App {
         let role = match line.chars().next() {
             Some('+') => Role::Add,
             Some('-') => Role::Delete,
-            _ => Role::Thinking,
+            _ => Role::Context,
         };
         self.push(role, format!("  {line}"));
     }
