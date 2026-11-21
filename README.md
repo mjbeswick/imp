@@ -234,6 +234,11 @@ other providers show tokens and no cost.
 | `strict` | allow | ask | ask |
 | `yolo` | allow | allow, jail off | allow |
 
+A safe-listed command such as `ls`, `rg`, or `git diff` runs unprompted only
+when the whole line is read-only: a pipe of safe commands is fine, but `&&`,
+`;`, redirects, `$(…)`, and flags that write or run things, such as
+`find -exec` or `sort -o`, ask. `awk` always asks.
+
 A command prompt reads `run it?   [y] yes  [n] no  [s] session  [a] always`.
 In `normal`, `s` lets the same command shape run without asking for the rest
 of the session, so `npm test` covers `npm test -- --watch` but not
