@@ -9,7 +9,7 @@ use crate::config::{ColorMode, Config, Verbosity};
 use std::ffi::{c_int, c_ulong};
 use std::io::{Read, Write};
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -491,7 +491,8 @@ impl Palette {
                     bg[0], bg[1], bg[2], fg[0], fg[1], fg[2]
                 )
             } else {
-                format!("\x1b[48;5;{}m\x1b[38;5;{}m{text}\x1b[0m", crate::theme::to_256(bg), crate::theme::to_256(fg))
+                let (bg, fg) = crate::theme::tint_256([r, g, b], fg);
+                format!("\x1b[48;5;{bg}m\x1b[38;5;{fg}m{text}\x1b[0m")
             };
         }
         if self.truecolor {
@@ -962,19 +963,32 @@ const RAW: char = '\u{2}';
 /// Separates a tool summary from its duration in the stored row text.
 const TIME: char = '\u{1}';
 
-/// Animated frames for a running tool row.
-// ponytail: braille drew too small in kmscon; quarter circles fill the cell.
-const SPINNER: [char; 4] = ['◐', '◓', '◑', '◒'];
+/// The configured spinner, as an index into `SPINNERS`.
+// ponytail: global so every free function can read it; one choice per process.
+static SPIN: AtomicUsize = AtomicUsize::new(0);
+
+fn spinner() -> (&'static str, &'static str) {
+    crate::config::SPINNERS[SPIN.load(Ordering::Relaxed) % crate::config::SPINNERS.len()]
+}
+
+/// The frames of the configured spinner.
+fn spinner_frames() -> &'static str {
+    spinner().1
+}
 
 fn spinner_frame(tick: usize) -> char {
-    SPINNER[tick % SPINNER.len()]
+    let (name, frames) = spinner();
+    let n = frames.chars().count();
+    // A cheap scramble of the tick keeps `random` stable within a frame.
+    let i = if name == "random" { ((tick as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as usize } else { tick };
+    frames.chars().nth(i % n).unwrap_or(' ')
 }
 
 /// Put a spinner frame before the count of each working session's row, and
 /// two spaces before the rest, so titles keep their width.
 fn spin_rows(items: &mut [PickItem], working: &[String], frame: char) {
     for item in items {
-        let count = item.desc.trim_start_matches(|c| SPINNER.contains(&c) || c == ' ');
+        let count = item.desc.trim_start_matches(|c| spinner_frames().contains(c) || c == ' ');
         item.desc = if working.contains(&item.value) { format!("{frame} {count}") } else { format!("  {count}") };
     }
 }
@@ -1583,6 +1597,7 @@ impl App {
         let palette = Palette::detect(&cfg);
         let provider = cfg.provider;
         let verbosity = cfg.verbosity;
+        SPIN.store(cfg.spinner, Ordering::Relaxed);
         let history = load_history();
         let agents = crate::store::load_agents(&cfg, &root)
             .into_iter()
@@ -5457,7 +5472,7 @@ mod tests {
             p.items.iter().find(|i| i.value == id).expect("row").desc.clone()
         };
         let first = desc(&a);
-        assert!(SPINNER.contains(&first.chars().next().unwrap()), "{first}");
+        assert!(spinner_frames().contains(first.chars().next().unwrap()), "{first}");
         a.last_redraw = Instant::now() - Duration::from_millis(200);
         assert!(a.spin_sessions());
         assert_ne!(desc(&a), first, "the frame did not advance");
@@ -6693,7 +6708,7 @@ mod tests {
             args: "{}".into(),
         });
         let line = a.status_line(80);
-        for frame in SPINNER {
+        for frame in spinner_frames().chars() {
             assert!(
                 !line.contains(frame),
                 "status line carried {frame:?}: {line:?}"

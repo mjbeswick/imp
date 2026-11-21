@@ -150,6 +150,8 @@ pub struct Config {
     pub suggest: bool,
     /// Show the lines an edit or write changed under its tool row.
     pub diffs: bool,
+    /// Index into `SPINNERS`.
+    pub spinner: usize,
     /// Move to the next waiting session after handing one work.
     pub auto_next: bool,
     /// Secret-looking variables the agent's commands may still see.
@@ -191,6 +193,7 @@ impl Default for Config {
             mouse: true,
             suggest: true,
             diffs: true,
+            spinner: 0,
             auto_next: true,
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
@@ -280,6 +283,12 @@ impl Config {
             "mouse" => self.mouse = parse_bool(value)?,
             "suggest" => self.suggest = parse_bool(value)?,
             "diffs" => self.diffs = parse_bool(value)?,
+            "spinner" => {
+                self.spinner = SPINNERS.iter().position(|(n, _)| *n == value.trim()).ok_or_else(|| {
+                    let names: Vec<&str> = SPINNERS.iter().map(|(n, _)| *n).collect();
+                    format!("unknown spinner {value:?}; use {}", names.join(", "))
+                })?
+            }
             "auto_next" => self.auto_next = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Managed profile lines were read before this pass.
@@ -644,6 +653,22 @@ pub fn parse_max_steps(s: &str) -> Result<usize, String> {
     Ok((n as usize).min(1000))
 }
 
+/// Spinner names and frames. `random` draws a frame at random from its set.
+// ponytail: single-width glyphs only; emoji frames are two cells and jitter rows.
+pub const SPINNERS: &[(&str, &str)] = &[
+    ("circle", "◐◓◑◒"),
+    ("braille", "⠋⠙⠹⠸⠼⠴⠦⠧"),
+    ("dots", "⣾⣽⣻⢿⡿⣟⣯⣷"),
+    ("line", "|/-\\"),
+    ("arc", "◜◠◝◞◡◟"),
+    ("square", "◰◳◲◱"),
+    ("triangle", "◢◣◤◥"),
+    ("pulse", "·•●•"),
+    ("bar", "▁▂▃▄▅▆▇█▇▆▅▄▃▂"),
+    ("star", "✶✸✹✺✹✷"),
+    ("random", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*+=?"),
+];
+
 /// How much of each tool step the interface shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verbosity {
@@ -713,6 +738,16 @@ mod tests {
     fn bad_enum_is_an_error() {
         let err = Config::from_str("permissions=whatever").unwrap_err();
         assert!(err.contains("normal"), "{err}");
+    }
+
+    #[test]
+    fn spinner_names_parse_and_frames_are_one_cell() {
+        assert_eq!(SPINNERS[Config::from_str("spinner=random").unwrap().spinner].0, "random");
+        assert!(Config::from_str("spinner=nope").unwrap_err().contains("braille"));
+        for (name, frames) in SPINNERS {
+            // Wide glyphs sit outside these ranges; one cell keeps rows still.
+            assert!(frames.chars().all(|c| (c as u32) < 0x2E80), "{name} has a wide frame");
+        }
     }
 
     #[test]

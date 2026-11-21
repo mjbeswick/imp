@@ -22,6 +22,7 @@ const CONFIG_TEMPLATE: &str = "\
 # goal_rounds=5               # turns a /goal may run, 1 to 20
 # suggest=on                  # a greyed next message after each reply; Tab takes it
 # diffs=on                    # changed lines under each edit or write
+# spinner=circle              # braille dots line arc square triangle pulse bar star random
 # skills_dir=~/.config/imp/skills
 ";
 
