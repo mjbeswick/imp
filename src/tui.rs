@@ -673,6 +673,9 @@ pub enum Cmd {
     },
     SetRoot(std::path::PathBuf),
     Compact,
+    /// Work across turns until the goal is met.
+    Goal(String),
+    GoalOff,
     Resume(String),
     Reload,
     SetPermissions(crate::config::Permissions),
@@ -731,6 +734,10 @@ pub enum Ev {
     Done(Option<String>),
     /// The user's likely next message, drawn greyed out in an empty input.
     Suggest(String),
+    /// A goal round begins.
+    GoalRound { text: String, round: u32, rounds: u32 },
+    /// The goal ended, and why.
+    GoalEnd(String),
 }
 
 /// How long a confirmation waits before it gives up and stops the turn.
@@ -1545,6 +1552,8 @@ struct Status {
     task_usage: (u64, u64, u64),
     /// Since when nothing has streamed and no tool has run.
     quiet_since: Option<Instant>,
+    /// The running goal: its text, round, and rounds.
+    goal: Option<(String, u32, u32)>,
 }
 
 const COMMANDS: &[(&str, &str)] = crate::help::COMMANDS;
@@ -1900,6 +1909,20 @@ impl App {
         match ev {
             Ev::Show(text) => {
                 self.push(Role::Tool, format!("{RAW}{text}"));
+                self.dirty = true;
+            }
+            Ev::GoalRound { text, round, rounds } => {
+                if round > 1 {
+                    self.push(Role::Info, format!("◎ goal round {round}/{rounds}"));
+                }
+                self.status.streaming = true;
+                self.begin_task();
+                self.status.goal = Some((text, round, rounds));
+                self.dirty = true;
+            }
+            Ev::GoalEnd(why) => {
+                self.push(Role::Info, format!("◎ {why}"));
+                self.status.goal = None;
                 self.dirty = true;
             }
             Ev::Suggest(text) => {
@@ -3088,6 +3111,23 @@ impl App {
             other if other.starts_with("sessions ") => {
                 let id = other["sessions".len()..].trim().to_string();
                 self.resume(id, tx);
+            }
+            "goal" => {
+                let text = match &self.status.goal {
+                    Some((goal, round, rounds)) => format!("goal: {goal} · round {round}/{rounds}"),
+                    None => "no goal; /goal <text> sets one".into(),
+                };
+                self.push(Role::Info, text);
+            }
+            "goal off" => {
+                let _ = tx.send(Cmd::GoalOff);
+            }
+            other if other.starts_with("goal ") => {
+                let text = other["goal ".len()..].trim().to_string();
+                self.push(Role::User, format!("/goal {text}"));
+                self.status.streaming = true;
+                self.begin_task();
+                let _ = tx.send(Cmd::Goal(text));
             }
             "compact" => {
                 let _ = tx.send(Cmd::Compact);
@@ -4371,8 +4411,12 @@ impl App {
             0 => String::new(),
             n => format!(" · {n} waiting"),
         };
+        let goal = match &self.status.goal {
+            Some((_, round, rounds)) => format!(" · goal {round}/{rounds}"),
+            None => String::new(),
+        };
         let left = format!(
-            "{place}{model} · {} tok{money}{unseen}{thinking}{waiting}",
+            "{place}{model} · {} tok{money}{goal}{unseen}{thinking}{waiting}",
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
@@ -4707,9 +4751,12 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
     std::thread::spawn({
         let ev_tx = ev_tx.clone();
         let session_id = session_id.clone();
-        move || loop {
+        move || {
+        // Commands that arrived during a goal round, run after it.
+        let mut queued: std::collections::VecDeque<Cmd> = Default::default();
+        loop {
             // A second's wait, so a due check-in can start a turn while idle.
-            let next = match cmd_rx.recv_timeout(Duration::from_secs(1)) {
+            let next = if let Some(cmd) = queued.pop_front() { Ok(cmd) } else { match cmd_rx.recv_timeout(Duration::from_secs(1)) {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if let Some(note) = worker_session.due() {
                         let what = wake_summary(&note);
@@ -4726,8 +4773,51 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(std::sync::mpsc::RecvError),
                 Ok(cmd) => Ok(cmd),
-            };
+            } };
             match next {
+                Ok(Cmd::Goal(text)) => {
+                    let mut message = worker_session.start_goal(&text);
+                    loop {
+                        let Some(goal) = worker_session.goal.clone() else { break };
+                        let _ = ev_tx.send(Ev::GoalRound { text: goal.text, round: goal.round, rounds: goal.rounds });
+                        let mut hooks = WorkerHooks { tx: ev_tx.clone(), waited: Duration::ZERO };
+                        let result = worker_session.turn(&message, &mut hooks);
+                        let _ = ev_tx.send(context_usage(&worker_session));
+                        let failed = result.is_err() || worker_session.cancel.load(Ordering::Relaxed);
+                        let _ = ev_tx.send(Ev::Done(result.err()));
+                        // What the user did during the round decides whether another starts.
+                        let mut stop = failed.then(|| "goal stopped".to_string());
+                        while let Ok(cmd) = cmd_rx.try_recv() {
+                            match cmd {
+                                Cmd::GoalOff => {
+                                    stop.get_or_insert_with(|| "goal cleared".into());
+                                }
+                                Cmd::Prompt(_) | Cmd::Quit | Cmd::Goal(_) => {
+                                    stop.get_or_insert_with(|| "goal stopped: you took over".into());
+                                    queued.push_back(cmd);
+                                }
+                                other => queued.push_back(other),
+                            }
+                        }
+                        if let Some(why) = stop {
+                            worker_session.goal = None;
+                            let _ = ev_tx.send(Ev::GoalEnd(why));
+                            break;
+                        }
+                        match worker_session.goal_next() {
+                            Ok(next) => message = next,
+                            Err(why) => {
+                                let _ = ev_tx.send(Ev::GoalEnd(why));
+                                break;
+                            }
+                        }
+                    }
+                }
+                Ok(Cmd::GoalOff) => {
+                    if worker_session.goal.take().is_some() {
+                        let _ = ev_tx.send(Ev::GoalEnd("goal cleared".into()));
+                    }
+                }
                 Ok(Cmd::Attach(images)) => {
                     for image in images {
                         if let Err(e) = worker_session.attach_image(image) {
@@ -4965,6 +5055,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                 },
                 Ok(Cmd::Quit) | Err(_) => break,
             }
+        }
         }
     });
     (cmd_tx, ev_rx, session_id)
@@ -5396,6 +5487,58 @@ mod tests {
         }
         assert_eq!(woke.as_deref(), Some("check-in"));
         assert!(done && text.contains("64% done"), "{text:?}");
+    }
+
+    #[test]
+    fn a_goal_runs_rounds_in_the_worker_until_met() {
+        let dir = std::env::temp_dir().join(format!("imp-goal-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let mut session = Session::new(
+            Config::default(),
+            dir.clone(),
+            dir.join("out"),
+            String::new(),
+            crate::store::Agent::builtin(),
+            Vec::new(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+        );
+        session.transport = Box::new(std::sync::Arc::new(crate::transport::Fake::new(vec![
+            crate::transport::Script::Ok(crate::transport::text_reply("fixed one; one left")),
+            crate::transport::Script::Ok(crate::transport::text_reply("all green\nGOAL MET 13 tests OK")),
+        ])));
+        let (tx, rx, _) = spawn_worker(session, dir.join("sessions"));
+        tx.send(Cmd::Goal("all tests pass".into())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut rounds, mut end, mut dones) = (Vec::new(), None, 0);
+        while end.is_none() && Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(Ev::GoalRound { round, rounds: n, .. }) => rounds.push((round, n)),
+                Ok(Ev::GoalEnd(why)) => end = Some(why),
+                Ok(Ev::Done(_)) => dones += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(rounds, vec![(1, 5), (2, 5)]);
+        assert_eq!(dones, 2);
+        assert_eq!(end.as_deref(), Some("goal met"));
+    }
+
+    #[test]
+    fn goal_command_starts_shows_and_ends() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.run_command("goal all tests pass", &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Goal(t)) if t == "all tests pass"));
+        assert!(a.entries.iter().any(|e| e.text == "/goal all tests pass"));
+        a.apply(Ev::GoalRound { text: "all tests pass".into(), round: 2, rounds: 5 });
+        assert!(strip(&a.status_line(100)).contains("goal 2/5"));
+        assert!(a.entries.iter().any(|e| e.text.contains("goal round 2/5")));
+        a.run_command("goal", &tx);
+        assert!(a.entries.last().unwrap().text.contains("all tests pass · round 2/5"));
+        a.run_command("goal off", &tx);
+        assert!(matches!(rx.try_recv(), Ok(Cmd::GoalOff)));
+        a.apply(Ev::GoalEnd("goal cleared".into()));
+        assert!(!strip(&a.status_line(100)).contains("goal "));
     }
 
     #[test]
