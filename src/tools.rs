@@ -34,6 +34,8 @@ pub struct Outcome {
     pub ok: bool,
     pub text: String,
     pub code: Option<i32>,
+    /// The whole output, before the cap, for showing to the user.
+    pub full: Option<String>,
 }
 
 impl Outcome {
@@ -42,6 +44,7 @@ impl Outcome {
             ok: false,
             text: text.into(),
             code: None,
+            full: None,
         }
     }
 }
@@ -602,6 +605,7 @@ impl Tools {
                     ok: true,
                     text: String::new(),
                     code: None,
+                    full: None,
                 };
             }
             if cancel.load(Ordering::Relaxed) || late {
@@ -644,6 +648,7 @@ impl Tools {
                 ok: false,
                 text: format!("{why}\n{}", self.cap(&text)),
                 code: None,
+                full: None,
             };
         }
 
@@ -652,6 +657,7 @@ impl Tools {
             ok: code == Some(0),
             text: self.cap(&text),
             code,
+            full: Some(text),
         }
     }
 
@@ -737,6 +743,7 @@ impl Tools {
             ok,
             text: self.trim(&out),
             code: None,
+            full: None,
         }
     }
 
@@ -764,6 +771,7 @@ impl Tools {
                     ok: true,
                     text: format!("wrote {raw} ({} bytes)", content.len()),
                     code: None,
+                    full: None,
                 }
             }
             Err(e) => Outcome::error(format!("{raw}: {e}")),
@@ -806,6 +814,7 @@ impl Tools {
             ok: true,
             text: format!("edited {raw} ({} changes)", edits.len()),
             code: None,
+            full: None,
         }
     }
 }

@@ -57,6 +57,34 @@ pub enum Ui {
     },
     Info(String),
     Error(String),
+    /// Output shown to the user with its colours; the model gets text.
+    Show(String),
+}
+
+/// Lines of output `show` puts on screen.
+pub const SHOW_LINES: usize = 200;
+
+/// The first `n` lines of text.
+pub fn first_lines(text: &str, n: usize) -> String {
+    text.split_inclusive('\n').take(n).collect()
+}
+
+/// Shown output as the model gets it: plain text, or for a picture drawn in
+/// block or braille characters, only its size.
+fn for_model(shown: &str) -> String {
+    let plain = crate::render::clean(shown);
+    let ink: Vec<char> = plain.chars().filter(|c| !c.is_whitespace()).collect();
+    let drawn = ink
+        .iter()
+        .filter(|&&c| matches!(c, '\u{2580}'..='\u{259f}' | '\u{2800}'..='\u{28ff}' | '\u{1fb00}'..='\u{1fbff}'))
+        .count();
+    if !ink.is_empty() && drawn * 3 > ink.len() {
+        let width = plain.lines().map(|l| l.trim_end().chars().count()).max().unwrap_or(0);
+        let height = plain.trim_end().lines().count();
+        format!("[shown to the user: a {width}×{height} picture]")
+    } else {
+        plain
+    }
 }
 
 /// Check-ins one session may have waiting.
@@ -64,7 +92,7 @@ const MAX_CHECKINS: usize = 4;
 
 pub fn schema() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."},"delay_s":{"type":"integer","description":"Start it as a job after this many seconds, up to 86400."},"notify":{"type":"boolean","description":"With background or delay_s: wake you when the job ends."},"description":{"type":"string","description":"A few words on what it does, shown to the user instead of a long command."}},"required":["command"]}}}),
+        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."},"delay_s":{"type":"integer","description":"Start it as a job after this many seconds, up to 86400."},"notify":{"type":"boolean","description":"With background or delay_s: wake you when the job ends."},"description":{"type":"string","description":"A few words on what it does, shown to the user instead of a long command."},"show":{"type":"boolean","description":"Show the output to the user with its colours, for pictures, charts, and diagrams; you get the text, or only the size of a picture."}},"required":["command"]}}}),
         json!({"type":"function","function":{"name":"job","description":"List background jobs with progress, wait for one, kill one, or check back later: check wakes you after after_s seconds with the job's state, so you can report progress while the user is away.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["list","wait","kill","check"]},"id":{"type":"integer"},"timeout_s":{"type":"integer","description":"For wait; up to 55 seconds."},"after_s":{"type":"integer","description":"For check; 30 to 86400 seconds."}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"read","description":"Read files with line numbers, or list a directory. Add several paths in one call.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"},"depth":{"type":"integer","description":"Directory levels, 1 to 3. Default 1."}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
@@ -921,6 +949,12 @@ impl Session {
                         true,
                         format!("still running after {secs}s; now job {id}; log {log}; use job wait {id}"),
                     );
+                }
+                let show = args.get("show").and_then(Value::as_bool).unwrap_or(false);
+                if let (true, Some(full)) = (show, &o.full) {
+                    let full = crate::secrets::redact(full);
+                    hooks.ui(Ui::Show(first_lines(&full, SHOW_LINES)));
+                    return (o.ok, format!("exit {}\n{}", o.code.unwrap_or(-1), self.tools.cap(&for_model(&full))));
                 }
                 (o.ok, format!("exit {}\n{}", o.code.unwrap_or(-1), o.text))
             }
@@ -1903,6 +1937,36 @@ mod tests {
         assert!(note.contains("ended with exit 0") && note.contains("all 120 files copied"), "{note}");
         assert_eq!(note.matches("ended with exit").count(), 1, "the unnotified job woke too: {note}");
         assert!(s.history.iter().any(|m| m.role == crate::api::Role::System && m.content.contains("finished with exit 0")));
+    }
+
+    #[test]
+    fn shown_output_reaches_the_user_and_text_reaches_the_model() {
+        struct Shown(Vec<String>);
+        impl Hooks for Shown {
+            fn ui(&mut self, event: Ui) {
+                if let Ui::Show(t) = event {
+                    self.0.push(t);
+                }
+            }
+            fn confirm(&mut self, _: &str) -> bool {
+                false
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+        }
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Yolo);
+        let mut hooks = Shown(Vec::new());
+        let (ok, out) = s.run_tool("bash", &json!({"command": "printf '\\033[31mred\\033[0m chart\\n'", "show": true}), &mut hooks);
+        assert!(ok, "{out}");
+        assert_eq!(hooks.0, ["\u{1b}[31mred\u{1b}[0m chart\n"]);
+        assert_eq!(out, "exit 0\nred chart\n");
+        let (_, out) = s.run_tool("bash", &json!({"command": "printf '\\033[32m▀▀▀▀\\n▄▄▄▄\\033[0m\\n'", "show": true}), &mut hooks);
+        assert_eq!(out, "exit 0\n[shown to the user: a 4×2 picture]");
+        let (_, out) = s.run_tool("bash", &json!({"command": "printf '\\033[31mx\\033[0m'"}), &mut hooks);
+        assert_eq!(hooks.0.len(), 2, "output was shown without show");
+        assert!(out.contains("\u{1b}[31m"), "without show the model gets the output as before: {out:?}");
     }
 
     #[test]

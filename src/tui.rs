@@ -643,6 +643,8 @@ pub enum Ev {
     Token(String),
     /// A turn the session started on its own, with a one-line summary.
     Woke(String),
+    /// Output for the user, with its colours.
+    Show(String),
     /// A restored conversation, drawn in place of the transcript.
     Replay(Vec<(Role, String)>),
     Root(std::path::PathBuf),
@@ -721,6 +723,7 @@ impl Hooks for WorkerHooks {
             },
             Ui::Info(t) => Ev::Info(t),
             Ui::Error(t) => Ev::Error(t),
+            Ui::Show(t) => Ev::Show(t),
         };
         let _ = self.tx.send(ev);
     }
@@ -1834,6 +1837,10 @@ impl App {
 
     fn apply(&mut self, ev: Ev) {
         match ev {
+            Ev::Show(text) => {
+                self.push(Role::Tool, format!("{RAW}{text}"));
+                self.dirty = true;
+            }
             Ev::Woke(what) => {
                 self.push(Role::Info, format!("⏰ {what}"));
                 self.status.streaming = true;
@@ -2632,9 +2639,10 @@ impl App {
         let out = tools.bash(command, &cancel);
         let role = if out.ok { Role::Tool } else { Role::Error };
         self.push(role, format!("$ {command}"));
-        if !out.text.trim().is_empty() {
-            // Your own command's output keeps its colours.
-            self.push(role, format!("{RAW}{}", out.text));
+        // Your own command's output keeps its colours and is not capped.
+        let shown = out.full.map(|f| crate::secrets::redact(&f)).unwrap_or(out.text);
+        if !shown.trim().is_empty() {
+            self.push(role, format!("{RAW}{}", crate::agent::first_lines(&shown, crate::agent::SHOW_LINES)));
         }
     }
 

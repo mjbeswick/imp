@@ -648,12 +648,14 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
             let role = if done.ok { tui::Role::Tool } else { tui::Role::Error };
             println!("{}", cli.palette.paint(role, &format!("$ {command}")));
             // Your own command's output keeps its colours when colour is on.
+            let shown = done.full.as_deref().map(secrets::redact).unwrap_or_else(|| done.text.clone());
+            let shown = agent::first_lines(&shown, agent::SHOW_LINES);
             if cli.palette.on {
-                for line in render::keep_sgr(&done.text).lines() {
+                for line in render::keep_sgr(&shown).lines() {
                     println!("  {line}\u{1b}[0m");
                 }
             } else {
-                for line in render::clean(&done.text).lines() {
+                for line in render::clean(&shown).lines() {
                     println!("  {}", cli.palette.paint(role, line));
                 }
             }
@@ -807,6 +809,15 @@ fn print_ui_to<W: Write>(
             if verbose && !output.is_empty() {
                 for line in preview_lines(&render::clean(&output)).lines() {
                     writeln!(out, "  {}", palette.paint(tui::Role::Thinking, line))?;
+                }
+            }
+        }
+        Ui::Show(t) => {
+            for line in t.lines() {
+                if palette.on {
+                    writeln!(out, "  {}\u{1b}[0m", render::keep_sgr(line))?;
+                } else {
+                    writeln!(out, "  {}", render::clean(line))?;
                 }
             }
         }
