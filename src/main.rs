@@ -542,7 +542,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 }
                 "shell" => {
                     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-                    match std::process::Command::new(shell).status() {
+                    match std::process::Command::new(shell).current_dir(&session.tools.root).status() {
                         Ok(status) => {
                             println!("shell exited {}", status.code().unwrap_or(-1));
                         }

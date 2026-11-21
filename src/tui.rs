@@ -5016,7 +5016,9 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         tx: ev_tx.clone(),
                         waited: Duration::ZERO,
                     };
-                    let code = hooks.run_attached(&shell);
+                    // Start in the session directory, not where imp was launched.
+                    let dir = worker_session.tools.root.display().to_string().replace('\'', "'\\''");
+                    let code = hooks.run_attached(&format!("cd '{dir}' && exec {shell}"));
                     let message = match code {
                         Some(0) | None => "shell closed".to_string(),
                         Some(code) => format!("shell exited {code}"),
