@@ -10,7 +10,7 @@ Tools
 - edit: replace exact strings, several per call, all or nothing. Use it instead of sed.
 - write: create or replace a file. Read a file before overwriting it.
 - search: a web search returns summaries with URLs. Read a result with fetch.
-- fetch: GET one http or https URL from this machine, the local network included. JSON, feeds, and text come back as they are; HTML as its title and text. Long results are capped like command output, so never pipe into head. Use it instead of curl for every plain GET; keep bash curl for posts, authenticated calls, and streams, and never scrape a feed with curl piped into grep or sed.
+- fetch: GET an http or https URL from this machine, the local network included. HTML comes back as markdown, feeds as a list, JSON and text as they are. Results are capped, so never pipe into head. Use it instead of curl for every GET; curl is for posts, authenticated calls, and streams.
 - job: list, wait for, or kill a background job. Waiting is capped at 55 seconds.
 - memory: search stored notes before guessing; save a note only when asked.
 - skill_load: load a skill by name before using a tool you do not know well.
@@ -42,6 +42,12 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
         prompt.push('\n');
     }
 
+    prompt.push_str(&format!(
+        "\nToday is {}. For anything that changes, such as news, prices, weather, results, or releases, \
+         search, then fetch the best source, and say how current the answer is.\n",
+        today()
+    ));
+
     let (instructions, _loaded) = crate::store::load_instructions(root);
     prompt.push_str(&instructions);
 
@@ -67,9 +73,56 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
     prompt
 }
 
+/// Today's date in UTC, such as `Saturday 21 November 2026`.
+// ponytail: UTC, so up to a day off near midnight far from Greenwich; localtime_r if that matters.
+fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    date_of(secs / 86_400)
+}
+
+/// A day count since 1970-01-01 as a weekday and civil date.
+fn date_of(days: u64) -> String {
+    // Howard Hinnant's civil-from-days, for days since the epoch.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    const MONTHS: [&str; 12] = [
+        "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+        "November", "December",
+    ];
+    const DAYS: [&str; 7] = ["Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"];
+    format!("{} {day} {} {year}", DAYS[(days % 7) as usize], MONTHS[(month - 1) as usize])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_are_civil() {
+        assert_eq!(date_of(0), "Thursday 1 January 1970");
+        assert_eq!(date_of(20_413), "Friday 21 November 2025");
+        assert_eq!(date_of(11_016), "Tuesday 29 February 2000");
+        assert_eq!(date_of(20_778), "Saturday 21 November 2026");
+    }
+
+    #[test]
+    fn the_prompt_carries_today_and_the_fresh_data_rule() {
+        let d = std::env::temp_dir().join(format!("imp-prompt-date-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let text = compose(&d, &crate::config::Config::default());
+        assert!(text.contains(&format!("Today is {}.", today())), "{text}");
+        assert!(text.contains("search, then fetch the best source"));
+    }
 
     #[test]
     fn the_prompt_names_reload() {
