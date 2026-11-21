@@ -25,6 +25,9 @@ const CURLOPT_PROTOCOLS_STR: u32 = 10_318;
 const CURLOPT_REDIR_PROTOCOLS_STR: u32 = 10_319;
 
 const CURLOPT_NOPROGRESS: u32 = 43;
+const CURLOPT_CUSTOMREQUEST: u32 = 10_036;
+const CURLOPT_HEADERFUNCTION: u32 = 20_079;
+const CURLOPT_HEADERDATA: u32 = 10_029;
 const CURLOPT_XFERINFOFUNCTION: u32 = 20_219;
 const CURLOPT_XFERINFODATA: u32 = 10_057;
 const CURLOPT_LOW_SPEED_LIMIT: u32 = 19;
@@ -64,6 +67,13 @@ fn init() {
 pub struct Response {
     pub status: u16,
     pub content_type: String,
+    /// The response headers worth showing: where, when to retry, and limits.
+    pub headers: Vec<String>,
+}
+
+/// Response headers kept for the model, by lowercase name or prefix.
+fn kept_header(name: &str) -> bool {
+    matches!(name, "location" | "retry-after") || name.contains("ratelimit")
 }
 
 /// Headers are ordinary `Name: value` strings; `Content-Type` is added for you.
@@ -78,14 +88,14 @@ pub fn post_stream<F>(
 where
     F: FnMut(&[u8]),
 {
-    request_stream(url, headers, Some(body), 600_000, false, Some(cancel), on_chunk)
+    request_stream("POST", url, headers, Some(body), 600_000, false, Some(cancel), on_chunk)
 }
 
 /// One GET, collecting the body. Used for small JSON documents such as a
 /// provider's model list.
 pub fn get(url: &str, headers: &[&str], timeout_ms: u64) -> Result<(u16, String), String> {
     let mut body = Vec::new();
-    let response = request_stream(url, headers, None, timeout_ms, false, None, |chunk| {
+    let response = request_stream("GET", url, headers, None, timeout_ms, false, None, |chunk| {
         body.extend_from_slice(chunk);
     })?;
     Ok((response.status, String::from_utf8_lossy(&body).into_owned()))
@@ -94,20 +104,34 @@ pub fn get(url: &str, headers: &[&str], timeout_ms: u64) -> Result<(u16, String)
 /// One GET for the `fetch` tool: redirects followed over http and https,
 /// the body kept up to `cap` bytes. Returns status, content type, and body.
 pub fn fetch(url: &str, timeout_ms: u64, cap: usize) -> Result<(u16, String, String), String> {
-    let mut body = Vec::new();
-    let response = request_stream(url, &[], None, timeout_ms, true, None, |chunk| {
-        if body.len() < cap {
-            body.extend_from_slice(chunk);
-        }
-    })?;
-    Ok((
-        response.status,
-        response.content_type,
-        String::from_utf8_lossy(&body).into_owned(),
-    ))
+    let (r, body) = call("GET", url, &[], None, true, timeout_ms, cap)?;
+    Ok((r.status, r.content_type, body))
 }
 
+/// One request with any method, headers, and body, the reply kept up to
+/// `cap` bytes. Redirects are followed, over http and https, only when
+/// `follow` is set.
+pub fn call(
+    method: &str,
+    url: &str,
+    headers: &[&str],
+    body: Option<&[u8]>,
+    follow: bool,
+    timeout_ms: u64,
+    cap: usize,
+) -> Result<(Response, String), String> {
+    let mut reply = Vec::new();
+    let response = request_stream(method, url, headers, body, timeout_ms, follow, None, |chunk| {
+        if reply.len() < cap {
+            reply.extend_from_slice(chunk);
+        }
+    })?;
+    Ok((response, String::from_utf8_lossy(&reply).into_owned()))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn request_stream<F>(
+    method: &str,
     url: &str,
     headers: &[&str],
     body: Option<&[u8]>,
@@ -155,6 +179,14 @@ where
             setopt_ptr(handle, CURLOPT_POSTFIELDS, body.as_ptr() as *const c_void);
             setopt_long(handle, CURLOPT_POSTFIELDSIZE, body.len() as c_long);
         }
+        // GET and POST are curl's own; any other verb is named outright.
+        let verb = CString::new(method).map_err(|_| "method contains a nul byte")?;
+        if !matches!(method, "GET" | "POST") {
+            setopt_str(handle, CURLOPT_CUSTOMREQUEST, verb.as_ptr());
+        }
+        let mut kept: Vec<String> = Vec::new();
+        setopt_ptr(handle, CURLOPT_HEADERFUNCTION, header_cb as *const c_void);
+        setopt_ptr(handle, CURLOPT_HEADERDATA, &mut kept as *mut Vec<String> as *const c_void);
         setopt_long(handle, CURLOPT_TIMEOUT_MS, timeout_ms as c_long);
         setopt_long(handle, CURLOPT_CONNECTTIMEOUT_MS, 15_000);
         setopt_long(handle, CURLOPT_NOSIGNAL, 1);
@@ -211,6 +243,7 @@ where
         Ok(Response {
             status: status as u16,
             content_type,
+            headers: kept,
         })
     }
 }
@@ -234,6 +267,27 @@ fn read_errbuf(buf: &[c_char; 256]) -> String {
         .map(|c| *c as u8)
         .collect();
     String::from_utf8_lossy(&bytes).trim().to_string()
+}
+
+/// Keeps the response headers `kept_header` names; a redirect resets them.
+extern "C" fn header_cb(data: *mut c_char, size: usize, nmemb: usize, kept: *mut c_void) -> usize {
+    let len = size.saturating_mul(nmemb);
+    if data.is_null() || kept.is_null() {
+        return len;
+    }
+    let (line, kept) = unsafe {
+        (std::slice::from_raw_parts(data as *const u8, len), &mut *(kept as *mut Vec<String>))
+    };
+    let line = String::from_utf8_lossy(line);
+    let line = line.trim_end();
+    if line.starts_with("HTTP/") {
+        kept.clear();
+    } else if let Some((name, value)) = line.split_once(':') {
+        if kept_header(&name.trim().to_ascii_lowercase()) {
+            kept.push(format!("{}: {}", name.trim(), value.trim()));
+        }
+    }
+    len
 }
 
 /// Non-zero aborts the transfer.
@@ -261,6 +315,57 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serve one canned reply and hand back what the client sent.
+    fn echo_once(reply: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/items", server.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut conn, _) = server.accept().unwrap();
+            conn.set_read_timeout(Some(std::time::Duration::from_millis(500))).unwrap();
+            let mut got = Vec::new();
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = conn.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                got.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&got);
+                if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                    let want = head
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+                        .unwrap_or(0);
+                    if body.len() >= want {
+                        break;
+                    }
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&got).into_owned());
+            let _ = conn.write_all(reply.as_bytes());
+        });
+        (url, rx)
+    }
+
+    #[test]
+    fn any_method_with_a_body_and_kept_headers() {
+        let (url, sent) = echo_once(
+            "HTTP/1.1 201 Created\r\nLocation: /items/7\r\nX-RateLimit-Remaining: 59\r\nServer: x\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"id\":7}",
+        );
+        let (r, body) = call("POST", &url, &["Content-Type: application/json"], Some(b"{\"t\":1}"), false, 5_000, 1 << 20).unwrap();
+        let req = sent.recv().unwrap();
+        assert!(req.starts_with("POST /items "), "{req}");
+        assert!(req.ends_with("{\"t\":1}"), "{req}");
+        assert_eq!((r.status, body.as_str()), (201, "{\"id\":7}"));
+        assert_eq!(r.headers, ["Location: /items/7", "X-RateLimit-Remaining: 59"]);
+
+        let (url, sent) = echo_once("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+        let (r, _) = call("DELETE", &url, &[], None, false, 5_000, 1 << 20).unwrap();
+        assert!(sent.recv().unwrap().starts_with("DELETE /items "));
+        assert_eq!(r.status, 204);
+    }
 
     #[test]
     fn cancel_aborts_a_stalled_request() {
