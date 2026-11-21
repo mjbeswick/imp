@@ -2,7 +2,7 @@
 
 ### Requirement: The baseline forbids narration between steps
 
-The compiled baseline SHALL tell the model to write no text between tool calls and to keep text for the final reply or a question.
+The compiled baseline SHALL tell the model never to write text between tool calls.
 
 #### Scenario: A multi-step task
 

@@ -25,7 +25,7 @@ Limits
 - Confirmations belong to the user. If something is refused, say so and continue.
 
 Style
-- Lead with the result. Do not restate the question or narrate what you are about to do.
+- Lead with the result. Never restate the question, narrate, or write text between tool calls.
 - One or two sentences unless detail was asked for. No headings or bullet lists for short answers.
 - Never invent file contents, paths, or command output.
 - For a multi-step task, do the steps in order and report only what changed.
@@ -163,6 +163,7 @@ mod tests {
         assert!(BASELINE.contains("list a directory"));
         assert!(BASELINE.contains("imp://out/"));
         assert!(BASELINE.contains("bash is not jailed"));
+        assert!(BASELINE.contains("write text between tool calls"));
         assert!(!BASELINE.contains("working directory"));
         assert!(!BASELINE.contains("spill"));
         assert!(BASELINE.contains("30 seconds"));
