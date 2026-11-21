@@ -529,7 +529,10 @@ impl Tools {
 
     /// Run a command, terminating it at the timeout.
     pub fn bash(&mut self, command: &str, cancel: &AtomicBool) -> Outcome {
-        self.shell(command, cancel, false)
+        // Typed commands keep the environment, but their output is redacted.
+        let mut o = self.shell(command, cancel, false);
+        o.text = crate::secrets::redact(&o.text);
+        o
     }
 
     /// Run a command; at the timeout leave it running in `self.handover`.
@@ -1281,6 +1284,18 @@ mod tests {
         assert!(o.ok);
         assert!(o.text.contains("== src =="), "{}", o.text);
         assert!(o.text.contains("1: root"), "{}", o.text);
+    }
+
+    #[test]
+    fn the_agent_runs_without_secrets_and_typed_output_is_redacted() {
+        use crate::secrets::{TEST_NAME, TEST_VALUE};
+        std::env::set_var(TEST_NAME, TEST_VALUE);
+        let (mut t, _d) = tools();
+        let probe = format!("printf '[%s]' \"${TEST_NAME}\"");
+        let agent = t.bash_handover(&probe, &AtomicBool::new(false));
+        assert_eq!(agent.text.trim(), "[]", "the agent saw the secret");
+        let typed = t.bash(&probe, &AtomicBool::new(false));
+        assert_eq!(typed.text.trim(), format!("[[redacted {TEST_NAME}]]"));
     }
 
     #[test]

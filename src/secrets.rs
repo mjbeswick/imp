@@ -26,10 +26,23 @@ pub fn is_secret(name: &str) -> bool {
         || n == "TOKEN"
 }
 
+#[cfg(test)]
+pub const TEST_NAME: &str = "IMP_FAKE_TOKEN";
+#[cfg(test)]
+pub const TEST_VALUE: &str = "fake-secret-value-42";
+
 /// Secret variables set in this process, with their values.
 fn present() -> &'static [(String, String)] {
     static SET: OnceLock<Vec<(String, String)>> = OnceLock::new();
-    SET.get_or_init(|| std::env::vars().filter(|(k, v)| is_secret(k) && !v.is_empty()).collect())
+    SET.get_or_init(|| {
+        #[allow(unused_mut)]
+        let mut found: Vec<(String, String)> =
+            std::env::vars().filter(|(k, v)| is_secret(k) && !v.is_empty()).collect();
+        // Tests get one known secret, whatever the environment holds.
+        #[cfg(test)]
+        found.push((TEST_NAME.into(), TEST_VALUE.into()));
+        found
+    })
 }
 
 /// Drop every secret the user did not pass through from a child's environment.

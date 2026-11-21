@@ -722,6 +722,8 @@ impl Session {
 
         let start = std::time::Instant::now();
         let (ok, out) = self.run_tool(&call.name, &args, hooks);
+        // No secret value reaches the conversation, the log, or the screen.
+        let out = crate::secrets::redact(&out);
         let spent = start.elapsed().saturating_sub(hooks.last_wait());
         let detail = if ok { diff_detail(&call.name, &args) } else { String::new() };
         hooks.ui(Ui::ToolEnd {
@@ -756,8 +758,15 @@ impl Session {
                 }
                 let mode = self.cfg.live_permissions();
                 let decision = perm::classify_command(cmd, mode, self.cfg.allow_sudo);
+                // Naming a stripped secret shows intent, even though it expands
+                // to nothing now.
+                let named = crate::secrets::mentioned(cmd);
+                let decision = match decision {
+                    Decision::Allow if named.is_some() && mode != Permissions::Yolo => Decision::Ask,
+                    other => other,
+                };
                 // A plain curl GET shares the per-host fetch approval.
-                let get = perm::plain_get(cmd).filter(|_| !matches!(decision, Decision::Deny(_)));
+                let get = perm::plain_get(cmd).filter(|_| !matches!(decision, Decision::Deny(_)) && named.is_none());
                 if let Some(host) = get {
                     if perm::classify_fetch(mode, self.fetch_hosts.contains(&host)) == Decision::Ask {
                         if !hooks.confirm(&format!("fetch from {host} for this session")) {
@@ -1589,6 +1598,26 @@ mod tests {
             .content
             .clone();
         assert!(tool.contains("cancelled"), "{tool}");
+    }
+
+    #[test]
+    fn secrets_are_redacted_and_naming_one_asks() {
+        use crate::secrets::{TEST_NAME, TEST_VALUE};
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(tool_reply("c1", "bash", &format!("{{\"command\":\"echo ${TEST_NAME}\"}}"))),
+            Script::Ok(tool_reply("c2", "bash", &format!("{{\"command\":\"printf {TEST_VALUE}\"}}"))),
+            Script::Ok(text_reply("done")),
+        ]);
+        s.turn("go", &mut Null).unwrap();
+        let tools: Vec<&str> = s
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::Tool)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(tools[0].contains("declined"), "naming a secret ran unasked: {}", tools[0]);
+        assert!(tools[1].contains(&format!("[redacted {TEST_NAME}]")), "{}", tools[1]);
+        assert!(!s.history.iter().any(|m| m.content.contains(TEST_VALUE)), "the value reached history");
     }
 
     #[test]
