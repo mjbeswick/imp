@@ -42,11 +42,11 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
         prompt.push('\n');
     }
 
-    prompt.push_str(&format!(
-        "\nToday is {}. For anything that changes, such as news, prices, weather, results, or releases, \
-         search, then fetch the best source, and say how current the answer is.\n",
-        today()
-    ));
+    // The date itself arrives as a system note before each day's first request.
+    prompt.push_str(
+        "\nA system note gives today's date. For anything that changes, such as news, prices, weather, \
+         results, or releases, search, then fetch the best source, and say how current the answer is.\n",
+    );
 
     let (instructions, _loaded) = crate::store::load_instructions(root);
     prompt.push_str(&instructions);
@@ -73,18 +73,19 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
     prompt
 }
 
-/// Today's date in UTC, such as `Saturday 21 November 2026`.
+/// Today as days since 1970-01-01, in UTC.
 // ponytail: UTC, so up to a day off near midnight far from Greenwich; localtime_r if that matters.
-fn today() -> String {
-    let secs = std::time::SystemTime::now()
+pub fn day_number() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .unwrap_or(0);
-    date_of(secs / 86_400)
+        .unwrap_or(0)
+        / 86_400
 }
 
-/// A day count since 1970-01-01 as a weekday and civil date.
-fn date_of(days: u64) -> String {
+/// A day count since 1970-01-01 as a weekday and civil date, such as
+/// `Saturday 21 November 2026`.
+pub fn date_of(days: u64) -> String {
     // Howard Hinnant's civil-from-days, for days since the epoch.
     let z = days as i64 + 719_468;
     let era = z.div_euclid(146_097);
@@ -120,7 +121,7 @@ mod tests {
         let d = std::env::temp_dir().join(format!("imp-prompt-date-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&d);
         let text = compose(&d, &crate::config::Config::default());
-        assert!(text.contains(&format!("Today is {}.", today())), "{text}");
+        assert!(text.contains("A system note gives today's date."), "{text}");
         assert!(text.contains("search, then fetch the best source"));
     }
 

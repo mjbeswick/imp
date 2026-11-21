@@ -111,20 +111,29 @@ fn mask(cmd: &str) -> Option<String> {
 /// substitution outside quotes, and every pipe part is a safe program without
 /// a flag that writes or runs something.
 fn safe_shell(cmd: &str) -> bool {
-    let Some(cmd) = mask(cmd) else { return false };
-    if ["&", ";", ">", "<", "`", "$(", "\n"].iter().any(|c| cmd.contains(c)) {
+    let Some(masked) = mask(cmd) else { return false };
+    if ["&", ";", ">", "<", "`", "$(", "\n"].iter().any(|c| masked.contains(c)) {
         return false;
     }
-    cmd.split('|').all(|part| {
-        let words: Vec<&str> = part.split_whitespace().collect();
+    // Pipes come from the masked text; words from the original at the same
+    // offsets with quotes removed, as the program will see them, so `'-o'`
+    // and `-de''lete` are still flags.
+    let mut cuts: Vec<usize> = masked.match_indices('|').map(|(i, _)| i).collect();
+    cuts.push(cmd.len());
+    let mut from = 0;
+    cuts.into_iter().all(|to| {
+        let part = &cmd[from..to];
+        from = to + 1;
+        let owned: Vec<String> = part.split_whitespace().map(|w| w.replace(['\'', '"'], "")).collect();
+        let words: Vec<&str> = owned.iter().map(String::as_str).collect();
         let Some((&first, args)) = words.split_first() else { return false };
         let flag = |names: &[&str]| args.iter().any(|a| names.iter().any(|n| a == n || a.starts_with(&format!("{n}="))));
         // A short-flag cluster such as `-uo` holding `c`.
         let short = |c: char| args.iter().any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains(c));
         match first {
             "git" => match args.first().copied() {
-                Some("status" | "log" | "show") => true,
-                Some("diff") => !flag(&["--output"]),
+                Some("status") => true,
+                Some("diff" | "log" | "show") => !flag(&["--output"]),
                 Some("branch") => args[1..].iter().all(|a| {
                     matches!(*a, "-a" | "-r" | "-v" | "-vv" | "--all" | "--remotes" | "--list" | "--show-current")
                 }),
@@ -132,7 +141,7 @@ fn safe_shell(cmd: &str) -> bool {
             },
             "find" => !flag(&["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]),
             "fd" => !flag(&["--exec", "--exec-batch"]) && !short('x') && !short('X'),
-            "sort" => !flag(&["--output"]) && !short('o'),
+            "sort" => !flag(&["--output", "--compress-program"]) && !short('o'),
             "rg" => !flag(&["--pre"]),
             "tree" => !short('o'),
             "uniq" => args.iter().filter(|a| !a.starts_with('-')).count() < 2,
@@ -352,6 +361,15 @@ mod tests {
             "git diff --output=f",
             "git branch -D main",
             "git branch new",
+            "find . '-delete'",
+            "find . -de''lete",
+            "find . \"-exec\" rm {} +",
+            "sort '-o' f f",
+            "sort --compress-program=sh f",
+            "fd '-x' rm",
+            "rg '--pre' sh x",
+            "git log --output=f",
+            "git show --output=f",
             "git push",
             "awk '{print}' f",
             "grep x f |",

@@ -134,6 +134,8 @@ pub struct Session {
     pub cancel: std::sync::Arc<AtomicBool>,
     pub cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
     last_cols: Option<u16>,
+    /// The day the model was last told the date, as days since the epoch.
+    last_day: Option<u64>,
     pub agent: Agent,
     pub roster: Vec<Agent>,
     pub jobs: Jobs,
@@ -183,6 +185,7 @@ impl Session {
             cancel: std::sync::Arc::new(AtomicBool::new(false)),
             cols,
             last_cols: None,
+            last_day: None,
             agent,
             roster,
             jobs: Jobs::default(),
@@ -618,6 +621,7 @@ impl Session {
     pub fn turn(&mut self, user: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
         self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
         self.note_width();
+        self.note_date(crate::prompt::day_number());
         let mut message = Message::user(user);
         message.images = std::mem::take(&mut self.attachments);
         self.say(message);
@@ -695,6 +699,17 @@ impl Session {
     pub fn set_permissions(&mut self, mode: Permissions) {
         self.cfg.set_permissions(mode);
         self.tools.jail = crate::perm::jail_enabled(mode);
+    }
+
+    /// Tell the model the date before its first request and again when the
+    /// day changes, so a session left open past midnight, or opened days
+    /// after imp started, never works from a stale date.
+    fn note_date(&mut self, day: u64) {
+        if self.last_day == Some(day) {
+            return;
+        }
+        self.last_day = Some(day);
+        self.say(Message::system(format!("Today is {}.", crate::prompt::date_of(day))));
     }
 
     /// Tell the model how wide the screen is, once per change.
@@ -1756,6 +1771,19 @@ mod tests {
         assert!(tools[0].contains("declined"), "naming a secret ran unasked: {}", tools[0]);
         assert!(tools[1].contains(&format!("[redacted {TEST_NAME}]")), "{}", tools[1]);
         assert!(!s.history.iter().any(|m| m.content.contains(TEST_VALUE)), "the value reached history");
+    }
+
+    #[test]
+    fn the_date_is_noted_once_a_day() {
+        let (mut s, _fake) = scripted(vec![]);
+        let notes = |s: &Session| s.history.iter().filter(|m| m.content.starts_with("Today is ")).count();
+        s.note_date(20_778);
+        s.note_date(20_778);
+        assert_eq!(notes(&s), 1, "the same day was noted twice");
+        assert!(s.history.iter().any(|m| m.content == "Today is Saturday 21 November 2026."));
+        s.note_date(20_779);
+        assert_eq!(notes(&s), 2, "a new day was not noted");
+        assert!(s.history.iter().any(|m| m.content == "Today is Sunday 22 November 2026."));
     }
 
     #[test]
