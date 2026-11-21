@@ -724,7 +724,8 @@ impl Session {
         let detail = if ok { diff_detail(&call.name, &args) } else { String::new() };
         hooks.ui(Ui::ToolEnd {
             ok,
-            preview: summarise(&out),
+            // A success shows what came back; a failure shows why.
+            preview: if ok { gist(&call.name, &out) } else { summarise(&out) },
             output: out.clone(),
             detail,
             ms: spent.as_millis(),
@@ -1174,6 +1175,52 @@ pub fn summarise(text: &str) -> String {
     s
 }
 
+/// A URL as host and path: the query is noise in a step row.
+fn short_url(url: &str) -> String {
+    let url = flatten(url);
+    let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
+    let path = rest.split(['?', '#']).next().unwrap_or(rest);
+    let path = path.trim_end_matches('/');
+    let mut out: String = path.chars().take(60).collect();
+    if path.chars().count() > 60 || rest.len() > path.len() + 1 {
+        out.push('…');
+    }
+    out
+}
+
+/// What a successful step brought back, in a few words.
+pub fn gist(name: &str, out: &str) -> String {
+    let size = |n: usize| {
+        if n >= 1024 {
+            format!("{} KB", n.div_ceil(1024))
+        } else {
+            format!("{n} B")
+        }
+    };
+    let first = out.lines().next().unwrap_or("").trim();
+    match name {
+        "fetch" => {
+            // `200 text/html` then the body.
+            let (status, kind) = first.split_once(' ').unwrap_or((first, ""));
+            let kind = kind.rsplit('/').next().unwrap_or(kind);
+            let body = out.len().saturating_sub(first.len() + 1);
+            let items = out.lines().filter(|l| l.starts_with("- ")).count();
+            let what = if (kind.contains("xml") || kind.contains("rss") || kind.contains("atom")) && items > 0 {
+                format!("{items} items")
+            } else {
+                size(body)
+            };
+            format!("{status} {kind} · {what}")
+        }
+        "search" => {
+            let n = out.split("\n\n").filter(|b| b.contains("://")).count();
+            if n == 0 { "no results".into() } else { format!("{n} results") }
+        }
+        "read" => format!("{} lines", out.lines().count()),
+        _ => summarise(first).chars().take(60).collect(),
+    }
+}
+
 /// The whole text on one line. The renderer wraps it.
 fn flatten(text: &str) -> String {
     text.replace('\n', " ").trim().to_string()
@@ -1212,7 +1259,7 @@ pub fn describe(name: &str, args: &Value) -> String {
             flatten(text("path")),
             lines("content")
         ),
-        "fetch" => format!("fetch {}", flatten(text("url"))),
+        "fetch" => format!("fetch {}", short_url(text("url"))),
         "search" => format!("search {:?}", flatten(text("query"))),
         "memory" => {
             let what = if text("title").is_empty() {
@@ -1232,6 +1279,18 @@ pub fn describe(name: &str, args: &Value) -> String {
 mod tests {
     use super::*;
     use crate::store::{Agent, Log};
+
+    #[test]
+    fn steps_summarise_what_came_back() {
+        assert_eq!(gist("fetch", &format!("200 application/json\n{}", "x".repeat(3000))), "200 json · 3 KB");
+        assert_eq!(gist("fetch", "200 text/xml\n# BBC\n\n- a · l\n- b · l"), "200 xml · 2 items");
+        assert_eq!(gist("fetch", "200 text/html\n# Hi"), "200 html · 4 B");
+        assert_eq!(gist("search", "T\nhttps://a\ns\n\nU\nhttps://b\nt\n\n"), "2 results");
+        assert_eq!(gist("bash", "exit 0\nhello"), "exit 0");
+        assert_eq!(short_url("https://api.open-meteo.com/v1/forecast?latitude=51.3&x=1"), "api.open-meteo.com/v1/forecast…");
+        assert_eq!(short_url("https://wttr.in/Woking"), "wttr.in/Woking");
+        assert_eq!(describe("fetch", &serde_json::json!({"url": "https://wttr.in/"})), "fetch wttr.in");
+    }
 
     fn tmp() -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -1457,7 +1516,7 @@ mod tests {
                 json!({"path": "a.rs", "edits": [{"old": "a", "new": "b"}]}),
                 "edit a.rs (1 changes)",
             ),
-            ("fetch", json!({"url": "https://x/y.md"}), "fetch https://x/y.md"),
+            ("fetch", json!({"url": "https://x/y.md"}), "fetch x/y.md"),
             ("search", json!({"op": "search", "query": "woking"}), "search \"woking\""),
             ("skill_load", json!({"name": "config"}), "load skill config"),
             ("ask", json!({"question": "where?"}), "ask \"where?\""),

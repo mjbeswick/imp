@@ -188,7 +188,7 @@ fn run() -> Result<(), String> {
     let (result, id) = match prompt {
         Some(text) => {
             let mut session = session;
-            let result = session.turn(&text, &mut Cli { verbose: false, palette: tui::Palette::detect(&tui_cfg) });
+            let result = session.turn(&text, &mut Cli { verbosity: tui_cfg.verbosity, palette: tui::Palette::detect(&tui_cfg) });
             let id = session.log.as_ref().map(|l| l.id.clone());
             (result, id)
         }
@@ -218,7 +218,7 @@ fn run() -> Result<(), String> {
                 }
             } else {
                 let mut session = session;
-                let mut cli = Cli { verbose: false, palette: tui::Palette::detect(&tui_cfg) };
+                let mut cli = Cli { verbosity: tui_cfg.verbosity, palette: tui::Palette::detect(&tui_cfg) };
                 let result = repl(&mut session, &mut cli, &sessions_dir);
                 let id = session.log.as_ref().map(|l| l.id.clone());
                 (result, id)
@@ -515,22 +515,17 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         "" => print!(
                             "{}",
                             value_rows(
-                                &[
-                                    ("low".into(), "one summary line".into()),
-                                    ("high".into(), "arguments and output".into()),
-                                ],
-                                if cli.verbose { "high" } else { "low" },
+                                &config::Verbosity::ALL.map(|(l, about)| (l.as_str().to_string(), about.to_string())),
+                                cli.verbosity.as_str(),
                             )
                         ),
-                        "high" => {
-                            cli.verbose = true;
-                            println!("verbosity: high");
-                        }
-                        "low" => {
-                            cli.verbose = false;
-                            println!("verbosity: low");
-                        }
-                        level => println!("unknown verbosity {level:?}; use low or high"),
+                        level => match config::Verbosity::parse(level) {
+                            Ok(v) => {
+                                cli.verbosity = v;
+                                println!("verbosity: {}", v.as_str());
+                            }
+                            Err(e) => println!("{e}"),
+                        },
                     }
                 }
                 "shell" => {
@@ -682,13 +677,13 @@ fn value_rows(rows: &[(String, String)], current: &str) -> String {
 }
 
 struct Cli {
-    verbose: bool,
+    verbosity: config::Verbosity,
     palette: tui::Palette,
 }
 
 impl Hooks for Cli {
     fn ui(&mut self, event: Ui) {
-        print_ui(event, self.verbose, &self.palette)
+        print_ui(event, self.verbosity, &self.palette)
     }
 
     fn confirm(&mut self, what: &str) -> bool {
@@ -726,9 +721,9 @@ impl Hooks for Cli {
     }
 }
 
-fn print_ui(event: Ui, verbose: bool, palette: &tui::Palette) {
+fn print_ui(event: Ui, verbosity: config::Verbosity, palette: &tui::Palette) {
     let mut out = std::io::stdout();
-    print_ui_to(&mut out, event, verbose, palette).ok();
+    print_ui_to(&mut out, event, verbosity, palette).ok();
 }
 
 fn preview_lines(text: &str) -> String {
@@ -759,9 +754,10 @@ fn preview_lines(text: &str) -> String {
 fn print_ui_to<W: Write>(
     out: &mut W,
     event: Ui,
-    verbose: bool,
+    verbosity: config::Verbosity,
     palette: &tui::Palette,
 ) -> std::io::Result<()> {
+    let verbose = verbosity == config::Verbosity::High;
     match event {
         Ui::Content(t) => {
             // Model text never drives the terminal, piped or not.
@@ -787,7 +783,11 @@ fn print_ui_to<W: Write>(
             let time = tui::duration(ms);
             let preview = preview_lines(&render::clean(&preview));
             if ok {
-                let line = format!("✓ {} · {time}", preview.trim_end());
+                // Low names the step only; medium and high say what came back.
+                let line = match verbosity {
+                    config::Verbosity::Low => format!("✓ {time}"),
+                    _ => format!("✓ {} · {time}", preview.trim_end()),
+                };
                 writeln!(out, "  {}", palette.paint(role, &line))?;
             } else {
                 // The failure reason starts on its own indented line.
@@ -941,7 +941,7 @@ mod tests {
                 summary: "run `ls`".into(),
                 args: "{\"command\":\"ls\"}".into(),
             },
-            true,
+            config::Verbosity::High,
             &palette,
         )
         .unwrap();
@@ -954,7 +954,7 @@ mod tests {
                 detail: String::new(),
                 ms: 4,
             },
-            true,
+            config::Verbosity::High,
             &palette,
         )
         .unwrap();
@@ -970,7 +970,7 @@ mod tests {
                 summary: "run `ls`".into(),
                 args: "{\"command\":\"ls\"}".into(),
             },
-            false,
+            config::Verbosity::Low,
             &palette,
         )
         .unwrap();
@@ -991,7 +991,7 @@ mod tests {
                 detail: String::new(),
                 ms: 1400,
             },
-            false,
+            config::Verbosity::Low,
             &palette,
         )
         .unwrap();

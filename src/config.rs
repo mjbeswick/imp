@@ -148,6 +148,8 @@ pub struct Config {
     pub auto_next: bool,
     /// Secret-looking variables the agent's commands may still see.
     pub pass_env: Vec<String>,
+    /// How much of each tool step the interface shows.
+    pub verbosity: Verbosity,
     pub links: Links,
     pub skills_dir: Option<PathBuf>,
 }
@@ -177,6 +179,7 @@ impl Default for Config {
             mouse: true,
             auto_next: true,
             pass_env: Vec::new(),
+            verbosity: Verbosity::Medium,
             links: Links::Auto,
             skills_dir: None,
         }
@@ -236,6 +239,7 @@ impl Config {
             "permissions" => self.set_permissions(Permissions::parse(value)?),
             "allow_sudo" => self.allow_sudo = parse_bool(value)?,
             "allow" => self.allows(value),
+            "verbosity" => self.verbosity = Verbosity::parse(value)?,
             "pass_env" => self.pass_env.extend(value.split(',').map(str::trim).filter(|n| !n.is_empty()).map(String::from)),
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
@@ -599,6 +603,42 @@ pub fn parse_max_steps(s: &str) -> Result<usize, String> {
         return Err("max_steps must be at least 1".into());
     }
     Ok((n as usize).min(1000))
+}
+
+/// How much of each tool step the interface shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verbosity {
+    /// One line per step.
+    Low,
+    /// The line and a short result.
+    Medium,
+    /// The arguments and capped output as well.
+    High,
+}
+
+impl Verbosity {
+    pub const ALL: [(Verbosity, &'static str); 3] = [
+        (Verbosity::Low, "one line per step"),
+        (Verbosity::Medium, "each step and its result"),
+        (Verbosity::High, "arguments and output"),
+    ];
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            other => Err(format!("unknown verbosity {other:?}; use low, medium, or high")),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
 }
 
 #[cfg(test)]

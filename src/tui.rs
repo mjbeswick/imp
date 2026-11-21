@@ -5,7 +5,7 @@
 //! the user answers.
 
 use crate::agent::{Answer, Hooks, Session, Ui};
-use crate::config::{ColorMode, Config};
+use crate::config::{ColorMode, Config, Verbosity};
 use std::ffi::{c_int, c_ulong};
 use std::io::{Read, Write};
 use std::hash::{Hash, Hasher};
@@ -919,10 +919,15 @@ fn preview_detail(text: &str) -> Vec<String> {
     lines
 }
 
-fn tool_row_text(row: &ToolRow, verbose: bool) -> String {
+fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
     let mark = if row.ok { "✓" } else { "✗" };
-    let mut text = format!("{mark} {}{TIME}{}", row.summary, duration(row.ms));
-    if row.expanded || verbose {
+    // At medium a success says what came back, on the same line.
+    let result = match level {
+        Verbosity::Medium if row.ok && !row.preview.is_empty() && !row.expanded => format!(" → {}", row.preview),
+        _ => String::new(),
+    };
+    let mut text = format!("{mark} {}{result}{TIME}{}", row.summary, duration(row.ms));
+    if row.expanded || level == Verbosity::High {
         text.push_str("\n  args: ");
         text.push_str(&row.args);
         if !row.output.is_empty() {
@@ -966,7 +971,7 @@ pub struct App {
     stash: Vec<String>,
     bell_pending: bool,
     status: Status,
-    verbose: bool,
+    verbosity: Verbosity,
     root: std::path::PathBuf,
     agent: String,
     /// Agent profiles as name and description.
@@ -1478,6 +1483,7 @@ impl App {
     ) -> Self {
         let palette = Palette::detect(&cfg);
         let provider = cfg.provider;
+        let verbosity = cfg.verbosity;
         let history = load_history();
         let agents = crate::store::load_agents(&cfg, &root)
             .into_iter()
@@ -1515,7 +1521,7 @@ impl App {
                 served: String::new(),
                 streaming: false,
             },
-            verbose: false,
+            verbosity,
             root,
             agent,
             agents,
@@ -1892,7 +1898,7 @@ impl App {
                                 self.push(role, line);
                             }
                         }
-                        let text = tool_row_text(&row, self.verbose);
+                        let text = tool_row_text(&row, self.verbosity);
                         if let Some(entry) = self.entries.get_mut(row.index) {
                             entry.role = role;
                             entry.text = text;
@@ -2246,7 +2252,7 @@ impl App {
             return;
         };
         row.expanded = !row.expanded;
-        let text = tool_row_text(&row, self.verbose);
+        let text = tool_row_text(&row, self.verbosity);
         if let Some(entry) = self.entries.get_mut(row.index) {
             entry.text = text;
         }
@@ -2353,20 +2359,15 @@ impl App {
     }
 
     fn verbosity_items(&self) -> Vec<PickItem> {
-        vec![
-            PickItem {
-                label: "low".into(),
-                value: "low".into(),
-                desc: "one summary line".into(),
+        Verbosity::ALL
+            .iter()
+            .map(|(level, about)| PickItem {
+                label: level.as_str().into(),
+                value: level.as_str().into(),
+                desc: mark_current(*level == self.verbosity, about),
                 actions: Vec::new(),
-            },
-            PickItem {
-                label: "high".into(),
-                value: "high".into(),
-                desc: "arguments and output".into(),
-                actions: Vec::new(),
-            },
-        ]
+            })
+            .collect()
     }
 
     fn provider_items(&self) -> Vec<PickItem> {
@@ -2453,7 +2454,7 @@ impl App {
             PickKind::Agent => self.agent.clone(),
             PickKind::Model => self.cfg.model.clone(),
             PickKind::Theme => self.palette.theme_name().to_string(),
-            PickKind::Verbosity => if self.verbose { "high" } else { "low" }.into(),
+            PickKind::Verbosity => self.verbosity.as_str().into(),
             PickKind::Provider => self.cfg.active_name.clone(),
             PickKind::Mode => self.cfg.live_permissions().as_str().into(),
             _ => String::new(),
@@ -3039,22 +3040,17 @@ impl App {
                             self.verbosity_items(),
                             PickKind::Verbosity,
                         );
-                        picker.index = if self.verbose { 1 } else { 0 };
+                        picker.index = Verbosity::ALL.iter().position(|(l, _)| *l == self.verbosity).unwrap_or(1);
                         self.pending = Some(Pending::Pick(picker));
                         self.dirty = true;
                     }
-                    "high" => {
-                        self.verbose = true;
-                        self.push(Role::Info, "verbosity: high");
-                    }
-                    "low" => {
-                        self.verbose = false;
-                        self.push(Role::Info, "verbosity: low");
-                    }
-                    _ => self.push(
-                        Role::Error,
-                        format!("unknown verbosity {level:?}; use low or high"),
-                    ),
+                    level => match Verbosity::parse(level) {
+                        Ok(v) => {
+                            self.verbosity = v;
+                            self.push(Role::Info, format!("verbosity: {}", v.as_str()));
+                        }
+                        Err(e) => self.push(Role::Error, e),
+                    },
                 }
             }
             "shell" => {
@@ -3390,7 +3386,7 @@ impl App {
                             PickKind::Mode => self.set_mode(&choice.value, tx),
                             PickKind::Keys => {}
                             PickKind::Verbosity => {
-                                self.verbose = choice.value == "high";
+                                self.verbosity = Verbosity::parse(&choice.value).unwrap_or(self.verbosity);
                                 self.push(Role::Info, format!("verbosity: {}", choice.value));
                             }
                             PickKind::Theme => {
@@ -6406,7 +6402,7 @@ mod tests {
         }
         a.handle_key(Key::Char('h'), &tx);
         a.handle_key(Key::Enter, &tx);
-        assert!(a.verbose, "Enter did not apply high verbosity");
+        assert_eq!(a.verbosity, Verbosity::High, "Enter did not apply high verbosity");
         assert!(a.pending.is_none());
         assert!(a.input.is_empty(), "the command line stayed: {:?}", a.input);
     }
@@ -6801,9 +6797,26 @@ mod tests {
     fn verbosity_command_controls_tool_detail() {
         let mut a = app();
         let (tx, _cmds) = channel();
-        assert!(!a.verbose, "default is not low");
+        assert_eq!(a.verbosity, Verbosity::Medium, "default is not medium");
+        let row = |a: &mut App| {
+            a.apply(Ev::ToolStart { name: "bash".into(), summary: "run `ls`".into(), args: "{}".into() });
+            a.apply(Ev::ToolEnd {
+                ok: true,
+                preview: "exit 0".into(),
+                output: "exit 0\nfoo".into(),
+                detail: String::new(),
+                ms: 4,
+            });
+            a.entries.last().unwrap().text.clone()
+        };
+        let medium = row(&mut a);
+        assert!(medium.starts_with("✓ run `ls` → exit 0"), "{medium:?}");
+        a.run_command("verbosity low", &tx);
+        let low = row(&mut a);
+        assert!(low.starts_with("✓ run `ls`") && !low.contains('→'), "{low:?}");
+        a.entries.clear();
         a.run_command("verbosity high", &tx);
-        assert!(a.verbose);
+        assert_eq!(a.verbosity, Verbosity::High);
 
         a.apply(Ev::ToolStart {
             name: "bash".into(),
@@ -6822,7 +6835,7 @@ mod tests {
         assert!(text.contains("foo"), "{text:?}");
 
         a.run_command("verbosity low", &tx);
-        assert!(!a.verbose);
+        assert_eq!(a.verbosity, Verbosity::Low);
         a.run_command("verbosity", &tx);
         let picker = open_picker(&a);
         assert_eq!(
@@ -6837,10 +6850,10 @@ mod tests {
         );
         a.handle_key(Key::Down, &tx);
         a.handle_key(Key::Enter, &tx);
-        assert!(a.verbose, "choosing high did nothing");
+        assert_eq!(a.verbosity, Verbosity::Medium, "choosing medium did nothing");
         assert!(a.pending.is_none(), "the picker stayed open");
         a.run_command("verbosity loud", &tx);
-        assert!(a.entries.last().unwrap().text.contains("use low or high"));
+        assert!(a.entries.last().unwrap().text.contains("use low, medium, or high"));
     }
 
     #[test]
@@ -7408,7 +7421,7 @@ mod tests {
         a.run_command("verbosity loud", &tx);
         let last = a.entries.last().unwrap();
         assert_eq!(last.role, Role::Error);
-        assert!(last.text.contains("low or high"), "{}", last.text);
+        assert!(last.text.contains("low, medium, or high"), "{}", last.text);
     }
 
     #[test]

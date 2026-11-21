@@ -39,7 +39,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/compact", "compact the conversation now"),
     ("/think", "toggle thinking for the next turn"),
     ("/mode", "normal, strict, or yolo for this session"),
-    ("/verbosity", "tool detail: low, high, or pick"),
+    ("/verbosity", "step detail: low, medium, high, or pick"),
     ("/cwd", "show the session directory"),
     ("/cd", "browse or change the directory"),
     ("/image", "browse or attach an image"),
