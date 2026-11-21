@@ -1203,7 +1203,11 @@ pub fn gist(name: &str, out: &str) -> String {
             // `200 text/html` then the body.
             let (status, kind) = first.split_once(' ').unwrap_or((first, ""));
             let kind = kind.rsplit('/').next().unwrap_or(kind);
-            let body = out.len().saturating_sub(first.len() + 1);
+            // A capped body names its full size in the cap note.
+            let body = out
+                .split_once("... [")
+                .and_then(|(_, n)| n.split(' ').next()?.parse().ok())
+                .unwrap_or(out.len().saturating_sub(first.len() + 1));
             let items = out.lines().filter(|l| l.starts_with("- ")).count();
             let what = if (kind.contains("xml") || kind.contains("rss") || kind.contains("atom")) && items > 0 {
                 format!("{items} items")
@@ -1285,6 +1289,7 @@ mod tests {
         assert_eq!(gist("fetch", &format!("200 application/json\n{}", "x".repeat(3000))), "200 json · 3 KB");
         assert_eq!(gist("fetch", "200 text/xml\n# BBC\n\n- a · l\n- b · l"), "200 xml · 2 items");
         assert_eq!(gist("fetch", "200 text/html\n# Hi"), "200 html · 4 B");
+        assert_eq!(gist("fetch", "200 application/json\n{...\n... [19203 bytes total; x]\n}"), "200 json · 19 KB");
         assert_eq!(gist("search", "T\nhttps://a\ns\n\nU\nhttps://b\nt\n\n"), "2 results");
         assert_eq!(gist("bash", "exit 0\nhello"), "exit 0");
         assert_eq!(short_url("https://api.open-meteo.com/v1/forecast?latitude=51.3&x=1"), "api.open-meteo.com/v1/forecast…");

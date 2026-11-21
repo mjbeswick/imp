@@ -155,10 +155,14 @@ const CHROME: &[&str] = &[
     "modal", "contentinfo", "search",
 ];
 
-/// A tag whose class, id, or role names furniture.
+/// A tag whose class, id, or role names furniture. Utility classes with
+/// arbitrary values, such as `scroll-mt-[calc(var(--nav-height))]`, describe
+/// layout, not purpose, so they never count.
 fn chrome(tag: &str) -> bool {
     ["class", "id", "role"].iter().filter_map(|a| attr(tag, a)).any(|v| {
-        v.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| CHROME.contains(&w))
+        v.split_whitespace()
+            .filter(|name| !name.contains(['[', '(', ':']))
+            .any(|name| name.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| CHROME.contains(&w)))
     })
 }
 
@@ -301,12 +305,21 @@ fn push_text(out: &mut String, text: &str) {
     }
 }
 
-/// Lines trimmed, empty bullets and rows dropped, one blank line at most.
+/// Lines trimmed, empty bullets and rows dropped, a line repeating the one
+/// before it dropped, as a title repeated by the first heading is, and one
+/// blank line at most.
 fn tidy(text: &str) -> String {
     let mut out = String::new();
     let mut blank = true;
+    let mut last = "";
     for line in text.lines().map(str::trim) {
+        if !line.is_empty() && line == last {
+            continue;
+        }
         let empty = line.is_empty() || line == "-" || line.chars().all(|c| c == '|' || c == ' ');
+        if !empty {
+            last = line;
+        }
         if empty {
             if !blank {
                 out.push('\n');
@@ -388,6 +401,11 @@ mod tests {
     }
 
     #[test]
+    fn a_title_repeated_as_the_first_heading_shows_once() {
+        assert_eq!(markdown("<title>Results</title><h1>Results</h1><p>x</p>", "https://w.example/"), "# Results\n\nx");
+    }
+
+    #[test]
     fn main_content_wins_and_trackers_go() {
         let page = "<title>T</title><div>Cookies on this site</div><main><p>Body \
             <a href='https://x.example/a?utm_source=rss&id=7&at_medium=RSS'>link</a></p></main><p>after</p>";
@@ -408,6 +426,8 @@ mod tests {
             <ul role='navigation'><li>Menu</li></ul><p>Woking is a town. In stock.</p>\
             <div id='toc'><div>Contents</div></div><div class='content'>More</div></main>";
         assert_eq!(markdown(page, "https://w.example/"), "Woking is a town. In stock.\n\nMore");
+        let tailwind = "<main><div class='scroll-mt-[calc(var(--f1-nav-height))] p-4'><table><tr><td>Norris</td></tr></table></div></main>";
+        assert_eq!(markdown(tailwind, "https://w.example/"), "| Norris |");
     }
 
     #[test]

@@ -505,7 +505,7 @@ impl Tools {
         let (head, tail) = head_tail(text);
         let id = self.buffers.store(text.to_string());
         format!(
-            "{head}\n... [{} bytes total; read: imp://out/{id}]\n{tail}",
+            "{head}\n... [{} bytes total; the rest is imp://out/{id}, open it with the read tool]\n{tail}",
             text.len()
         )
     }
@@ -978,10 +978,10 @@ mod tests {
         let big = "line\n".repeat(2000);
         let capped = t.cap(&big);
         let address = capped
-            .split("read: ")
+            .split("the rest is ")
             .nth(1)
             .unwrap()
-            .split(']')
+            .split(',')
             .next()
             .unwrap()
             .to_string();
@@ -1069,10 +1069,10 @@ mod tests {
         let mut t = tools().0;
         let capped = t.cap(&"y".repeat(10_000));
         let address = capped
-            .split("read: ")
+            .split("the rest is ")
             .nth(1)
             .unwrap()
-            .split(']')
+            .split(',')
             .next()
             .unwrap()
             .to_string();

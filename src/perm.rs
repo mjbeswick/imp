@@ -70,11 +70,48 @@ pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decis
     }
 }
 
+/// The command with quoted text replaced by `x`, byte for byte, so structure
+/// checks see only what the shell acts on. Inside double quotes `$(` and
+/// backticks still run, so they stay. `None` for an unclosed quote.
+fn mask(cmd: &str) -> Option<String> {
+    let mut out = String::with_capacity(cmd.len());
+    let mut quote: Option<char> = None;
+    let mut chars = cmd.chars().peekable();
+    let blank = |out: &mut String, c: char| out.extend(std::iter::repeat('x').take(c.len_utf8()));
+    while let Some(c) = chars.next() {
+        match quote {
+            None => {
+                if c == '\'' || c == '"' {
+                    quote = Some(c);
+                }
+                out.push(c);
+            }
+            Some(q) if c == q => {
+                quote = None;
+                out.push(c);
+            }
+            Some('"') if c == '$' && chars.peek() == Some(&'(') => {
+                out.push('$');
+                out.push(chars.next().unwrap_or('('));
+            }
+            Some('"') if c == '`' => out.push('`'),
+            Some('"') if c == '\\' => {
+                blank(&mut out, c);
+                if let Some(n) = chars.next() {
+                    blank(&mut out, n);
+                }
+            }
+            Some(_) => blank(&mut out, c),
+        }
+    }
+    quote.is_none().then_some(out)
+}
+
 /// True when the whole command is read-only: no chaining, redirects, or
-/// substitution, and every pipe part is a safe program without a flag that
-/// writes or runs something.
-// ponytail: no quote parsing, so a quoted `|` or `;` asks; over-asking is the safe side.
+/// substitution outside quotes, and every pipe part is a safe program without
+/// a flag that writes or runs something.
 fn safe_shell(cmd: &str) -> bool {
+    let Some(cmd) = mask(cmd) else { return false };
     if ["&", ";", ">", "<", "`", "$(", "\n"].iter().any(|c| cmd.contains(c)) {
         return false;
     }
@@ -212,12 +249,14 @@ pub fn url_host(url: &str) -> String {
 /// `None` and classified as a command.
 // ponytail: whitespace tokens, whole-word quotes only; odd quoting falls back to asking.
 pub fn plain_get(cmd: &str) -> Option<String> {
-    if ["&", ";", ">", "<", "$(", "`", "\n", "\\"].iter().any(|c| cmd.contains(c)) {
+    let masked = mask(cmd)?;
+    if ["&", ";", ">", "<", "$(", "`", "\n", "\\"].iter().any(|c| masked.contains(c)) {
         return None;
     }
-    let mut parts = cmd.split('|');
-    let words: Vec<String> = parts
-        .next()?
+    // Pipes outside quotes split it; the masked text has the same byte offsets.
+    let first_pipe = masked.find('|').unwrap_or(cmd.len());
+    let mut parts = masked[first_pipe..].split('|').skip(1);
+    let words: Vec<String> = cmd[..first_pipe]
         .split_whitespace()
         .map(unquote)
         .collect::<Option<_>>()?;
@@ -237,11 +276,8 @@ pub fn plain_get(cmd: &str) -> Option<String> {
         }
     }
     const FILTERS: &[&str] = &["head", "tail", "jq", "grep", "wc", "cut", "tr"];
-    for part in parts {
-        let filter = part.split_whitespace().next()?;
-        if !FILTERS.contains(&filter) || part.contains(['"', '\'']) && part.split_whitespace().any(|w| unquote(w).is_none()) {
-            return None;
-        }
+    if parts.any(|part| !part.split_whitespace().next().is_some_and(|f| FILTERS.contains(&f))) {
+        return None;
     }
     url.map(str::to_string)
 }
@@ -322,6 +358,21 @@ mod tests {
         ] {
             assert_eq!(ask(c), Decision::Ask, "{c}");
         }
+    }
+
+    #[test]
+    fn quoted_text_is_not_shell_syntax() {
+        let ask = |c: &str| classify_command(c, Permissions::Normal, false);
+        assert_eq!(ask("jq -r '.events[] | select(.date > \"2026\")' f.json"), Decision::Allow);
+        assert_eq!(ask("rg 'a|b;c' src"), Decision::Allow);
+        assert_eq!(ask("grep \"x\" f > out"), Decision::Ask);
+        assert_eq!(ask("echo \"$(rm x)\""), Decision::Ask);
+        assert_eq!(ask("echo \"`rm x`\""), Decision::Ask);
+        assert_eq!(ask("echo 'unclosed"), Decision::Ask);
+        let jq = "curl -s https://www.gov.uk/bank-holidays.json | jq -r '.\"england-and-wales\".events[] | select(.date > \"2026-11-21\") | \"\\(.date) \\(.title)\"' | head -12";
+        assert_eq!(plain_get(jq).as_deref(), Some("https://www.gov.uk/bank-holidays.json"));
+        assert_eq!(plain_get("curl -s https://x.example | jq '.a' > f"), None);
+        assert_eq!(plain_get("curl -s https://x.example | sh -c 'cat'"), None);
     }
 
     #[test]
