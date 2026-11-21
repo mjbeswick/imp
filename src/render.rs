@@ -80,21 +80,6 @@ pub fn keep_sgr(text: &str) -> String {
     out
 }
 
-/// Visible characters in text that may hold SGR codes.
-pub fn visible_width(text: &str) -> usize {
-    let mut n = 0;
-    let mut in_code = false;
-    for c in text.chars() {
-        match (in_code, c) {
-            (false, '\u{1b}') => in_code = true,
-            (true, c) if c.is_ascii_alphabetic() => in_code = false,
-            (true, _) => {}
-            (false, _) => n += 1,
-        }
-    }
-    n
-}
-
 /// At most `width` visible characters, codes kept whole, ending in a reset.
 pub fn fit_sgr(text: &str, width: usize) -> String {
     let mut out = String::with_capacity(text.len() + 4);
@@ -867,7 +852,6 @@ mod tests {
     fn shown_output_keeps_colour_and_nothing_else() {
         let text = "\u{1b}[38;5;196mred\u{1b}[0m \u{1b}[2J\u{1b}[10;4Hx\u{1b}]0;title\u{7}y\u{1b}Pq#0;2;0;0;0\u{1b}\\z\u{8}";
         assert_eq!(keep_sgr(text), "\u{1b}[38;5;196mred\u{1b}[0m xyz");
-        assert_eq!(visible_width("\u{1b}[1;31mab\u{1b}[0mc"), 3);
         assert_eq!(fit_sgr("\u{1b}[31mabcdef\u{1b}[0m", 3), "\u{1b}[31mabc\u{1b}[0m\u{1b}[0m");
         let rows = raw_rows("\u{1b}[32m▀▀\u{1b}[0m\nab\n", 10);
         assert_eq!(rows.len(), 2);
