@@ -48,6 +48,14 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
          results, or releases, search, then fetch the best source, and say how current the answer is.\n",
     );
 
+    if let Some(dir) = crate::tools::scratch() {
+        prompt.push_str(&format!(
+            "Scratch: {} is yours, as $IMP_TMP in commands. Put downloads and temporary files there, never /tmp; \
+             it needs no confirmation and is emptied when imp exits.\n",
+            dir.display()
+        ));
+    }
+
     let (instructions, _loaded) = crate::store::load_instructions(root);
     prompt.push_str(&instructions);
 

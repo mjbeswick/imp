@@ -131,7 +131,7 @@ impl Jobs {
         let mut cmd = Command::new("sh");
         // Jobs are the agent's: no secrets unless passed through.
         crate::secrets::scrub(&mut cmd);
-        crate::tui::size_env(&mut cmd);
+        crate::tui::agent_env(&mut cmd);
         cmd.arg("-c")
             .arg(script)
             .stdin(Stdio::null())

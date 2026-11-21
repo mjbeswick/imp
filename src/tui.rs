@@ -57,10 +57,14 @@ pub fn screen() -> Option<(u16, u16)> {
     (v != 0).then(|| ((v >> 16) as u16, v as u16))
 }
 
-/// Give an agent command `COLUMNS` and `LINES` for the screen, when known.
-pub fn size_env(cmd: &mut std::process::Command) {
+/// Give an agent command `COLUMNS` and `LINES` for the screen, when known,
+/// and `IMP_TMP` for the scratch folder.
+pub fn agent_env(cmd: &mut std::process::Command) {
     if let Some((cols, rows)) = screen() {
         cmd.env("COLUMNS", cols.to_string()).env("LINES", rows.to_string());
+    }
+    if let Some(dir) = crate::tools::scratch() {
+        cmd.env("IMP_TMP", dir);
     }
 }
 

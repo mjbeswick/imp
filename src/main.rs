@@ -26,7 +26,12 @@ use std::process::ExitCode;
 
 
 fn main() -> ExitCode {
-    match run() {
+    let result = run();
+    // ponytail: a signal exit skips this; the next start sweeps the folder.
+    if let Some(dir) = tools::scratch() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(msg) => {
             eprintln!("imp: {msg}");
@@ -152,6 +157,9 @@ fn run() -> Result<(), String> {
 
     let out_dir = config::dirs_state().join("imp").join("out");
     tools::prune_out(&out_dir, std::time::Duration::from_secs(7 * 24 * 3600));
+    if let Err(e) = tools::make_scratch(&out_dir) {
+        eprintln!("imp: no scratch folder: {e}");
+    }
     let system = system_prompt(&root, &cfg);
     let tui_cfg = cfg.clone();
     let roster = store::load_agents(&cfg, &root);

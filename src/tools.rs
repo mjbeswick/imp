@@ -427,7 +427,12 @@ impl Tools {
     pub fn resolve(&self, raw: &str) -> Result<PathBuf, String> {
         use std::path::Component;
 
-        let given = PathBuf::from(raw);
+        let given = match (raw.strip_prefix("$IMP_TMP").or_else(|| raw.strip_prefix("${IMP_TMP}")), scratch()) {
+            (Some(rest), Some(dir)) if rest.is_empty() || rest.starts_with('/') => {
+                PathBuf::from(format!("{}{rest}", dir.display()))
+            }
+            _ => PathBuf::from(raw),
+        };
         let joined = if given.is_absolute() {
             given
         } else {
@@ -567,7 +572,7 @@ impl Tools {
         // full environment.
         if hand_over {
             crate::secrets::scrub(&mut cmd);
-            crate::tui::size_env(&mut cmd);
+            crate::tui::agent_env(&mut cmd);
         }
         cmd.arg("-c")
             .arg(script)
@@ -881,6 +886,43 @@ fn walk_dir(
 }
 
 /// Only `http` and `https` URLs may be fetched.
+static SCRATCH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// This process's scratch folder, once `make_scratch` has run.
+pub fn scratch() -> Option<&'static std::path::Path> {
+    SCRATCH.get().map(PathBuf::as_path)
+}
+
+/// Create `<out>/tmp/<pid>`, first removing the folders of processes that
+/// no longer run.
+pub fn make_scratch(out_dir: &std::path::Path) -> std::io::Result<PathBuf> {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let base = out_dir.join("tmp");
+    for entry in std::fs::read_dir(&base).into_iter().flatten().flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else {
+            continue;
+        };
+        // ESRCH: no such process. EPERM means it runs as someone else.
+        let gone = pid > 0
+            && unsafe { kill(pid, 0) } != 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(3);
+        if gone {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    let dir = base.join(std::process::id().to_string());
+    std::fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let _ = SCRATCH.set(dir.clone());
+    Ok(dir)
+}
+
 pub fn fetchable(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     lower.starts_with("http://") || lower.starts_with("https://")
@@ -915,6 +957,28 @@ mod tests {
         let mut t = Tools::new(dir.clone(), dir.join(".out"));
         t.timeout = Duration::from_millis(300);
         (t, dir)
+    }
+
+    #[test]
+    fn scratch_sweeps_the_dead_and_keeps_the_living() {
+        let out = std::env::temp_dir().join(format!("imp-scratch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        let dead = out.join("tmp/2000000000");
+        let live = out.join("tmp/1");
+        std::fs::create_dir_all(&dead).unwrap();
+        std::fs::create_dir_all(&live).unwrap();
+        let mine = make_scratch(&out).unwrap();
+        assert!(!dead.exists(), "a dead process kept its folder");
+        assert!(live.exists(), "a running process lost its folder");
+        assert!(mine.ends_with(std::process::id().to_string()));
+        let dir = scratch().unwrap().to_path_buf();
+        let (mut t, _d) = tools();
+        t.out_dir = dir.parent().unwrap().parent().unwrap().to_path_buf();
+        let p = t.resolve("$IMP_TMP/notes.txt").unwrap();
+        assert!(p.starts_with(dir.canonicalize().unwrap()), "{}", p.display());
+        let o = t.bash_handover("echo \"$IMP_TMP\"", &AtomicBool::new(false));
+        assert_eq!(o.text.trim(), dir.display().to_string());
+        let _ = std::fs::remove_dir_all(&out);
     }
 
     #[test]
