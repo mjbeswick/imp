@@ -59,6 +59,7 @@ fn run() -> Result<(), String> {
 
     let mut cfg = config::Config::load(&config::Config::config_path())?;
     secrets::keep(&cfg.pass_env);
+    secrets::also(&cfg.auth.iter().map(|(_, header)| header.clone()).collect::<Vec<_>>());
     let mut prompt_words: Vec<String> = Vec::new();
     let mut mode = "auto";
     let mut agent_name: Option<String> = None;

@@ -66,7 +66,7 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"read","description":"Read files with line numbers, or list a directory. Add several paths in one call.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"},"depth":{"type":"integer","description":"Directory levels, 1 to 3. Default 1."}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
         json!({"type":"function","function":{"name":"write","description":"Create or replace a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}),
-        json!({"type":"function","function":{"name":"fetch","description":"GET one http or https URL from this machine, including the local network. JSON, feeds, and text come back as they are; HTML as its title and text.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}}),
+        json!({"type":"function","function":{"name":"fetch","description":"One HTTP request from this machine, including the local network. GET by default; HTML comes back as markdown, feeds as a list, JSON and text as they are. Configured credentials are added for their host by imp; never put keys in headers.","parameters":{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","enum":["GET","POST","PUT","PATCH","DELETE"]},"headers":{"type":"object","description":"Extra request headers, name to value."},"body":{"description":"Text, or JSON sent as application/json."}},"required":["url"]}}}),
         json!({"type":"function","function":{"name":"search","description":"Search the web; results are summaries with URLs. Read a page with fetch.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search"]},"query":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"memory","description":"Search stored notes, or save a new one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","save"]},"query":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
@@ -140,6 +140,8 @@ pub struct Session {
     pub job_dir: std::path::PathBuf,
     /// Command shapes answered `always` in this session.
     always: std::collections::HashSet<String>,
+    /// Hosts the user let credentialed reads reach in this session.
+    auth_hosts: std::collections::HashSet<String>,
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
     pub last_model: Option<String>,
@@ -186,6 +188,7 @@ impl Session {
             jobs: Jobs::default(),
             job_dir,
             always: std::collections::HashSet::new(),
+            auth_hosts: std::collections::HashSet::new(),
             log: None,
             last_usage: (0, 0, 0),
             last_model: None,
@@ -225,6 +228,7 @@ impl Session {
             .collect();
         self.history = system;
         self.always.clear();
+        self.auth_hosts.clear();
     }
 
     /// Load a session by id and continue it.
@@ -912,36 +916,7 @@ impl Session {
                     other => (false, format!("refused: unknown job op {other}")),
                 }
             }
-            "fetch" => {
-                let url = args.get("url").and_then(Value::as_str).unwrap_or("").trim();
-                if !crate::tools::fetchable(url) {
-                    return (false, "refused: fetch takes an http or https URL".into());
-                }
-                // Reading does not ask; a long URL can carry data out, so it does.
-                if perm::classify_fetch(self.cfg.live_permissions(), url) == Decision::Ask
-                    && !hooks.confirm(&perm::fetch_question(url))
-                {
-                    return (false, format!("refused: the user declined fetching from {}", perm::url_host(url)));
-                }
-                match crate::http::fetch(url, 15_000, 2 * 1024 * 1024) {
-                    Ok((status, kind, body)) => {
-                        let start = body.trim_start();
-                        let xml = kind.contains("xml") || kind.contains("rss") || kind.contains("atom") || start.starts_with("<?xml");
-                        let html = !xml && (kind.contains("html") || start.starts_with('<') && kind.is_empty());
-                        let body = if html {
-                            crate::web::markdown(&body, url)
-                        } else if xml {
-                            crate::web::feed(&body).unwrap_or(body)
-                        } else {
-                            body
-                        };
-                        let kind = kind.split(';').next().unwrap_or("").trim().to_string();
-                        let text = self.tools.cap(&format!("{status} {kind}\n{body}"));
-                        (status < 400, text)
-                    }
-                    Err(e) => (false, format!("fetch failed: {e}")),
-                }
-            }
+            "fetch" => self.fetch_tool(args, hooks),
             "search" => {
                 if !self.cfg.provider.caps().search {
                     return (false, "search is not available for this provider".into());
@@ -1092,6 +1067,101 @@ impl Session {
                 }
             }
             _ => unreachable!("only search reaches here"),
+        }
+    }
+
+    /// One HTTP request: a GET reads freely; a write, or a read carrying the
+    /// configured credentials, asks as the mode says.
+    fn fetch_tool(&mut self, args: &Value, hooks: &mut dyn Hooks) -> (bool, String) {
+        let url = args.get("url").and_then(Value::as_str).unwrap_or("").trim();
+        if !crate::tools::fetchable(url) {
+            return (false, "refused: fetch takes an http or https URL".into());
+        }
+        let method = args.get("method").and_then(Value::as_str).unwrap_or("GET").to_ascii_uppercase();
+        if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE") {
+            return (false, format!("refused: fetch sends GET, POST, PUT, PATCH, or DELETE, not {method}"));
+        }
+        let host = perm::url_host(url);
+        let auth = self.cfg.auth.iter().find(|(h, _)| *h == host).map(|(_, header)| header.clone());
+
+        let mut headers: Vec<String> = Vec::new();
+        if let Some(map) = args.get("headers").and_then(Value::as_object) {
+            for (name, value) in map {
+                let value = value.as_str().map_or_else(|| value.to_string(), str::to_string);
+                if name.contains([':', '\r', '\n']) || value.contains(['\r', '\n']) {
+                    return (false, format!("refused: header {name:?} is malformed"));
+                }
+                headers.push(format!("{name}: {value}"));
+            }
+        }
+        let body: Option<Vec<u8>> = match args.get("body") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(text)) => Some(text.clone().into_bytes()),
+            Some(json) => {
+                if !headers.iter().any(|h| h.to_ascii_lowercase().starts_with("content-type:")) {
+                    headers.push("Content-Type: application/json".into());
+                }
+                Some(json.to_string().into_bytes())
+            }
+        };
+
+        let mode = self.cfg.live_permissions();
+        let what = describe("fetch", args);
+        let with = if auth.is_some() { format!(" with your {host} credentials") } else { String::new() };
+        let question = match (mode, method.as_str()) {
+            (Permissions::Yolo, _) => None,
+            (Permissions::Strict, _) => Some(format!("{what}{with}")),
+            (Permissions::Normal, "GET") if auth.is_some() => {
+                (!self.auth_hosts.contains(&host)).then(|| format!("{what}{with} for this session"))
+            }
+            (Permissions::Normal, "GET") => {
+                (perm::classify_fetch(mode, url) == Decision::Ask).then(|| perm::fetch_question(url))
+            }
+            (Permissions::Normal, _) => {
+                let size = body.as_ref().map_or(String::new(), |b| format!(", a {} B body", b.len()));
+                Some(format!("{what}{size}{with}"))
+            }
+        };
+        if let Some(q) = question {
+            if !hooks.confirm(&q) {
+                return (false, format!("refused: the user declined {method} {host}"));
+            }
+            if method == "GET" && auth.is_some() {
+                self.auth_hosts.insert(host.clone());
+            }
+        }
+
+        if let Some(template) = &auth {
+            match crate::secrets::expand(template) {
+                Ok(header) => headers.push(header),
+                Err(name) => return (false, format!("refused: the {host} credentials need ${name}, which is not set")),
+            }
+        }
+        let refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+        // Credentials never follow a redirect: curl would forward the header.
+        let follow = method == "GET" && auth.is_none();
+        match crate::http::call(&method, url, &refs, body.as_deref(), follow, 15_000, 2 * 1024 * 1024) {
+            Ok((reply, text)) => {
+                let kind = reply.content_type.to_ascii_lowercase();
+                let start = text.trim_start();
+                let xml = kind.contains("xml") || kind.contains("rss") || kind.contains("atom") || start.starts_with("<?xml");
+                let html = !xml && (kind.contains("html") || start.starts_with('<') && kind.is_empty());
+                let text = if html {
+                    crate::web::markdown(&text, url)
+                } else if xml {
+                    crate::web::feed(&text).unwrap_or(text)
+                } else {
+                    text
+                };
+                let kind = kind.split(';').next().unwrap_or("").trim().to_string();
+                let mut head = format!("{} {kind}", reply.status);
+                for h in &reply.headers {
+                    head.push('\n');
+                    head.push_str(h);
+                }
+                (reply.status < 400, self.tools.cap(&format!("{head}\n{text}")))
+            }
+            Err(e) => (false, format!("fetch failed: {e}")),
         }
     }
 
@@ -1263,7 +1333,10 @@ pub fn describe(name: &str, args: &Value) -> String {
             flatten(text("path")),
             lines("content")
         ),
-        "fetch" => format!("fetch {}", short_url(text("url"))),
+        "fetch" => match text("method").to_ascii_uppercase().as_str() {
+            "" | "GET" => format!("fetch {}", short_url(text("url"))),
+            method => format!("{method} {}", short_url(text("url"))),
+        },
         "search" => format!("search {:?}", flatten(text("query"))),
         "memory" => {
             let what = if text("title").is_empty() {
@@ -1916,6 +1989,104 @@ mod tests {
             }
         });
         format!("http://{addr}/data")
+    }
+
+    /// A local server that answers each request with the request itself.
+    fn echo_server(times: usize) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..times {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                stream.set_read_timeout(Some(std::time::Duration::from_millis(300))).ok();
+                let mut got = Vec::new();
+                let mut buf = [0u8; 4096];
+                while let Ok(n) = stream.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&got);
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let want: usize = head
+                            .lines()
+                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+                            .unwrap_or(0);
+                        if body.len() >= want {
+                            break;
+                        }
+                    }
+                }
+                let body = String::from_utf8_lossy(&got).into_owned();
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn credentials_go_to_their_host_only_and_never_show() {
+        use crate::secrets::{TEST_NAME, TEST_VALUE};
+        std::env::set_var(TEST_NAME, TEST_VALUE);
+        let api = echo_server(2);
+        let other = echo_server(1);
+        let host = api.trim_start_matches("http://").to_string();
+        let calls = [
+            Script::Ok(tool_reply("c1", "fetch", &json!({"url": format!("{api}/user")}).to_string())),
+            Script::Ok(tool_reply("c2", "fetch", &json!({"url": format!("{api}/repos")}).to_string())),
+            Script::Ok(tool_reply("c3", "fetch", &json!({"url": format!("{other}/?u={host}")}).to_string())),
+            Script::Ok(text_reply("done")),
+        ];
+        let (mut s, _fake) = scripted(calls.into());
+        s.cfg.set_permissions(Permissions::Normal);
+        s.cfg.auth.push((host.clone(), format!("Authorization: Bearer ${TEST_NAME}")));
+        let mut hooks = CountingHooks::default();
+        s.turn("go", &mut hooks).unwrap();
+        assert_eq!(hooks.confirms, 1, "a credentialed read asked other than once per host");
+        let results: Vec<&str> = s.history.iter().filter(|m| m.role == crate::api::Role::Tool).map(|m| m.content.as_str()).collect();
+        let shown = format!("Authorization: Bearer [redacted {TEST_NAME}]");
+        assert!(results[0].contains(&shown), "{}", results[0]);
+        assert!(results[1].contains(&shown), "{}", results[1]);
+        assert!(!results[2].to_ascii_lowercase().contains("authorization"), "sent to another host: {}", results[2]);
+        assert!(!s.history.iter().any(|m| m.content.contains(TEST_VALUE)), "the key reached history");
+    }
+
+    #[test]
+    fn writes_ask_every_time_and_send_json() {
+        let api = echo_server(2);
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Normal);
+        let mut hooks = CountingHooks::default();
+        let args = json!({"url": format!("{api}/items"), "method": "post", "body": {"title": "x"}});
+        let (ok, out) = s.run_tool("fetch", &args, &mut hooks);
+        assert!(ok, "{out}");
+        assert!(out.contains("POST /items ") && out.contains("Content-Type: application/json") && out.ends_with("{\"title\":\"x\"}"), "{out}");
+        let _ = s.run_tool("fetch", &args, &mut hooks);
+        assert_eq!(hooks.confirms, 2, "a second write did not ask");
+        let (ok, out) = s.run_tool("fetch", &json!({"url": api, "method": "TRACE"}), &mut hooks);
+        assert!(!ok && out.contains("not TRACE"), "{out}");
+    }
+
+    #[test]
+    fn credentials_never_follow_a_redirect_and_need_their_variable() {
+        use crate::secrets::{TEST_NAME, TEST_VALUE};
+        std::env::set_var(TEST_NAME, TEST_VALUE);
+        let api = serve_once("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/stolen\r\nConnection: close\r\n\r\n");
+        let host = crate::perm::url_host(&api);
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Yolo);
+        s.cfg.auth.push((host.clone(), format!("X-Key: ${TEST_NAME}")));
+        let (ok, out) = s.run_tool("fetch", &json!({"url": api}), &mut Null);
+        assert!(ok, "{out}");
+        assert!(out.starts_with("302 ") && out.contains("Location: http://127.0.0.1:9/stolen"), "{out}");
+        s.cfg.auth[0].1 = "X-Key: $IMP_SURELY_UNSET_VAR".into();
+        let (ok, out) = s.run_tool("fetch", &json!({"url": api}), &mut Null);
+        assert!(!ok && out.contains("$IMP_SURELY_UNSET_VAR"), "{out}");
     }
 
     #[test]

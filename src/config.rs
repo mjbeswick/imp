@@ -150,6 +150,9 @@ pub struct Config {
     pub pass_env: Vec<String>,
     /// How much of each tool step the interface shows.
     pub verbosity: Verbosity,
+    /// Credentials by host: `host[:port]` and a header template naming
+    /// environment variables.
+    pub auth: Vec<(String, String)>,
     pub links: Links,
     pub skills_dir: Option<PathBuf>,
 }
@@ -180,6 +183,7 @@ impl Default for Config {
             auto_next: true,
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
+            auth: Vec::new(),
             links: Links::Auto,
             skills_dir: None,
         }
@@ -240,6 +244,13 @@ impl Config {
             "allow_sudo" => self.allow_sudo = parse_bool(value)?,
             "allow" => self.allows(value),
             "verbosity" => self.verbosity = Verbosity::parse(value)?,
+            "auth" => {
+                let (host, header) = value.trim().split_once(char::is_whitespace).unwrap_or((value, ""));
+                if !header.contains(':') {
+                    return Err(format!("auth needs a host and a header, such as `auth = {host} Authorization: Bearer $TOKEN`"));
+                }
+                self.auth.push((host.to_ascii_lowercase(), header.trim().to_string()));
+            }
             "pass_env" => self.pass_env.extend(value.split(',').map(str::trim).filter(|n| !n.is_empty()).map(String::from)),
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
@@ -878,6 +889,14 @@ mod tests {
         let cfg = Config::from_str(&text).unwrap();
         assert_eq!(cfg.named, named);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auth_lines_bind_a_header_to_a_host() {
+        let mut cfg = Config::default();
+        cfg.set("auth", "API.github.com Authorization: Bearer $GITHUB_TOKEN").unwrap();
+        assert_eq!(cfg.auth, [("api.github.com".to_string(), "Authorization: Bearer $GITHUB_TOKEN".to_string())]);
+        assert!(cfg.set("auth", "api.github.com").is_err());
     }
 
     #[test]

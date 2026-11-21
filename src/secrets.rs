@@ -11,6 +11,42 @@ pub fn keep(names: &[String]) {
     let _ = KEEP.set(names.to_vec());
 }
 
+/// Variables the config names in `auth` lines: secrets whatever their names.
+static ALSO: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Register `auth` header templates, before any secret is looked up.
+pub fn also(templates: &[String]) {
+    let _ = ALSO.set(templates.iter().flat_map(|t| names_in(t)).collect());
+}
+
+/// The `$NAME` and `${NAME}` variables a template names.
+pub fn names_in(template: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = template;
+    while let Some(i) = rest.find('$') {
+        rest = &rest[i + 1..];
+        let braced = rest.starts_with('{');
+        let body = if braced { &rest[1..] } else { rest };
+        let name: String = body.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        if !name.is_empty() {
+            out.push(name.clone());
+        }
+        rest = &body[name.len()..];
+    }
+    out
+}
+
+/// A template with its variables filled from the environment, or the name of
+/// the first one that is unset.
+pub fn expand(template: &str) -> Result<String, String> {
+    let mut out = template.to_string();
+    for name in names_in(template) {
+        let value = std::env::var(&name).ok().filter(|v| !v.is_empty()).ok_or_else(|| name.clone())?;
+        out = out.replace(&format!("${{{name}}}"), &value).replace(&format!("${name}"), &value);
+    }
+    Ok(out)
+}
+
 fn kept(name: &str) -> bool {
     KEEP.get().is_some_and(|k| k.iter().any(|n| n == name))
 }
@@ -37,7 +73,9 @@ fn present() -> &'static [(String, String)] {
     SET.get_or_init(|| {
         #[allow(unused_mut)]
         let mut found: Vec<(String, String)> =
-            std::env::vars().filter(|(k, v)| is_secret(k) && !v.is_empty()).collect();
+            std::env::vars()
+                .filter(|(k, v)| (is_secret(k) || ALSO.get().is_some_and(|a| a.contains(k))) && !v.is_empty())
+                .collect();
         // Tests get one known secret, whatever the environment holds.
         #[cfg(test)]
         found.push((TEST_NAME.into(), TEST_VALUE.into()));
@@ -93,6 +131,15 @@ fn redact_with(text: &str, secrets: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn templates_name_and_fill_variables() {
+        assert_eq!(names_in("Authorization: Bearer $GH_TOKEN"), ["GH_TOKEN"]);
+        assert_eq!(names_in("X-Key: ${A_1}-$B"), ["A_1", "B"]);
+        std::env::set_var("IMP_EXPAND_PROBE", "v1");
+        assert_eq!(expand("K: ${IMP_EXPAND_PROBE}/$IMP_EXPAND_PROBE").unwrap(), "K: v1/v1");
+        assert_eq!(expand("K: $IMP_UNSET_PROBE_X").unwrap_err(), "IMP_UNSET_PROBE_X");
+    }
 
     #[test]
     fn names_that_look_like_credentials() {
