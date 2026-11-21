@@ -262,6 +262,13 @@ of the session, so `npm test` covers `npm test -- --watch` but not
 `allow = npm test` to the config; delete the line to undo it. Pipes, `&&`,
 `;`, and redirects never offer `s` or `a`, and `strict` ignores `allow`.
 
+The agent's commands and jobs run without secret-looking variables (names
+ending `_KEY`, `_TOKEN`, `_SECRET`, or `_CREDENTIALS`, any `PASSWORD`, and
+`AWS_*`). Pass one through with `pass_env = GH_TOKEN, NPM_TOKEN`. Secret values
+that show up in any tool output are replaced with `[redacted NAME]`, and a
+command naming a stripped variable asks first. Commands you type with `!`, and
+`/shell`, keep your full environment.
+
 Switch for the session with `/mode`; the config and `--permissions` set the
 starting mode.
 
