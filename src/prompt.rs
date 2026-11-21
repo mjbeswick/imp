@@ -51,7 +51,8 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
     if let Some(dir) = crate::tools::scratch() {
         prompt.push_str(&format!(
             "Scratch: {} is yours, as $IMP_TMP in commands. Put downloads and temporary files there, never /tmp; \
-             it needs no confirmation and is emptied when imp exits.\n",
+             it is emptied when imp exits. read, write, and edit reach it without asking, and so does a download \
+             run alone as `curl -o \"$IMP_TMP/name\" URL`; run the next step as its own call.\n",
             dir.display()
         ));
     }
