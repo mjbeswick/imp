@@ -162,6 +162,11 @@ skills that teach `bash`.
   `delay_s` starts one later (up to 24 h), and `job list` shows each job's
   elapsed time, output size, and last output line, so a copy run with
   `rsync --info=progress2` shows how far it has got.
+- `show` on `bash` puts a command's output before you with its colours, such
+  as a `chafa --format symbols` picture or a coloured chart; the model gets the
+  text, or only a picture's size. Commands you type with `!` show in colour too.
+  Only colour and style codes pass: cursor moves, clears, and image protocols
+  such as sixel and kitty are dropped.
 - In the chat, the agent can check back without you: `job check` with
   `after_s` wakes the session later with the job's state, and `notify` wakes it
   when a job ends. The session then reports like any reply, so out of view it
@@ -198,6 +203,7 @@ wins when set.
 # allow_sudo=false
 # allow=npm test          # one line per shape; written by `a` at a prompt
 # auth=api.github.com Authorization: Bearer $GITHUB_TOKEN   # one line per host
+# render.mermaid=mmd      # draw a reply's ```mermaid blocks with a command (stdin, COLUMNS)
 # verbosity=medium        # low: a line per step · medium: and its result · high: and the output
 # thinking=false
 # compact_at=60000
