@@ -86,6 +86,20 @@ fn last_line(path: &Path) -> Option<String> {
     Some(line.chars().take(100).collect())
 }
 
+/// The last `cap` bytes of a log, from a line start where possible.
+pub fn tail(path: &Path, cap: usize) -> String {
+    let text = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    if text.len() <= cap {
+        return text.trim_end().to_string();
+    }
+    let mut start = text.len() - cap;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let cut = &text[start..];
+    cut.find('\n').map_or(cut, |i| &cut[i + 1..]).trim_end().to_string()
+}
+
 /// Job ids are unique across the process, so sessions running side by side
 /// never share a `job-<id>.log`.
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -241,6 +255,10 @@ impl Jobs {
             job.code = Some(-1);
         }
         Ok(format!("job {id} killed"))
+    }
+
+    pub fn status(&self, id: u64) -> Option<String> {
+        self.map.get(&id).map(Job::status_line)
     }
 
     pub fn list(&self) -> String {

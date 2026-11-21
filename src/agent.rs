@@ -59,10 +59,13 @@ pub enum Ui {
     Error(String),
 }
 
+/// Check-ins one session may have waiting.
+const MAX_CHECKINS: usize = 4;
+
 pub fn schema() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."},"delay_s":{"type":"integer","description":"Start it as a job after this many seconds, up to 86400."},"description":{"type":"string","description":"A few words on what it does, shown to the user instead of a long command."}},"required":["command"]}}}),
-        json!({"type":"function","function":{"name":"job","description":"List background jobs, wait for one, or kill one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["list","wait","kill"]},"id":{"type":"integer"},"timeout_s":{"type":"integer","description":"For wait; up to 55 seconds."}},"required":["op"]}}}),
+        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."},"delay_s":{"type":"integer","description":"Start it as a job after this many seconds, up to 86400."},"notify":{"type":"boolean","description":"With background or delay_s: wake you when the job ends."},"description":{"type":"string","description":"A few words on what it does, shown to the user instead of a long command."}},"required":["command"]}}}),
+        json!({"type":"function","function":{"name":"job","description":"List background jobs with progress, wait for one, kill one, or check back later: check wakes you after after_s seconds with the job's state, so you can report progress while the user is away.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["list","wait","kill","check"]},"id":{"type":"integer"},"timeout_s":{"type":"integer","description":"For wait; up to 55 seconds."},"after_s":{"type":"integer","description":"For check; 30 to 86400 seconds."}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"read","description":"Read files with line numbers, or list a directory. Add several paths in one call.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"},"depth":{"type":"integer","description":"Directory levels, 1 to 3. Default 1."}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
         json!({"type":"function","function":{"name":"write","description":"Create or replace a file.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}),
@@ -144,6 +147,12 @@ pub struct Session {
     always: std::collections::HashSet<String>,
     /// Hosts the user let credentialed reads reach in this session.
     auth_hosts: std::collections::HashSet<String>,
+    /// True when a worker can wake this session; line mode cannot.
+    pub wakes: bool,
+    /// Pending check-ins: when they are due, the job if one, and when asked.
+    checkins: Vec<(std::time::Instant, Option<u64>, std::time::Instant)>,
+    /// Jobs whose end wakes the session.
+    notify: std::collections::HashSet<u64>,
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
     pub last_model: Option<String>,
@@ -192,6 +201,9 @@ impl Session {
             job_dir,
             always: std::collections::HashSet::new(),
             auth_hosts: std::collections::HashSet::new(),
+            wakes: false,
+            checkins: Vec::new(),
+            notify: std::collections::HashSet::new(),
             log: None,
             last_usage: (0, 0, 0),
             last_model: None,
@@ -639,6 +651,8 @@ impl Session {
                 }
             }
             for (id, code, path) in self.jobs.poll() {
+                // Reported here, so its end needs no wake.
+                self.notify.remove(&id);
                 let note = format!(
                     "Background job {id} finished with exit {code}; output: {}",
                     path.display()
@@ -699,6 +713,42 @@ impl Session {
     pub fn set_permissions(&mut self, mode: Permissions) {
         self.cfg.set_permissions(mode);
         self.tools.jail = crate::perm::jail_enabled(mode);
+    }
+
+    /// A note for a turn the session should start on its own: due check-ins,
+    /// and ends of jobs the model asked to be told about. Other jobs that
+    /// ended are recorded as system notes without waking anything.
+    pub fn due(&mut self) -> Option<String> {
+        let now = std::time::Instant::now();
+        let mut lines = Vec::new();
+        for (id, code, path) in self.jobs.poll() {
+            if self.notify.remove(&id) {
+                let tail = crate::jobs::tail(&path, 600);
+                lines.push(format!("Job {id} ended with exit {code}. The end of its output:\n{tail}"));
+            } else {
+                self.say(Message::system(format!(
+                    "Background job {id} finished with exit {code}; output: {}",
+                    path.display()
+                )));
+            }
+        }
+        let (due, later): (Vec<_>, Vec<_>) = self.checkins.drain(..).partition(|(at, _, _)| *at <= now);
+        self.checkins = later;
+        for (_, job, asked) in due {
+            let ago = crate::jobs::span(now - asked);
+            let state = match job {
+                Some(id) => self.jobs.status(id).unwrap_or_else(|| format!("job {id} is gone")),
+                None => self.jobs.list(),
+            };
+            lines.push(format!("The check-in you asked for {ago} ago:\n{state}"));
+        }
+        (!lines.is_empty()).then(|| {
+            format!(
+                "[Check-in from imp, not the user.]\n{}\nTell the user briefly how it is going. \
+                 If it is still running and worth another look, schedule a job check.",
+                lines.join("\n\n")
+            )
+        })
     }
 
     /// Tell the model the date before its first request and again when the
@@ -833,9 +883,15 @@ impl Session {
                 }
                 if delay.is_some() || args.get("background").and_then(Value::as_bool).unwrap_or(false) {
                     let wait = std::time::Duration::from_secs(delay.unwrap_or(0));
+                    let notify = args.get("notify").and_then(Value::as_bool).unwrap_or(false);
+                    if notify && !self.wakes {
+                        return (false, "refused: notify needs the chat interface; use job wait in line mode".into());
+                    }
                     return match self.jobs.start_after(cmd, &self.job_dir, wait) {
                         Ok(id) => {
-                            let _ = self.jobs.poll();
+                            if notify {
+                                self.notify.insert(id);
+                            }
                             (
                                 true,
                                 format!(
@@ -910,9 +966,29 @@ impl Session {
                     "list" => {
                         let done = self.jobs.poll();
                         for (id, code, _) in done {
+                            // The listing tells the model; its end needs no wake.
+                            self.notify.remove(&id);
                             hooks.ui(Ui::Info(format!("job {id} finished, exit {code}")));
                         }
                         (true, self.jobs.list())
+                    }
+                    "check" => {
+                        let after = args.get("after_s").and_then(Value::as_u64).unwrap_or(0);
+                        let job = args.get("id").and_then(Value::as_u64);
+                        if !self.wakes {
+                            (false, "refused: check-ins need the chat interface; use job wait in line mode".into())
+                        } else if !(30..=86_400).contains(&after) {
+                            (false, "refused: after_s is 30 to 86400 seconds".into())
+                        } else if self.checkins.len() >= MAX_CHECKINS {
+                            (false, format!("refused: {MAX_CHECKINS} check-ins are already pending"))
+                        } else if job.is_some_and(|id| self.jobs.status(id).is_none()) {
+                            (false, format!("refused: no job {}", job.unwrap_or(0)))
+                        } else {
+                            let now = std::time::Instant::now();
+                            self.checkins.push((now + std::time::Duration::from_secs(after), job, now));
+                            let what = job.map_or("the jobs".to_string(), |id| format!("job {id}"));
+                            (true, format!("check-in on {what} in {}", crate::jobs::span(std::time::Duration::from_secs(after))))
+                        }
                     }
                     "kill" => match args.get("id").and_then(Value::as_u64) {
                         Some(id) => (true, self.jobs.kill(id).unwrap_or_else(|e| e)),
@@ -925,12 +1001,11 @@ impl Session {
                                 .and_then(Value::as_u64)
                                 .unwrap_or(55)
                                 .min(55);
-                            (
-                                true,
-                                self.jobs
-                                    .wait(id, std::time::Duration::from_secs(secs))
-                                    .unwrap_or_else(|e| e),
-                            )
+                            let out = self.jobs.wait(id, std::time::Duration::from_secs(secs)).unwrap_or_else(|e| e);
+                            if !out.contains("still running") {
+                                self.notify.remove(&id);
+                            }
+                            (true, out)
                         }
                         None => (false, "refused: job wait needs an id".into()),
                     },
@@ -1777,6 +1852,50 @@ mod tests {
         assert!(tools[0].contains("declined"), "naming a secret ran unasked: {}", tools[0]);
         assert!(tools[1].contains(&format!("[redacted {TEST_NAME}]")), "{}", tools[1]);
         assert!(!s.history.iter().any(|m| m.content.contains(TEST_VALUE)), "the value reached history");
+    }
+
+    #[test]
+    fn check_ins_come_due_with_the_jobs_state() {
+        let (mut s, _fake) = scripted(vec![]);
+        let (ok, out) = s.run_tool("job", &json!({"op": "check", "after_s": 60}), &mut Null);
+        assert!(!ok && out.contains("need the chat"), "line mode accepted a check-in: {out}");
+        s.wakes = true;
+        s.cfg.set_permissions(Permissions::Yolo);
+        let (ok, out) = s.run_tool("bash", &json!({"command": "printf 'copied 3 of 10'; sleep 5", "background": true}), &mut Null);
+        assert!(ok, "{out}");
+        let id: u64 = out.split_whitespace().nth(1).unwrap().parse().unwrap();
+        let (ok, out) = s.run_tool("job", &json!({"op": "check", "after_s": 10}), &mut Null);
+        assert!(!ok && out.contains("30 to 86400"), "{out}");
+        let (ok, out) = s.run_tool("job", &json!({"op": "check", "id": id, "after_s": 600}), &mut Null);
+        assert!(ok && out.contains("10m 0s"), "{out}");
+        assert!(s.due().is_none(), "a check-in fired early");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        s.checkins[0].0 = std::time::Instant::now();
+        let note = s.due().expect("no note when due");
+        assert!(note.starts_with("[Check-in from imp, not the user.]"), "{note}");
+        assert!(note.contains(&format!("job {id}")) && note.contains("last: copied 3 of 10"), "{note}");
+        assert!(s.due().is_none(), "a check-in fired twice");
+        for _ in 0..MAX_CHECKINS {
+            assert!(s.run_tool("job", &json!({"op": "check", "after_s": 60}), &mut Null).0);
+        }
+        let (ok, out) = s.run_tool("job", &json!({"op": "check", "after_s": 60}), &mut Null);
+        assert!(!ok && out.contains("already pending"), "{out}");
+        let _ = s.jobs.kill(id);
+    }
+
+    #[test]
+    fn a_notified_job_wakes_the_session_when_it_ends() {
+        let (mut s, _fake) = scripted(vec![]);
+        s.wakes = true;
+        let (ok, out) = s.run_tool("bash", &json!({"command": "echo all 120 files copied", "background": true, "notify": true}), &mut Null);
+        assert!(ok, "{out}");
+        let quiet = s.run_tool("bash", &json!({"command": "true", "background": true}), &mut Null);
+        assert!(quiet.0);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let note = s.due().expect("the end did not wake");
+        assert!(note.contains("ended with exit 0") && note.contains("all 120 files copied"), "{note}");
+        assert_eq!(note.matches("ended with exit").count(), 1, "the unnotified job woke too: {note}");
+        assert!(s.history.iter().any(|m| m.role == crate::api::Role::System && m.content.contains("finished with exit 0")));
     }
 
     #[test]
