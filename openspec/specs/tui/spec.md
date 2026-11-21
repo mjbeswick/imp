@@ -567,7 +567,7 @@ The system SHALL append a compact record of each typed command, its exit code, a
 
 ### Requirement: The terminal is always restored
 
-The system SHALL restore cursor visibility, cooked input mode, and the primary screen on normal exit, panic, SIGINT, and SIGTERM.
+The system SHALL restore cursor visibility, cooked input mode, and the primary screen on normal exit, panic, SIGINT, SIGTERM, and SIGHUP, and SHALL exit within about a second of such a signal even when the terminal has stopped reading.
 
 #### Scenario: Forced panic
 - **WHEN** the process panics while the alternate screen is active
@@ -584,6 +584,10 @@ The system SHALL restore cursor visibility, cooked input mode, and the primary s
 #### Scenario: Linux terminal
 - **WHEN** the interface runs on Linux
 - **THEN** raw mode is applied with the platform's own `termios` layout, so typed keys reach the composer and the original mode is restored on exit
+
+#### Scenario: Terminal not reading
+- **WHEN** the terminal stops reading, as a frozen SSH session does, and the process receives SIGTERM or SIGHUP
+- **THEN** it exits within about a second
 
 ### Requirement: The composer grows with its text
 
