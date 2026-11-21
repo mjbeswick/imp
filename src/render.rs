@@ -39,6 +39,97 @@ pub fn clean(text: &str) -> String {
     out
 }
 
+/// Text with colour and style codes (SGR) kept and every other escape and
+/// control byte dropped, so shown output can colour itself but never move
+/// the cursor, clear the screen, or draw images.
+pub fn keep_sgr(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => out.push(c),
+            '\t' => out.push_str("    "),
+            '\u{1b}' => match chars.next() {
+                Some('[') => {
+                    let mut seq = String::from("\u{1b}[");
+                    for c in chars.by_ref() {
+                        seq.push(c);
+                        if ('\u{40}'..='\u{7e}').contains(&c) {
+                            break;
+                        }
+                    }
+                    // Only `m`, and only digits and separators before it.
+                    if seq.ends_with('m') && seq[2..seq.len() - 1].chars().all(|c| c.is_ascii_digit() || c == ';' || c == ':') {
+                        out.push_str(&seq);
+                    }
+                }
+                // OSC, DCS (sixel), APC (kitty), PM: up to ST or BEL.
+                Some(']' | 'P' | '_' | '^') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Visible characters in text that may hold SGR codes.
+pub fn visible_width(text: &str) -> usize {
+    let mut n = 0;
+    let mut in_code = false;
+    for c in text.chars() {
+        match (in_code, c) {
+            (false, '\u{1b}') => in_code = true,
+            (true, c) if c.is_ascii_alphabetic() => in_code = false,
+            (true, _) => {}
+            (false, _) => n += 1,
+        }
+    }
+    n
+}
+
+/// At most `width` visible characters, codes kept whole, ending in a reset.
+pub fn fit_sgr(text: &str, width: usize) -> String {
+    let mut out = String::with_capacity(text.len() + 4);
+    let mut n = 0;
+    let mut in_code = false;
+    for c in text.chars() {
+        match (in_code, c) {
+            (false, '\u{1b}') => {
+                in_code = true;
+                out.push(c);
+            }
+            (true, c) => {
+                out.push(c);
+                in_code = !c.is_ascii_alphabetic();
+            }
+            (false, c) if n < width => {
+                out.push(c);
+                n += 1;
+            }
+            (false, _) => {}
+        }
+    }
+    out.push_str("\u{1b}[0m");
+    out
+}
+
+/// Rows of raw spans for shown output, each cut to `width`.
+pub fn raw_rows(text: &str, width: usize) -> Vec<Vec<Span>> {
+    keep_sgr(text)
+        .trim_end_matches('\n')
+        .split('\n')
+        .map(|line| vec![Span::styled(fit_sgr(line, width), Style { raw: true, ..Style::default() })])
+        .collect()
+}
+
 /// The inline attributes a run of text carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Style {
@@ -48,6 +139,8 @@ pub struct Style {
     pub dim: bool,
     /// Table lines, painted in the border colour.
     pub border: bool,
+    /// Text that carries its own colour codes, already laid out.
+    pub raw: bool,
 }
 
 /// A run of text with one style and at most one link.
@@ -688,6 +781,17 @@ mod tests {
         let rows: Vec<String> = lines(reply, 60, true).iter().map(|r| text(r)).collect();
         assert!(rows.iter().any(|r| r.contains("│ Tomorrow")), "{rows:#?}");
         assert!(!rows.iter().any(|r| r.contains("|---")), "{rows:#?}");
+    }
+
+    #[test]
+    fn shown_output_keeps_colour_and_nothing_else() {
+        let text = "\u{1b}[38;5;196mred\u{1b}[0m \u{1b}[2J\u{1b}[10;4Hx\u{1b}]0;title\u{7}y\u{1b}Pq#0;2;0;0;0\u{1b}\\z\u{8}";
+        assert_eq!(keep_sgr(text), "\u{1b}[38;5;196mred\u{1b}[0m xyz");
+        assert_eq!(visible_width("\u{1b}[1;31mab\u{1b}[0mc"), 3);
+        assert_eq!(fit_sgr("\u{1b}[31mabcdef\u{1b}[0m", 3), "\u{1b}[31mabc\u{1b}[0m\u{1b}[0m");
+        let rows = raw_rows("\u{1b}[32m▀▀\u{1b}[0m\nab\n", 10);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0][0].style.raw && rows[0][0].text.starts_with("\u{1b}[32m▀▀"));
     }
 
     #[test]

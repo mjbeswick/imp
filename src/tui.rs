@@ -3782,6 +3782,15 @@ impl App {
     fn paint_spans(&self, role: Role, spans: &[crate::render::Span]) -> String {
         let mut out = String::new();
         for span in spans {
+            // Shown output brings its own colours, or none when colour is off.
+            if span.style.raw {
+                if self.palette.on {
+                    out.push_str(&span.text);
+                } else {
+                    out.push_str(&crate::render::clean(&span.text));
+                }
+                continue;
+            }
             let colour = if span.style.border {
                 Role::Border
             } else if span.style.code {
