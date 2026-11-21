@@ -195,7 +195,18 @@ fn restore_terminal() {
     }
 }
 
+/// The write end of the watchdog pipe, for the signal handler.
+static QUIT_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
 extern "C" fn on_signal(_: std::ffi::c_int) {
+    // If the reset below blocks on a terminal that stopped reading, the
+    // watchdog ends the process anyway.
+    let fd = QUIT_FD.load(Ordering::Relaxed);
+    if fd >= 0 {
+        unsafe {
+            write(fd, [1u8].as_ptr().cast(), 1);
+        }
+    }
     if let Ok(mut slot) = SAVED.try_lock() {
         if let Some(saved) = slot.take() {
             unsafe {
@@ -258,6 +269,18 @@ fn install_guards() {
     unsafe {
         signal(15, on_signal as *const () as usize);
         signal(2, on_signal as *const () as usize);
+        signal(1, on_signal as *const () as usize);
+    }
+    let mut fds = [0 as c_int; 2];
+    if unsafe { pipe(fds.as_mut_ptr()) } == 0 {
+        QUIT_FD.store(fds[1], Ordering::Relaxed);
+        std::thread::spawn(move || {
+            let mut byte = [0u8; 1];
+            if unsafe { read(fds[0], byte.as_mut_ptr().cast(), 1) } > 0 {
+                std::thread::sleep(Duration::from_secs(1));
+                unsafe { _exit(1) };
+            }
+        });
     }
 }
 
