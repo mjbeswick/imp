@@ -273,16 +273,29 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_secs(30));
         });
         let cancel = std::sync::Arc::new(AtomicBool::new(false));
-        let flag = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            flag.store(true, Ordering::Relaxed);
-        });
-        let start = std::time::Instant::now();
+        let seen = std::sync::Arc::new(AtomicBool::new(false));
+        // Cancel once the first bytes are in and the stream has stalled.
+        let at = std::sync::Arc::new(std::sync::Mutex::new(None));
+        {
+            let (flag, seen, at) = (cancel.clone(), seen.clone(), at.clone());
+            std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while !seen.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                *at.lock().unwrap() = Some(std::time::Instant::now());
+                flag.store(true, Ordering::Relaxed);
+            });
+        }
         let mut got = Vec::new();
-        let r = post_stream(&url, &[], b"{}", &cancel, |b| got.extend_from_slice(b));
+        let r = post_stream(&url, &[], b"{}", &cancel, |b| {
+            got.extend_from_slice(b);
+            seen.store(true, Ordering::Relaxed);
+        });
+        let after = at.lock().unwrap().expect("never cancelled").elapsed();
         assert_eq!(r.err().as_deref(), Some("cancelled"));
-        assert!(start.elapsed() < std::time::Duration::from_secs(2), "{:?}", start.elapsed());
+        assert!(after < std::time::Duration::from_secs(2), "{after:?} after cancel");
         assert!(String::from_utf8_lossy(&got).contains("hi"));
     }
 
