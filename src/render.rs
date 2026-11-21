@@ -160,7 +160,7 @@ impl Span {
         }
     }
 
-    fn styled(text: impl Into<String>, style: Style) -> Self {
+    pub(crate) fn styled(text: impl Into<String>, style: Style) -> Self {
         Self {
             text: text.into(),
             style,

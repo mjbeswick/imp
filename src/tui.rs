@@ -358,7 +358,7 @@ pub enum Role {
 }
 
 pub(crate) struct Palette {
-    on: bool,
+    pub(crate) on: bool,
     /// Colour as the terminal and settings allow it, before `mono` turns it off.
     allowed: bool,
     truecolor: bool,
@@ -821,6 +821,14 @@ fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Ro
     if gap {
         lines.push((Role::User, Line::Text(String::new())));
     }
+    if let Some(shown) = entry.text.strip_prefix(RAW) {
+        for row in crate::render::raw_rows(shown, cols.saturating_sub(2)) {
+            let mut row = row;
+            row.insert(0, crate::render::Span::styled("  ", crate::render::Style::default()));
+            lines.push((entry.role, Line::Spans(row)));
+        }
+        return lines;
+    }
     if entry.role == Role::Assistant {
         for row in crate::render::lines(&entry.text, cols, markdown) {
             lines.push((entry.role, Line::Spans(row)));
@@ -876,6 +884,9 @@ fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Ro
     }
     lines
 }
+
+/// Starts an entry whose text is shown output with its own colours.
+const RAW: char = '\u{2}';
 
 /// Separates a tool summary from its duration in the stored row text.
 const TIME: char = '\u{1}';
@@ -2620,7 +2631,11 @@ impl App {
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let out = tools.bash(command, &cancel);
         let role = if out.ok { Role::Tool } else { Role::Error };
-        self.push(role, format!("$ {command}\n{}", out.text));
+        self.push(role, format!("$ {command}"));
+        if !out.text.trim().is_empty() {
+            // Your own command's output keeps its colours.
+            self.push(role, format!("{RAW}{}", out.text));
+        }
     }
 
     /// Apply a model to this session and remember it for the picker.
@@ -5689,6 +5704,19 @@ mod tests {
             let visible = strip(line);
             assert!(visible.chars().count() <= 40, "{visible:?}");
         }
+    }
+
+    #[test]
+    fn typed_output_keeps_its_colour() {
+        let mut a = colour_app();
+        a.push(Role::Tool, format!("{RAW}\u{1b}[31mred\u{1b}[0m \u{1b}[2Jplain"));
+        let screen = a.frame(40, 10);
+        assert!(screen.contains("\u{1b}[31mred\u{1b}[0m plain"), "{screen:?}");
+        assert!(!screen.contains("\u{1b}[2J"), "a clear reached the screen");
+        let mut plain = app();
+        plain.push(Role::Tool, format!("{RAW}\u{1b}[31mred\u{1b}[0m"));
+        let screen = plain.frame(40, 10);
+        assert!(screen.contains("  red") && !screen.contains("\u{1b}[31m"), "{screen:?}");
     }
 
     #[test]

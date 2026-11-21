@@ -647,8 +647,15 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
             let done = session.tools.bash(command, &cancel);
             let role = if done.ok { tui::Role::Tool } else { tui::Role::Error };
             println!("{}", cli.palette.paint(role, &format!("$ {command}")));
-            for line in render::clean(&done.text).lines() {
-                println!("  {}", cli.palette.paint(role, line));
+            // Your own command's output keeps its colours when colour is on.
+            if cli.palette.on {
+                for line in render::keep_sgr(&done.text).lines() {
+                    println!("  {line}\u{1b}[0m");
+                }
+            } else {
+                for line in render::clean(&done.text).lines() {
+                    println!("  {}", cli.palette.paint(role, line));
+                }
             }
             println!();
             continue;
