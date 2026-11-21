@@ -4655,7 +4655,7 @@ fn save_history(history: &[String]) {
 
 /// The rows a restored history draws: user and assistant text, and one
 /// row per tool call. Reasoning, system, and tool results stay hidden.
-fn replay(history: &[crate::api::Message]) -> Vec<(Role, String)> {
+fn replay(history: &[crate::api::Message], root: &std::path::Path) -> Vec<(Role, String)> {
     use crate::api::Role as Api;
     let mut rows = Vec::new();
     for m in history {
@@ -4668,7 +4668,7 @@ fn replay(history: &[crate::api::Message]) -> Vec<(Role, String)> {
                 for call in &m.tool_calls {
                     let args = serde_json::from_str(&call.arguments).unwrap_or_default();
                     // ponytail: no mark; the log does not say if the call failed.
-                    let summary = crate::agent::describe(&call.name, &args);
+                    let summary = crate::agent::relative(crate::agent::describe(&call.name, &args), root);
                     rows.push((Role::Tool, format!("▸ {summary}")));
                 }
             }
@@ -4679,8 +4679,8 @@ fn replay(history: &[crate::api::Message]) -> Vec<(Role, String)> {
 }
 
 /// Draw a restored session and its context size.
-fn send_replay(tx: &Sender<Ev>, history: &[crate::api::Message]) {
-    let _ = tx.send(Ev::Replay(replay(history)));
+fn send_replay(tx: &Sender<Ev>, history: &[crate::api::Message], root: &std::path::Path) {
+    let _ = tx.send(Ev::Replay(replay(history, root)));
     let _ = tx.send(Ev::Usage {
         tokens: Some(crate::api::estimate_tokens(history)),
         hit: 0,
@@ -4739,7 +4739,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
         .iter()
         .any(|m| m.role != crate::api::Role::System)
     {
-        send_replay(&ev_tx, &worker_session.history);
+        send_replay(&ev_tx, &worker_session.history, &worker_session.tools.root);
     }
     let session_id = std::sync::Arc::new(std::sync::Mutex::new(
         worker_session
@@ -4902,7 +4902,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                             if let Ok(mut slot) = session_id.lock() {
                                 *slot = id.clone();
                             }
-                            send_replay(&ev_tx, &worker_session.history);
+                            send_replay(&ev_tx, &worker_session.history, &worker_session.tools.root);
                             let _ = ev_tx.send(Ev::Info(format!("resumed {id}")));
                         }
                         Err(e) => {
@@ -8046,7 +8046,7 @@ mod tests {
         let mut a = app();
         a.push(Role::User, "old conversation");
         let (tx, rx) = channel();
-        send_replay(&tx, &history);
+        send_replay(&tx, &history, std::path::Path::new("/"));
         while let Ok(ev) = rx.try_recv() {
             a.apply(ev);
         }

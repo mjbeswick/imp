@@ -941,7 +941,7 @@ impl Session {
         };
         hooks.ui(Ui::ToolStart {
             name: call.name.clone(),
-            summary: describe(&call.name, &args),
+            summary: relative(describe(&call.name, &args), &self.tools.root),
             args: call.arguments.clone(),
         });
 
@@ -1589,6 +1589,20 @@ fn flatten(text: &str) -> String {
     text.replace('\n', " ").trim().to_string()
 }
 
+/// A tool row with the session directory left off its paths and the
+/// scratch folder named `$IMP_TMP`.
+pub fn relative(summary: String, root: &std::path::Path) -> String {
+    let mut s = summary;
+    if let Some(t) = crate::tools::scratch() {
+        s = s.replace(&t.display().to_string(), "$IMP_TMP");
+    }
+    let root = root.display().to_string();
+    if root.len() > 1 {
+        s = s.replace(&format!("{}/", root.trim_end_matches('/')), "");
+    }
+    s
+}
+
 /// One short line for a tool call, in place of its JSON arguments.
 pub fn describe(name: &str, args: &Value) -> String {
     let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
@@ -1657,6 +1671,13 @@ mod tests {
         assert_eq!(short_url("https://api.open-meteo.com/v1/forecast?latitude=51.3&x=1"), "api.open-meteo.com/v1/forecast…");
         assert_eq!(short_url("https://wttr.in/Woking"), "wttr.in/Woking");
         assert_eq!(describe("fetch", &serde_json::json!({"url": "https://wttr.in/"})), "fetch wttr.in");
+    }
+
+    #[test]
+    fn tool_rows_drop_the_session_directory() {
+        let root = std::path::Path::new("/home/m/shop");
+        assert_eq!(relative("read /home/m/shop/src/cart.py, /etc/hosts".into(), root), "read src/cart.py, /etc/hosts");
+        assert_eq!(relative("run `cd /home/m/shop`".into(), root), "run `cd /home/m/shop`");
     }
 
     fn tmp() -> std::path::PathBuf {
