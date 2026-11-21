@@ -709,7 +709,8 @@ pub enum Ev {
     Error(String),
     Models(Vec<String>),
     Usage {
-        tokens: u64,
+        /// The context estimate, when this event carries one.
+        tokens: Option<u64>,
         hit: u64,
         miss: u64,
         output: u64,
@@ -770,6 +771,7 @@ impl Hooks for WorkerHooks {
             Ui::Info(t) => Ev::Info(t),
             Ui::Error(t) => Ev::Error(t),
             Ui::Show(t) => Ev::Show(t),
+            Ui::Usage { hit, miss, output, model } => Ev::Usage { tokens: None, hit, miss, output, model },
         };
         let _ = self.tx.send(ev);
     }
@@ -2029,7 +2031,9 @@ impl App {
                 output,
                 model,
             } => {
-                self.status.tokens = tokens;
+                if let Some(tokens) = tokens {
+                    self.status.tokens = tokens;
+                }
                 self.status.hit += hit;
                 self.status.miss += miss;
                 self.status.output += output;
@@ -4505,12 +4509,23 @@ fn replay(history: &[crate::api::Message]) -> Vec<(Role, String)> {
 fn send_replay(tx: &Sender<Ev>, history: &[crate::api::Message]) {
     let _ = tx.send(Ev::Replay(replay(history)));
     let _ = tx.send(Ev::Usage {
-        tokens: crate::api::estimate_tokens(history),
+        tokens: Some(crate::api::estimate_tokens(history)),
         hit: 0,
         miss: 0,
         output: 0,
         model: None,
     });
+}
+
+/// The context estimate at a turn's end. Tokens were counted per request.
+fn context_usage(session: &Session) -> Ev {
+    Ev::Usage {
+        tokens: Some(crate::api::estimate_tokens(&session.history)),
+        hit: 0,
+        miss: 0,
+        output: 0,
+        model: session.last_model.clone(),
+    }
 }
 
 /// Run the interface until the user quits. Returns the final session id.
@@ -4575,13 +4590,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                             waited: Duration::ZERO,
                         };
                         let result = worker_session.turn(&note, &mut hooks);
-                        let _ = ev_tx.send(Ev::Usage {
-                            tokens: crate::api::estimate_tokens(&worker_session.history),
-                            hit: worker_session.last_usage.0,
-                            miss: worker_session.last_usage.1,
-                            output: worker_session.last_usage.2,
-                            model: worker_session.last_model.clone(),
-                        });
+                        let _ = ev_tx.send(context_usage(&worker_session));
                         let _ = ev_tx.send(Ev::Done(result.err()));
                     }
                     continue;
@@ -4603,21 +4612,14 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         waited: Duration::ZERO,
                     };
                     let result = worker_session.turn(&text, &mut hooks);
-                    let _ = ev_tx.send(Ev::Usage {
-                        tokens: crate::api::estimate_tokens(&worker_session.history),
-                        hit: worker_session.last_usage.0,
-                        miss: worker_session.last_usage.1,
-                        output: worker_session.last_usage.2,
-                        model: worker_session.last_model.clone(),
-                    });
+                    let _ = ev_tx.send(context_usage(&worker_session));
                     let ok = result.is_ok();
                     let _ = ev_tx.send(Ev::Done(result.err()));
                     // After Done, so the chat never waits for it.
                     let cancelled = worker_session.cancel.load(Ordering::Relaxed);
                     if ok && !cancelled && worker_session.cfg.suggest {
                         if let Some((text, (hit, miss, output))) = worker_session.suggest() {
-                            let tokens = crate::api::estimate_tokens(&worker_session.history);
-                            let _ = ev_tx.send(Ev::Usage { tokens, hit, miss, output, model: None });
+                            let _ = ev_tx.send(Ev::Usage { tokens: None, hit, miss, output, model: None });
                             let _ = ev_tx.send(Ev::Suggest(text));
                         }
                     }
@@ -6137,6 +6139,14 @@ mod tests {
     }
 
     #[test]
+    fn usage_without_tokens_keeps_the_context() {
+        let mut a = app();
+        a.apply(Ev::Usage { tokens: Some(5000), hit: 1, miss: 2, output: 3, model: None });
+        a.apply(Ev::Usage { tokens: None, hit: 10, miss: 20, output: 30, model: None });
+        assert_eq!((a.status.tokens, a.status.hit, a.status.miss, a.status.output), (5000, 11, 22, 33));
+    }
+
+    #[test]
     fn a_suggestion_is_taken_with_tab_and_dropped_by_typing() {
         let mut a = app();
         let (tx, _rx) = channel();
@@ -6232,14 +6242,14 @@ mod tests {
     fn status_sums_cost_across_turns() {
         let mut a = app();
         a.apply(Ev::Usage {
-            tokens: 100,
+            tokens: Some(100),
             hit: 900,
             miss: 100,
             output: 50,
             model: None,
         });
         a.apply(Ev::Usage {
-            tokens: 200,
+            tokens: Some(200),
             hit: 400,
             miss: 200,
             output: 25,

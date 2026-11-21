@@ -786,6 +786,8 @@ fn print_ui_to<W: Write>(
         Ui::Reasoning(t) => {
             let _ = t;
         }
+        // Totalled by the session; printed once the task ends.
+        Ui::Usage { .. } => {}
         Ui::ToolStart { name, summary, args } => {
             let (summary, args) = (render::clean(&summary), render::clean(&args));
             let line = format!("\u{25b8} {summary}");

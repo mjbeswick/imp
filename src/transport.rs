@@ -149,10 +149,8 @@ pub fn tool_reply(id: &str, name: &str, arguments: &str) -> Vec<String> {
             "finish_reason": null
         }]
     });
-    let last = serde_json::json!({
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]
-    });
-    vec![sse(first), sse(second), sse(last), "data: [DONE]\n\n".into()]
+    let last = format!(r#"{{"choices":[{{"index":0,"delta":{{}},"finish_reason":"tool_calls"}}],{USAGE}}}"#);
+    vec![sse(first), sse(second), format!("data: {last}\n\n"), "data: [DONE]\n\n".into()]
 }
 
 #[cfg(test)]

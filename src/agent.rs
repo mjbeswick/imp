@@ -59,6 +59,17 @@ pub enum Ui {
     Error(String),
     /// Output shown to the user with its colours; the model gets text.
     Show(String),
+    /// One request's usage, sent after every request.
+    Usage { hit: u64, miss: u64, output: u64, model: Option<String> },
+}
+
+/// What one task has used so far: steps and tokens over all its requests.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TaskTotals {
+    pub steps: usize,
+    pub hit: u64,
+    pub miss: u64,
+    pub out: u64,
 }
 
 /// Lines of output `show` puts on screen.
@@ -183,6 +194,8 @@ pub struct Session {
     notify: std::collections::HashSet<u64>,
     pub log: Option<Log>,
     pub last_usage: (u64, u64, u64),
+    /// The current or last task's totals.
+    pub task: TaskTotals,
     pub last_model: Option<String>,
     pub attachments: Vec<Image>,
     pub transport: Box<dyn Transport>,
@@ -234,6 +247,7 @@ impl Session {
             notify: std::collections::HashSet::new(),
             log: None,
             last_usage: (0, 0, 0),
+            task: TaskTotals::default(),
             last_model: None,
             attachments: Vec::new(),
             transport: Box::new(Live),
@@ -471,6 +485,16 @@ impl Session {
             }
 
             self.last_usage = (acc.cache_hit, acc.cache_miss, acc.completion_tokens);
+            // Every request is billed, so every request is counted.
+            self.task.hit += acc.cache_hit;
+            self.task.miss += acc.cache_miss;
+            self.task.out += acc.completion_tokens;
+            hooks.ui(Ui::Usage {
+                hit: acc.cache_hit,
+                miss: acc.cache_miss,
+                output: acc.completion_tokens,
+                model: acc.model.clone(),
+            });
             self.last_model = acc.model.clone();
             match api::classify(status, acc.finish.as_deref(), &raw_error) {
                 Ok(()) if status == 200 => return Ok(acc),
@@ -678,6 +702,7 @@ impl Session {
     /// One user turn: stream, run tools, repeat until the model answers.
     pub fn turn(&mut self, user: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
         self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.task = TaskTotals::default();
         self.note_width();
         self.note_date(crate::prompt::day_number());
         let mut message = Message::user(user);
@@ -834,6 +859,7 @@ impl Session {
     }
 
     fn dispatch(&mut self, call: &ToolCall, hooks: &mut dyn Hooks) -> String {
+        self.task.steps += 1;
         let args: Value = match serde_json::from_str(&call.arguments) {
             Ok(v) => v,
             Err(e) => return format!("bad arguments: {e}"),
@@ -2196,6 +2222,20 @@ mod tests {
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
         }
+    }
+
+    #[test]
+    fn every_request_counts_toward_the_task() {
+        let args = json!({"command": "true"}).to_string();
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(crate::transport::tool_reply("c1", "bash", &args)),
+            Script::Ok(crate::transport::tool_reply("c2", "bash", &args)),
+            Script::Ok(text_reply("done")),
+        ]);
+        s.turn("go", &mut Null).unwrap();
+        assert_eq!(s.task.steps, 2);
+        // Three requests of the fake's 8 hit, 2 miss, 5 out each.
+        assert_eq!((s.task.hit, s.task.miss, s.task.out), (24, 6, 15), "{:?}", s.task);
     }
 
     #[test]
