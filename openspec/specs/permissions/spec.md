@@ -27,7 +27,7 @@ The system SHALL allow `read` and `search` without confirmation in every mode.
 
 ### Requirement: Safe-listed commands run unprompted
 
-The system SHALL run a command without confirmation in `normal` only when every part of every pipeline, alone or joined by `;`, `&&`, or `||`, starts with a safe-listed program for listing, inspection, search, or read-only git, SHALL ask for a lone `&`, a redirect other than stdout or stderr to `/dev/null` or stderr to stdout, or a substitution outside quotes, SHALL treat quoted text as an argument except `$(` and backticks inside double quotes, and SHALL ask when a safe program gets a flag that writes files or runs commands.
+The system SHALL run a command without confirmation in `normal` only when every pipeline, alone or joined by `;`, `&&`, or `||`, starts with a safe-listed read-only program, SHALL ask for a lone `&`, a substitution, or a redirect that writes a file, SHALL treat quoted text as an argument except `$(` and backticks inside double quotes, and SHALL ask when a safe program gets a flag that writes files or runs commands.
 
 #### Scenario: Inspection command
 - **WHEN** the model runs `ls -la`, `rg TODO`, or `git diff`
