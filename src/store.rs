@@ -329,7 +329,7 @@ pub struct Log {
 impl Log {
     pub fn create(dir: &Path, cwd: &Path, model: &str) -> Self {
         let _ = std::fs::create_dir_all(dir);
-        let id = timestamp_id();
+        let id = claim_id(dir);
         let log = Log {
             path: dir.join(format!("{id}.jsonl")),
             meta_path: dir.join(format!("{id}.json")),
@@ -388,18 +388,7 @@ impl Log {
 
     /// Copy the transcript and sidecar into a new session.
     pub fn fork(&self) -> Result<Log, String> {
-        let base = timestamp_id();
-        let mut id = base.clone();
-        let mut attempt = 0;
-        loop {
-            let path = self.path.with_file_name(format!("{id}.jsonl"));
-            let meta_path = self.meta_path.with_file_name(format!("{id}.json"));
-            if id != self.id && !path.exists() && !meta_path.exists() {
-                break;
-            }
-            attempt += 1;
-            id = format!("{base}-{attempt}");
-        }
+        let id = claim_id(self.path.parent().unwrap_or(Path::new(".")));
         let path = self.path.with_file_name(format!("{id}.jsonl"));
         let meta_path = self.meta_path.with_file_name(format!("{id}.json"));
         if self.path.exists() {
@@ -584,6 +573,30 @@ fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// A time-based id no stored session has, claimed by creating its sidecar
+/// exclusively, so two processes in the same second still differ.
+fn claim_id(dir: &Path) -> String {
+    let base = timestamp_id();
+    for attempt in 0u32.. {
+        let id = if attempt == 0 { base.clone() } else { format!("{base}-{attempt}") };
+        let taken = dir.join(format!("{id}.jsonl")).exists();
+        let claimed = !taken
+            && std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(format!("{id}.json")))
+                .is_ok();
+        if claimed {
+            return id;
+        }
+        if attempt > 1000 {
+            // An unwritable directory: let the caller's writes report it.
+            return base;
+        }
+    }
+    unreachable!()
 }
 
 fn timestamp_id() -> String {
@@ -1011,6 +1024,20 @@ mod session_tests {
         assert!(copy.meta().title.starts_with("fork of"), "{:?}", copy.meta().title);
         assert_eq!(copy.meta().cwd, log.meta().cwd);
         assert!(log.path.exists());
+    }
+
+    #[test]
+    fn sessions_in_the_same_second_get_their_own_ids() {
+        let dir = tmp();
+        let a = Log::create(&dir, &dir, "m");
+        let b = Log::create(&dir, &dir, "m");
+        let c = a.fork().unwrap();
+        assert!(a.id != b.id && b.id != c.id && a.id != c.id, "{} {} {}", a.id, b.id, c.id);
+        a.append(&Message::user("first"));
+        b.append(&Message::user("second"));
+        assert_eq!(a.meta().title, "first");
+        assert_eq!(b.meta().title, "second");
+        assert_eq!(a.load().len(), 1);
     }
 
     #[test]
