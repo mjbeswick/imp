@@ -104,3 +104,12 @@ The system SHALL tell the model today's date in a system note before the first r
 #### Scenario: Opened later
 - **WHEN** imp has run for days and the user opens a session with `/new`
 - **THEN** that session is told today's date, not the day imp started
+
+### Requirement: The baseline forbids narration between steps
+
+The compiled baseline SHALL tell the model never to write text between tool calls.
+
+#### Scenario: A multi-step task
+
+- **WHEN** the baseline is composed
+- **THEN** it contains the rule against text between tool calls

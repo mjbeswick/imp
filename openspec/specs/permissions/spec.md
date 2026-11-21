@@ -364,3 +364,12 @@ The system SHALL ask before a command that would otherwise run unprompted when i
 #### Scenario: Inside
 - **WHEN** the model runs `cd src && ls`
 - **THEN** it runs without a prompt
+
+### Requirement: Listing tracked files runs unprompted
+
+The system SHALL run `git ls-files` with any arguments without asking, alone or in a safe chain or pipeline.
+
+#### Scenario: Listing a project
+
+- **WHEN** the agent runs `git ls-files | head -50`
+- **THEN** it runs without a confirmation
