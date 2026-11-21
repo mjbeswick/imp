@@ -728,6 +728,8 @@ pub enum Ev {
     },
     Stop(String),
     Done(Option<String>),
+    /// The user's likely next message, drawn greyed out in an empty input.
+    Suggest(String),
 }
 
 /// How long a confirmation waits before it gives up and stops the turn.
@@ -1529,6 +1531,8 @@ struct Status {
     output: u64,
     served: String,
     streaming: bool,
+    /// A likely next message, shown while the input is empty.
+    suggestion: Option<String>,
 }
 
 const COMMANDS: &[(&str, &str)] = crate::help::COMMANDS;
@@ -1580,6 +1584,7 @@ impl App {
                 output: 0,
                 served: String::new(),
                 streaming: false,
+                suggestion: None,
             },
             verbosity,
             root,
@@ -1885,7 +1890,15 @@ impl App {
                 self.push(Role::Tool, format!("{RAW}{text}"));
                 self.dirty = true;
             }
+            Ev::Suggest(text) => {
+                // Late: the user has typed, or another turn began.
+                if self.input.is_empty() && !self.status.streaming && self.pending.is_none() {
+                    self.status.suggestion = Some(text);
+                    self.dirty = true;
+                }
+            }
             Ev::Woke(what) => {
+                self.status.suggestion = None;
                 self.push(Role::Info, format!("⏰ {what}"));
                 self.status.streaming = true;
                 self.dirty = true;
@@ -2188,6 +2201,15 @@ impl App {
                 self.dirty = true;
             }
             return;
+        }
+        if let Some(s) = self.status.suggestion.take() {
+            if matches!(key, Key::Tab | Key::Right) && self.input.is_empty() && self.pending.is_none() {
+                self.cursor = s.len();
+                self.input = s;
+                self.dirty = true;
+                return;
+            }
+            self.dirty = true;
         }
         if let Some(pending) = self.pending.take() {
             self.answer(pending, key, tx);
@@ -4122,6 +4144,15 @@ impl App {
         if let Some(rows) = self.question_rows(cols, space.saturating_sub(2)) {
             return rows;
         }
+        if let (Some(s), true, None) = (&self.status.suggestion, self.input.is_empty(), &self.pending) {
+            let tone = if self.yolo() { Role::Error } else { Role::User };
+            let hint = fit(&format!("{s}  Tab"), cols.saturating_sub(3));
+            return vec![format!(
+                "{}\x1b[7m \x1b[0m{}",
+                self.palette.paint(tone, "> "),
+                self.palette.paint(Role::Thinking, &hint)
+            )];
+        }
         if let Some(row) = self.pending_row(cols) {
             return vec![row];
         }
@@ -4579,7 +4610,17 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         output: worker_session.last_usage.2,
                         model: worker_session.last_model.clone(),
                     });
+                    let ok = result.is_ok();
                     let _ = ev_tx.send(Ev::Done(result.err()));
+                    // After Done, so the chat never waits for it.
+                    let cancelled = worker_session.cancel.load(Ordering::Relaxed);
+                    if ok && !cancelled && worker_session.cfg.suggest {
+                        if let Some((text, (hit, miss, output))) = worker_session.suggest() {
+                            let tokens = crate::api::estimate_tokens(&worker_session.history);
+                            let _ = ev_tx.send(Ev::Usage { tokens, hit, miss, output, model: None });
+                            let _ = ev_tx.send(Ev::Suggest(text));
+                        }
+                    }
                 }
                 Ok(Cmd::SetThinking(on)) => worker_session.cfg.thinking = on,
                 Ok(Cmd::SetAgent(name)) => {
@@ -6093,6 +6134,33 @@ mod tests {
         assert!(out.contains("▌ [2] postgres"), "{out}");
         assert!(out.contains("[1] sqlite"), "{out}");
         assert!(out.contains("[e]"), "{out}");
+    }
+
+    #[test]
+    fn a_suggestion_is_taken_with_tab_and_dropped_by_typing() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.apply(Ev::Suggest("run the tests".into()));
+        assert!(strip(&a.frame(60, 10)).contains(">  run the tests  Tab"), "not drawn");
+        a.handle_key(Key::Tab, &tx);
+        assert_eq!(a.input, "run the tests");
+        assert_eq!(a.cursor, a.input.len());
+
+        let mut a = app();
+        a.apply(Ev::Suggest("run the tests".into()));
+        a.handle_key(Key::Char('n'), &tx);
+        assert_eq!(a.input, "n");
+        assert!(!strip(&a.frame(60, 10)).contains("run the tests"), "still drawn");
+
+        let mut a = app();
+        a.apply(Ev::Suggest("x".into()));
+        a.handle_key(Key::Enter, &tx);
+        assert!(_rx.try_recv().is_err(), "Enter sent the suggestion");
+
+        let mut a = app();
+        a.input = "draft".into();
+        a.apply(Ev::Suggest("late".into()));
+        assert!(a.status.suggestion.is_none(), "a late suggestion was kept");
     }
 
     #[test]
