@@ -95,7 +95,7 @@ one 16 MB output buffer budget.
 /new       another live session  /reload    re-read instructions and skills
 /sessions  pick a session        /compact   compact now
 /think     thinking toggle       /mode      normal, strict, or yolo
-/verbosity level: low or high    /cwd       show the session directory
+/verbosity low, medium, high      /cwd       show the session directory
 /cd        browse or change cwd  /image     browse or attach an image
 /fork      copy the session      /theme     set the colour theme
 /shell     open a shell          /model     set or pick the session model
@@ -159,9 +159,15 @@ skills that teach `bash`.
 - `read` takes several paths; a directory path lists names to three levels, skipping build and VCS noise.
 - `edit` replaces exact strings, several per call, all or nothing.
 - Long commands run with `background`, then `job wait` (55 s at a time).
-- `fetch` makes one GET from your machine, local network included: JSON, feeds,
-  and text as they are, HTML as text. The first fetch from a site asks once per
-  session; `strict` asks every time and `yolo` never.
+- `fetch` makes one GET from your machine, local network included. HTML comes
+  back as compact markdown (headings, links, lists, tables; menus, banners, and
+  footers dropped), RSS and Atom as a list of title, date, and link, and JSON
+  and text as they are. Reading never asks in `normal`, nor does a plain
+  `curl` GET piped into filters such as `jq`; only a URL over 300 characters
+  does, since a long URL can carry data out. `strict` asks every time and
+  `yolo` never.
+- The prompt carries today's date, so questions about news, prices, results,
+  and releases search for the current year.
 - `search` returns summaries with URLs. It exists only on DeepSeek.
 
 ## Configuration
@@ -176,6 +182,7 @@ wins when set.
 # permissions=normal        # normal | strict | yolo
 # allow_sudo=false
 # allow=npm test          # one line per shape; written by `a` at a prompt
+# verbosity=medium        # low: a line per step · medium: and its result · high: and the output
 # thinking=false
 # compact_at=60000
 # color=auto
