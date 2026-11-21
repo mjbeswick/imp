@@ -25,6 +25,22 @@ commented config and one example agent and skill, and overwrites nothing.
 
 Needs libcurl at runtime: present on macOS and on any Linux with curl installed.
 
+`scripts/deploy.sh host…` builds and installs on other machines over SSH:
+it copies the source to `~/projects/imp`, builds with the device's own Rust,
+keeps the previous binary as `imp.prev`, and links the libcurl runtime when
+the dev package is missing.
+
+### Keeping it running
+
+imp has no daemon. Run it under tmux or dtach so a closed terminal or a
+dropped SSH connection leaves every session working:
+
+```sh
+tmux new -As imp imp            # attach, or start if absent
+dtach -A /tmp/imp.sock imp      # the same, smaller
+ssh -t user@host tmux new -As imp imp   # run elsewhere, draw here
+```
+
 ## Use
 
 ```sh
