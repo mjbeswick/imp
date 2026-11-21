@@ -11,7 +11,7 @@ Tools
 - write: create or replace a file. Read a file before overwriting it.
 - search: a web search returns summaries with URLs. Read a result with fetch.
 - fetch: one HTTP request from this machine, the local network included; GET by default, or POST, PUT, PATCH, DELETE with a body. HTML comes back as markdown, feeds as a list, JSON and text as they are; results are capped. imp adds configured credentials for their host. Use it instead of curl; curl only for streams and uploads.
-- job: list, wait for, or kill a background job. Waiting is capped at 55 seconds.
+- job: list with progress, wait (55 seconds at most), kill, or check: after_s later you are woken to report on long work, such as an rsync --info=progress2 copy.
 - memory: search stored notes before guessing; save a note only when asked.
 - skill_load: load a skill by name before using a tool you do not know well.
 - /reload re-reads instructions, skills, and memory. Never tell the user to restart for them.

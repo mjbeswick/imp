@@ -159,6 +159,14 @@ skills that teach `bash`.
 - `read` takes several paths; a directory path lists names to three levels, skipping build and VCS noise.
 - `edit` replaces exact strings, several per call, all or nothing.
 - Long commands run with `background`, then `job wait` (55 s at a time).
+  `delay_s` starts one later (up to 24 h), and `job list` shows each job's
+  elapsed time, output size, and last output line, so a copy run with
+  `rsync --info=progress2` shows how far it has got.
+- In the chat, the agent can check back without you: `job check` with
+  `after_s` wakes the session later with the job's state, and `notify` wakes it
+  when a job ends. The session then reports like any reply, so out of view it
+  joins the Ctrl+O queue. At most four check-ins wait per session, none sooner
+  than 30 s, and they end with the session. Line mode refuses them.
 - `fetch` makes one GET from your machine, local network included. HTML comes
   back as compact markdown (headings, links, lists, tables; menus, banners, and
   footers dropped), RSS and Atom as a list of title, date, and link, and JSON

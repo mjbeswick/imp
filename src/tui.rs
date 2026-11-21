@@ -4395,7 +4395,11 @@ fn wake_summary(note: &str) -> String {
             }
             acc
         });
-    let kind = if note.contains("ended with exit") { "job ended" } else { "check-in" };
+    let kind = match (note.contains("ended with exit"), note.contains("check-in you asked for")) {
+        (true, true) => "job ended, check-in",
+        (true, false) => "job ended",
+        _ => "check-in",
+    };
     if jobs.is_empty() { kind.to_string() } else { format!("{kind}: {}", jobs.join(", ")) }
 }
 
@@ -5129,6 +5133,10 @@ mod tests {
         assert_eq!(a.queue(), vec![0], "the woken session is not waiting");
         assert!(a.panes[0].as_ref().unwrap().entries.iter().any(|e| e.text == "⏰ check-in: job 3"));
         assert_eq!(wake_summary("[Check-in from imp]\nJob 3 ended with exit 0. job 3 x"), "job ended: job 3");
+        assert_eq!(
+            wake_summary("Job 3 ended with exit 0.\n\nThe check-in you asked for 30s ago:\njob 3  exit 0"),
+            "job ended, check-in: job 3"
+        );
     }
 
     #[test]

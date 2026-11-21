@@ -20,8 +20,7 @@ pub struct Job {
     pub command: String,
     pub output: PathBuf,
     pub cursor: u64,
-    pub started: Instant,
-    /// When the command itself begins; later than `started` for a delayed job.
+    /// When the command itself begins; later than the start for a delayed job.
     pub begins: Instant,
     child: Option<Child>,
     code: Option<i32>,
@@ -114,6 +113,7 @@ pub struct Jobs {
 }
 
 impl Jobs {
+    #[cfg(test)]
     pub fn start(&mut self, command: &str, dir: &Path) -> Result<u64, String> {
         self.start_after(command, dir, Duration::ZERO)
     }
@@ -150,7 +150,6 @@ impl Jobs {
                 command: command.to_string(),
                 output,
                 cursor: 0,
-                started: Instant::now(),
                 begins: Instant::now() + delay,
                 child: Some(child),
                 code: None,
@@ -169,7 +168,6 @@ impl Jobs {
                 command: command.to_string(),
                 output,
                 cursor: 0,
-                started: Instant::now(),
                 begins: Instant::now(),
                 child: Some(child),
                 code: None,
