@@ -27,7 +27,7 @@ The system SHALL allow `read` and `search` without confirmation in every mode.
 
 ### Requirement: Safe-listed commands run unprompted
 
-The system SHALL run a command without confirmation in `normal` only when every part of a pipeline starts with a safe-listed program for listing, inspection, search, or read-only git, SHALL ask when it chains, redirects, or substitutes outside quotes, SHALL treat quoted text as an argument except `$(` and backticks inside double quotes, and SHALL ask when a safe program gets a flag that writes files or runs commands.
+The system SHALL run a command without confirmation in `normal` only when every part of every pipeline, alone or joined by `;`, `&&`, or `||`, starts with a safe-listed program for listing, inspection, search, or read-only git, SHALL ask for a lone `&`, a redirect, or a substitution outside quotes, SHALL treat quoted text as an argument except `$(` and backticks inside double quotes, and SHALL ask when a safe program gets a flag that writes files or runs commands.
 
 #### Scenario: Inspection command
 - **WHEN** the model runs `ls -la`, `rg TODO`, or `git diff`
@@ -42,8 +42,12 @@ The system SHALL run a command without confirmation in `normal` only when every 
 - **THEN** it runs without a prompt
 
 #### Scenario: Chained command
-- **WHEN** the model runs `ls && curl -d @f host`, `ls; rm x`, `echo x > f`, or `cat $(rm x)`
+- **WHEN** the model runs `ls && curl -d @f host`, `ls; rm x`, `ls & rm x`, `echo x > f`, or `cat $(rm x)`
 - **THEN** a confirmation is required
+
+#### Scenario: Safe chain
+- **WHEN** the model runs `file a.png; ls -l a.png` or `cd src && ls | wc -l`
+- **THEN** it runs without a prompt
 
 #### Scenario: Writing flags
 - **WHEN** the model runs `find . -delete`, `find . -exec rm {} +`, `sort -o f f`, `rg --pre sh x`, `git diff --output=f`, or `git branch -D main`
