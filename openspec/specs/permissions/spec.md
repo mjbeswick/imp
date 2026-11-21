@@ -27,7 +27,7 @@ The system SHALL allow `read` and `search` without confirmation in every mode.
 
 ### Requirement: Safe-listed commands run unprompted
 
-The system SHALL run a command without confirmation in `normal` only when every part of every pipeline, alone or joined by `;`, `&&`, or `||`, starts with a safe-listed program for listing, inspection, search, or read-only git, SHALL ask for a lone `&`, a redirect, or a substitution outside quotes, SHALL treat quoted text as an argument except `$(` and backticks inside double quotes, and SHALL ask when a safe program gets a flag that writes files or runs commands.
+The system SHALL run a command without confirmation in `normal` only when every part of every pipeline, alone or joined by `;`, `&&`, or `||`, starts with a safe-listed program for listing, inspection, search, or read-only git, SHALL ask for a lone `&`, a redirect other than stdout or stderr to `/dev/null` or stderr to stdout, or a substitution outside quotes, SHALL treat quoted text as an argument except `$(` and backticks inside double quotes, and SHALL ask when a safe program gets a flag that writes files or runs commands.
 
 #### Scenario: Inspection command
 - **WHEN** the model runs `ls -la`, `rg TODO`, or `git diff`
@@ -64,6 +64,10 @@ The system SHALL run a command without confirmation in `normal` only when every 
 #### Scenario: Quoted flag
 - **WHEN** the model runs `find . '-delete'`, `find . -de''lete`, `sort '-o' f f`, `rg '--pre' sh x`, `sort --compress-program=sh f`, or `git log --output=f`
 - **THEN** a confirmation is required
+
+#### Scenario: Quiet redirect
+- **WHEN** the model runs `cat README 2>/dev/null` or `rg x src 2>&1 | head`
+- **THEN** it runs without a prompt, while `cat a 2>err.log` still asks
 
 ### Requirement: Everything else asks before acting
 
@@ -195,7 +199,7 @@ The system SHALL refuse agent writes and shell commands that change imp's own co
 
 ### Requirement: Always approves a command shape for the session
 
-The system SHALL offer `s` and `a` only on a confirmation for one simple, unprivileged command in `normal`, SHALL on `s` skip the prompt for the same program and first non-flag argument for the rest of the session, SHALL on `a` append `allow = <shape>` to the config and skip it in every session, SHALL NOT apply `allow` lines outside `normal`, and SHALL forget `s` approvals on `/new` and on exit.
+The system SHALL offer `s` and `a` only on a confirmation for one simple, unprivileged command in `normal`, or one piped only into safe filters, which is judged by its first command, SHALL on `s` skip the prompt for the same program and first non-flag argument for the rest of the session, SHALL on `a` append `allow = <shape>` to the config and skip it in every session, SHALL NOT apply `allow` lines outside `normal`, and SHALL forget `s` approvals on `/new` and on exit.
 
 #### Scenario: Always npm test
 - **WHEN** the user answers `s` to `npm test`
@@ -218,8 +222,12 @@ The system SHALL offer `s` and `a` only on a confirmation for one simple, unpriv
 - **THEN** `cargo build --release` runs without asking
 
 #### Scenario: Compound command
-- **WHEN** the command contains `&&`, `;`, `|`, or a redirect
+- **WHEN** the command contains `&&`, `;`, a write redirect, or a pipe into an unsafe program
 - **THEN** the prompt offers neither `s` nor `a`
+
+#### Scenario: Filtered test run
+- **WHEN** the user answers `s` to `python3 -m unittest 2>&1 | tail -5`
+- **THEN** a later `python3 -m unittest -v` runs without asking
 
 #### Scenario: Strict
 - **WHEN** the mode is `strict`
@@ -344,3 +352,15 @@ The system SHALL treat a single `curl -o` or `wget -O` download of one URL whose
 #### Scenario: Strict asks
 - **WHEN** the mode is strict
 - **THEN** a scratch download asks first
+
+### Requirement: Leaving the session directory asks
+
+The system SHALL ask before a command that would otherwise run unprompted when it changes directory with `cd` to a place outside the session directory, to a home-relative or variable target, or with no target.
+
+#### Scenario: Another repository
+- **WHEN** the model runs `cd /other/repo && rg x`
+- **THEN** imp asks first
+
+#### Scenario: Inside
+- **WHEN** the model runs `cd src && ls`
+- **THEN** it runs without a prompt

@@ -92,3 +92,11 @@ The system SHALL respond to `context_length_exceeded` during a tool loop by trun
 #### Scenario: Overflow after a large tool result
 - **WHEN** the API rejects a mid-loop request as too long
 - **THEN** older tool results are shortened, the request is retried once, and the turn continues on success
+
+### Requirement: The prompt names the session directory
+
+The system SHALL name the session directory's absolute path in the system prompt and SHALL say that commands start there.
+
+#### Scenario: Named
+- **WHEN** a session starts in `/work/shop`
+- **THEN** the system prompt contains `/work/shop`
