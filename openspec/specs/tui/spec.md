@@ -227,7 +227,7 @@ The system SHALL render a frame only when a key was handled, an event arrived fr
 
 ### Requirement: The interface is one chat column
 
-The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width before a turn whenever that width has changed since the previous turn.
+The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width, and the height when known, before a turn whenever either has changed since the previous turn.
 
 #### Scenario: Quiet layout
 - **WHEN** the session is idle and the transcript is empty
@@ -256,6 +256,10 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 #### Scenario: Resized window
 - **WHEN** the window width changes between turns
 - **THEN** the next turn carries one line naming the new width, and later turns at that width carry none
+
+#### Scenario: Taller window
+- **WHEN** only the window height changes between turns
+- **THEN** the next turn carries one line naming the width and the new height
 
 #### Scenario: Piped output
 - **WHEN** input is a pipe with no terminal size

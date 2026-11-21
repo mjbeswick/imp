@@ -464,3 +464,15 @@ The system SHALL accept `show` on `bash`, SHALL show the command's output to the
 #### Scenario: A picture
 - **WHEN** the model runs `chafa --format symbols --size 60x24 photo.jpg` with `show`
 - **THEN** the user sees the picture and the model receives `[shown to the user: a 60×24 picture]`
+
+### Requirement: Agent commands see the screen size
+
+The system SHALL set `COLUMNS` and `LINES` to the current terminal size in the environment of commands the agent runs, when that size is known, and SHALL leave commands the user types unchanged.
+
+#### Scenario: Picture sized to the screen
+- **WHEN** the agent runs `echo "$COLUMNS $LINES"` in an 80 by 24 terminal
+- **THEN** the output is `80 24`
+
+#### Scenario: No terminal
+- **WHEN** imp runs in line mode with no terminal size
+- **THEN** the command sees the variables it inherited
