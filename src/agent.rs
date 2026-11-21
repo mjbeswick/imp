@@ -986,8 +986,8 @@ impl Session {
             "write" => {
                 let path = args.get("path").and_then(Value::as_str).unwrap_or("");
                 let content = args.get("content").and_then(Value::as_str).unwrap_or("");
-                if !self.allowed_write(path, hooks) {
-                    return (false, "refused: the user declined this write".into());
+                if let Err(why) = self.allowed_write(path, hooks) {
+                    return (false, why.replace("{what}", "write"));
                 }
                 let o = self.tools.write(path, content);
                 (o.ok, o.text)
@@ -1005,8 +1005,8 @@ impl Session {
                 if pairs.is_empty() {
                     return (false, "refused: edit needs at least one old/new pair".into());
                 }
-                if !self.allowed_write(path, hooks) {
-                    return (false, "refused: the user declined this edit".into());
+                if let Err(why) = self.allowed_write(path, hooks) {
+                    return (false, why.replace("{what}", "edit"));
                 }
                 let o = self.tools.edit(path, &pairs);
                 (o.ok, o.text)
@@ -1315,30 +1315,34 @@ impl Session {
         }
     }
 
-    fn allowed_write(&mut self, path: &str, hooks: &mut dyn Hooks) -> bool {
-        if let Ok(resolved) = self.tools.resolve(path) {
-            match crate::perm::self_config(&resolved, self.cfg.live_permissions()) {
-                Some(crate::perm::Decision::Deny(why)) => return {
-                    hooks.ui(Ui::Error(why));
-                    false
-                },
-                Some(crate::perm::Decision::Ask) => {
-                    if !hooks.confirm(&format!("write {path}")) {
-                        return false;
-                    }
-                }
-                _ => {}
+    /// Whether a write or edit of `path` may go ahead. The error is the
+    /// tool result, with `{what}` for the tool's name.
+    fn allowed_write(&mut self, path: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
+        let declined = || Err("refused: the user declined this {what}".to_string());
+        // The jail refuses before anyone is asked.
+        let resolved = self.tools.resolve(path).map_err(|e| format!("refused: {e}"))?;
+        match crate::perm::self_config(&resolved, self.cfg.live_permissions()) {
+            Some(crate::perm::Decision::Deny(why)) => {
+                hooks.ui(Ui::Error(why.clone()));
+                return Err(why);
             }
+            Some(crate::perm::Decision::Ask) => {
+                if !hooks.confirm(&format!("write {path}")) {
+                    return declined();
+                }
+            }
+            _ => {}
         }
-        let inside = self
-            .tools
-            .resolve(path)
-            .map(|p| p.starts_with(&self.tools.root))
-            .unwrap_or(false);
+        let root = self.tools.root.canonicalize().unwrap_or_else(|_| self.tools.root.clone());
+        let scratch = crate::tools::scratch().and_then(|d| d.canonicalize().ok());
+        let inside = resolved.starts_with(&root)
+            || resolved.starts_with(&self.tools.root)
+            || scratch.is_some_and(|d| resolved.starts_with(d));
         match perm::classify_write(inside, self.cfg.live_permissions()) {
-            Decision::Allow => true,
-            Decision::Ask => hooks.confirm(&format!("write {path}")),
-            Decision::Deny(_) => false,
+            Decision::Allow => Ok(()),
+            Decision::Ask if hooks.confirm(&format!("write {path}")) => Ok(()),
+            Decision::Ask => declined(),
+            Decision::Deny(why) => Err(why),
         }
     }
 
@@ -2150,6 +2154,36 @@ mod tests {
         assert!(s.history.iter().any(|m| m.content.contains("[dropped")));
     }
 
+
+    #[derive(Default)]
+    struct Counting(usize);
+    impl Hooks for Counting {
+        fn ui(&mut self, _: Ui) {}
+        fn confirm(&mut self, _: &str) -> bool {
+            self.0 += 1;
+            true
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn jailed_writes_are_refused_without_asking() {
+        let (mut s, _fake) = scripted(vec![]);
+        let mut hooks = Counting::default();
+        let outside = std::env::temp_dir().join(format!("imp-outside-{}.txt", std::process::id()));
+        let (ok, out) = s.run_tool(
+            "edit",
+            &json!({"path": outside.display().to_string(), "edits": [{"old": "a", "new": "b"}]}),
+            &mut hooks,
+        );
+        assert!(!ok);
+        assert!(out.contains("outside the session directory"), "{out}");
+        let (ok, out) = s.run_tool("write", &json!({"path": "inside.txt", "content": "x"}), &mut hooks);
+        assert!(ok, "{out}");
+        assert_eq!(hooks.0, 0, "a prompt appeared");
+    }
 
     struct Yes;
     impl Hooks for Yes {
