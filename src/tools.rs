@@ -446,7 +446,9 @@ impl Tools {
         // Canonicalise the deepest existing ancestor, then re-append the rest.
         let mut probe = norm.clone();
         let mut suffix: Vec<std::ffi::OsString> = Vec::new();
-        while !probe.exists() {
+        // A dangling symlink counts as present: it cannot be resolved, so
+        // canonicalising it fails and the path is refused.
+        while probe.symlink_metadata().is_err() {
             let Some(name) = probe.file_name().map(|n| n.to_os_string()) else {
                 break;
             };
@@ -1274,6 +1276,20 @@ mod tests {
         assert!(o.ok);
         assert!(o.text.contains("== src =="), "{}", o.text);
         assert!(o.text.contains("1: root"), "{}", o.text);
+    }
+
+    #[test]
+    fn a_dangling_link_cannot_leave_the_jail() {
+        let (mut t, d) = tools();
+        let outside = std::env::temp_dir().join(format!("imp-dangling-{}", std::process::id()));
+        let _ = std::fs::remove_file(&outside);
+        std::os::unix::fs::symlink(&outside, d.join("out")).unwrap();
+        assert!(t.resolve("out").is_err(), "a dangling link resolved");
+        assert!(t.resolve("out/deeper").is_err());
+        assert!(!t.write("out", "x").ok);
+        assert!(!outside.exists(), "the write left the jail");
+        // A missing file under a real directory still resolves.
+        assert!(t.resolve("new/file.txt").is_ok());
     }
 
     #[test]
