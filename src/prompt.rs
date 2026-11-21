@@ -10,7 +10,7 @@ Tools
 - edit: replace exact strings, several per call, all or nothing. Use it instead of sed.
 - write: create or replace a file. Read a file before overwriting it.
 - search: a web search returns summaries with URLs. Read a result with fetch.
-- fetch: GET an http or https URL from this machine, the local network included. HTML comes back as markdown, feeds as a list, JSON and text as they are. Results are capped, so never pipe into head. Use it instead of curl for every GET; curl is for posts, authenticated calls, and streams.
+- fetch: one HTTP request from this machine, the local network included; GET by default, or POST, PUT, PATCH, DELETE with a body. HTML comes back as markdown, feeds as a list, JSON and text as they are; results are capped. imp adds configured credentials for their host. Use it instead of curl; curl only for streams and uploads.
 - job: list, wait for, or kill a background job. Waiting is capped at 55 seconds.
 - memory: search stored notes before guessing; save a note only when asked.
 - skill_load: load a skill by name before using a tool you do not know well.

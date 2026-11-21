@@ -1094,16 +1094,19 @@ impl Session {
                 headers.push(format!("{name}: {value}"));
             }
         }
-        let body: Option<Vec<u8>> = match args.get("body") {
-            None | Some(Value::Null) => None,
-            Some(Value::String(text)) => Some(text.clone().into_bytes()),
-            Some(json) => {
-                if !headers.iter().any(|h| h.to_ascii_lowercase().starts_with("content-type:")) {
-                    headers.push("Content-Type: application/json".into());
-                }
-                Some(json.to_string().into_bytes())
+        // JSON goes as JSON, whether the model sent an object or its text;
+        // other text as plain text. A header the model sets wins.
+        let (body, kind): (Option<Vec<u8>>, &str) = match args.get("body") {
+            None | Some(Value::Null) => (None, ""),
+            Some(Value::String(text)) if serde_json::from_str::<Value>(text).is_ok_and(|v| v.is_object() || v.is_array()) => {
+                (Some(text.clone().into_bytes()), "application/json")
             }
+            Some(Value::String(text)) => (Some(text.clone().into_bytes()), "text/plain; charset=utf-8"),
+            Some(json) => (Some(json.to_string().into_bytes()), "application/json"),
         };
+        if body.is_some() && !headers.iter().any(|h| h.to_ascii_lowercase().starts_with("content-type:")) {
+            headers.push(format!("Content-Type: {kind}"));
+        }
 
         let mode = self.cfg.live_permissions();
         let what = describe("fetch", args);
@@ -2066,7 +2069,9 @@ mod tests {
         let (ok, out) = s.run_tool("fetch", &args, &mut hooks);
         assert!(ok, "{out}");
         assert!(out.contains("POST /items ") && out.contains("Content-Type: application/json") && out.ends_with("{\"title\":\"x\"}"), "{out}");
-        let _ = s.run_tool("fetch", &args, &mut hooks);
+        let text = json!({"url": format!("{api}/items"), "method": "PUT", "body": "{\"title\":\"y\"}"});
+        let (_, out) = s.run_tool("fetch", &text, &mut hooks);
+        assert!(out.contains("PUT /items ") && out.contains("Content-Type: application/json"), "JSON text not sent as JSON: {out}");
         assert_eq!(hooks.confirms, 2, "a second write did not ask");
         let (ok, out) = s.run_tool("fetch", &json!({"url": api, "method": "TRACE"}), &mut hooks);
         assert!(!ok && out.contains("not TRACE"), "{out}");

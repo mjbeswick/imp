@@ -166,6 +166,13 @@ skills that teach `bash`.
   `curl` GET piped into filters such as `jq`; only a URL over 300 characters
   does, since a long URL can carry data out. `strict` asks every time and
   `yolo` never.
+- `fetch` also calls APIs: `method` (POST, PUT, PATCH, DELETE), `headers`, and
+  a `body`, sent as JSON when it is an object. Credentials live in the config,
+  bound to one host, and come from the environment when the request goes out:
+  `auth = api.github.com Authorization: Bearer $GITHUB_TOKEN`. The model never
+  sees the key, it is never sent to another host or through a redirect, and the
+  variable is treated as a secret. In `normal`, every write asks, naming the
+  method, path, and body size, and a credentialed read asks once per host.
 - The prompt carries today's date, so questions about news, prices, results,
   and releases search for the current year.
 - `search` returns summaries with URLs. It exists only on DeepSeek.
@@ -182,6 +189,7 @@ wins when set.
 # permissions=normal        # normal | strict | yolo
 # allow_sudo=false
 # allow=npm test          # one line per shape; written by `a` at a prompt
+# auth=api.github.com Authorization: Bearer $GITHUB_TOKEN   # one line per host
 # verbosity=medium        # low: a line per step · medium: and its result · high: and the output
 # thinking=false
 # compact_at=60000

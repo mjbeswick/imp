@@ -101,13 +101,6 @@ pub fn get(url: &str, headers: &[&str], timeout_ms: u64) -> Result<(u16, String)
     Ok((response.status, String::from_utf8_lossy(&body).into_owned()))
 }
 
-/// One GET for the `fetch` tool: redirects followed over http and https,
-/// the body kept up to `cap` bytes. Returns status, content type, and body.
-pub fn fetch(url: &str, timeout_ms: u64, cap: usize) -> Result<(u16, String, String), String> {
-    let (r, body) = call("GET", url, &[], None, true, timeout_ms, cap)?;
-    Ok((r.status, r.content_type, body))
-}
-
 /// One request with any method, headers, and body, the reply kept up to
 /// `cap` bytes. Redirects are followed, over http and https, only when
 /// `follow` is set.
