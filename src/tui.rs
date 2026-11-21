@@ -3954,23 +3954,7 @@ impl App {
                         .unwrap_or_else(|| ("field".into(), String::new()));
                     format!("provider {name} · {label}: {value}{CARET}  (Enter next · Esc cancel)")
                 }
-                Pending::Question {
-                    q,
-                    opts,
-                    mode,
-                    typed,
-                    ..
-                } => {
-                    let mut text = format!("{q}   ");
-                    for (i, o) in opts.iter().enumerate() {
-                        text.push_str(&format!("[{}] {o}  ", i + 1));
-                    }
-                    match mode {
-                        AskMode::Choose => text.push_str("[e] answer   Esc skip"),
-                        AskMode::Custom => text.push_str(&format!("> {typed}{CARET}")),
-                    }
-                    text
-                }
+                Pending::Question { .. } => return None,
             };
             // A bar marks the row that is waiting on the user.
             let text = if self.bell_pending {
@@ -4088,7 +4072,52 @@ impl App {
     /// `space` is what is left after the status line and the menu. The caret
     /// keeps its own row visible, and the area never takes more than eight rows
     /// or half the space.
+    /// An open question as rows: the question, one per choice, then the keys,
+    /// each wrapped behind the accent bar. At most `space` rows, keys last.
+    fn question_rows(&self, cols: usize, space: usize) -> Option<Vec<String>> {
+        let Some(Pending::Question { q, opts, mode, typed, .. }) = &self.pending else {
+            return None;
+        };
+        let mut parts = vec![(q.clone(), 2)];
+        for (i, o) in opts.iter().enumerate() {
+            parts.push((format!("[{}] {o}", i + 1), 6));
+        }
+        parts.push(match mode {
+            AskMode::Choose => ("[e] answer   Esc skip".to_string(), 2),
+            AskMode::Custom => (format!("> {typed}{CARET}"), 4),
+        });
+        let mut rows = Vec::new();
+        for (text, indent) in parts {
+            // Continuation rows sit under the text, past the key.
+            for (j, line) in wrap(&text, cols.saturating_sub(indent)).into_iter().enumerate() {
+                let pad = if j == 0 { 0 } else { indent - 2 };
+                rows.push(format!("▌ {}{line}", " ".repeat(pad)));
+            }
+        }
+        // ponytail: a question taller than the screen loses its middle rows; the keys stay.
+        let space = space.max(2);
+        if rows.len() > space {
+            let keys = rows.split_off(rows.len() - 1);
+            rows.truncate(space - 1);
+            rows.extend(keys);
+        }
+        let bell = if self.bell_pending { "\u{7}" } else { "" };
+        Some(
+            rows.iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    let painted = self.palette.paint(Role::Info, &fit(r, cols));
+                    let row = painted.replace(CARET, "\x1b[7m \x1b[27m");
+                    if i == 0 { format!("{bell}{row}") } else { row }
+                })
+                .collect(),
+        )
+    }
+
     fn composer(&self, cols: usize, space: usize) -> Vec<String> {
+        if let Some(rows) = self.question_rows(cols, space.saturating_sub(2)) {
+            return rows;
+        }
         if let Some(row) = self.pending_row(cols) {
             return vec![row];
         }
@@ -6056,9 +6085,32 @@ mod tests {
             typed: String::new(),
         });
         let out = a.frame(100, 12);
-        assert!(out.contains("which database?"), "{out}");
+        assert!(out.contains("which database?\r\n"), "{out}");
+        assert!(out.contains("▌ [2] postgres"), "{out}");
         assert!(out.contains("[1] sqlite"), "{out}");
         assert!(out.contains("[e]"), "{out}");
+    }
+
+    #[test]
+    fn long_choices_wrap_instead_of_leaving_the_screen() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        let long = "imp's agent loop (idle → streaming → tool call → tool end → streaming again)";
+        a.pending = Some(Pending::Question {
+            q: "Which state machine should I chart?".into(),
+            opts: vec![long.into(), "A job's lifecycle".into(), "Something else".into()],
+            reply: tx,
+            mode: AskMode::Choose,
+            typed: String::new(),
+        });
+        let out = a.frame(40, 20);
+        for line in out.split("\r\n") {
+            assert!(strip(line).chars().count() <= 40, "{line:?}");
+        }
+        let text = strip(&out);
+        assert!(text.contains("again)"), "the end of choice 1 was cut: {text}");
+        assert!(text.contains("[3] Something else"), "{text}");
+        assert!(text.contains("[e] answer"), "{text}");
     }
 
     #[test]
