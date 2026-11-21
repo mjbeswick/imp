@@ -873,7 +873,9 @@ impl Session {
                     other => other,
                 };
                 // A plain curl GET shares the per-host fetch approval.
-                let get = perm::plain_get(cmd).filter(|_| !matches!(decision, Decision::Deny(_)) && named.is_none());
+                // Without a scratch folder `$IMP_TMP` is empty, and the target would be `/`.
+                let scratch = || crate::tools::scratch().and_then(|_| perm::scratch_download(cmd));
+                let get = perm::plain_get(cmd).or_else(scratch).filter(|_| !matches!(decision, Decision::Deny(_)) && named.is_none());
                 if let Some(url) = get {
                     if perm::classify_fetch(mode, &url) == Decision::Ask && !hooks.confirm(&perm::fetch_question(&url)) {
                         return (false, format!("refused: the user declined fetching from {}", perm::url_host(&url)));

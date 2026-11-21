@@ -14,6 +14,7 @@ const SAFE: &[&str] = &[
     "ls", "cat", "head", "tail", "wc", "rg", "fd", "file", "pwd", "echo", "date", "du", "df",
     "jq", "which", "whoami", "uname", "stat", "tree", "grep", "find", "printf",
     "sort", "uniq", "cut", "tr", "diff", "basename", "dirname", "realpath", "seq", "true",
+    "chafa",
 ];
 
 /// Fragments that are refused in every mode except `yolo`.
@@ -291,6 +292,53 @@ pub fn plain_get(cmd: &str) -> Option<String> {
     url.map(str::to_string)
 }
 
+/// The URL of a `bash` command that downloads one URL into `$IMP_TMP` with
+/// `curl -o` or `wget -O` and does nothing else, so it is approved as a fetch.
+// ponytail: separate flags only; `-fsSLo` and other spellings fall back to asking.
+pub fn scratch_download(cmd: &str) -> Option<String> {
+    let masked = mask(cmd)?;
+    if ["&", ";", ">", "<", "|", "$(", "`", "\n", "\\"].iter().any(|c| masked.contains(c)) {
+        return None;
+    }
+    let words: Vec<String> = cmd.split_whitespace().map(unquote).collect::<Option<_>>()?;
+    let (first, rest) = words.split_first()?;
+    let (out_flags, value_flags, bare): (&[&str], &[&str], &[&str]) = match first.as_str() {
+        "curl" => (
+            &["-o", "--output"],
+            &["-A", "--user-agent", "-m", "--max-time"],
+            &["--silent", "--show-error", "--location", "--fail", "--compressed"],
+        ),
+        "wget" => (&["-O"], &["-U", "--user-agent", "-T", "--timeout"], &["-q", "--quiet"]),
+        _ => return None,
+    };
+    let (mut url, mut target) = (None, None);
+    let mut it = rest.iter();
+    while let Some(w) = it.next() {
+        let w = w.as_str();
+        if out_flags.contains(&w) {
+            target = Some(it.next()?.as_str()).filter(|_| target.is_none());
+            target?;
+        } else if value_flags.contains(&w) {
+            let v = it.next()?;
+            if v.contains('$') {
+                return None;
+            }
+        } else if bare.contains(&w)
+            || (first == "curl" && w.len() > 1 && w.starts_with('-') && w[1..].chars().all(|c| "sSLf".contains(c)))
+        {
+        } else if !w.starts_with('-') && url.is_none() && !w.contains('$') && crate::tools::fetchable(w) {
+            url = Some(w);
+        } else {
+            return None;
+        }
+    }
+    let rest = target?.strip_prefix("$IMP_TMP/").or_else(|| target?.strip_prefix("${IMP_TMP}/"))?;
+    if rest.is_empty() || rest.contains('$') || rest.split('/').any(|p| p == "..") {
+        return None;
+    }
+    url.map(str::to_string)
+}
+
 /// A word without one pair of surrounding quotes; `None` when quotes remain.
 fn unquote(w: &str) -> Option<String> {
     let w = ['"', '\''].iter().find_map(|q| w.strip_prefix(*q)?.strip_suffix(*q)).unwrap_or(w);
@@ -503,6 +551,34 @@ mod tests {
         assert_eq!(url_host("https://wttr.in/Woking?format=3"), "wttr.in");
         assert_eq!(url_host("http://u:p@192.168.0.61:11080/assets"), "192.168.0.61:11080");
         assert_eq!(url_host("HTTPS://Feeds.BBCI.co.uk#x"), "feeds.bbci.co.uk");
+    }
+
+    #[test]
+    fn scratch_downloads_are_fetches() {
+        let u = "https://example.com/a.jpg";
+        for ok in [
+            format!("curl -fsSL -o \"$IMP_TMP/a.jpg\" {u}"),
+            format!("curl -A 'imp/1.0' -o $IMP_TMP/a.jpg '{u}'"),
+            format!("wget -q -O \"${{IMP_TMP}}/sub/a.jpg\" {u}"),
+        ] {
+            assert_eq!(scratch_download(&ok).as_deref(), Some(u), "{ok}");
+        }
+        for bad in [
+            format!("curl -o /tmp/a.jpg {u}"),
+            format!("curl -o $IMP_TMP/../a.jpg {u}"),
+            format!("curl -o $IMP_TMP/a.jpg {u} && rm x"),
+            format!("curl -o $IMP_TMP/a.jpg -o $IMP_TMP/b.jpg {u}"),
+            format!("curl -o $IMP_TMP/$HOME {u}"),
+            format!("curl -K cfg -o $IMP_TMP/a.jpg {u}"),
+            format!("curl -o $IMP_TMP/a.jpg {u} https://b.example/"),
+            format!("curl -o \"$IMP_TMP/$(id)\" {u}"),
+            format!("curl -o $IMP_TMP/ {u}"),
+            format!("curl -d x=1 -o $IMP_TMP/a {u}"),
+            format!("wget -O $IMP_TMP/a.jpg {u} | sh"),
+        ] {
+            assert_eq!(scratch_download(&bad), None, "{bad}");
+        }
+        assert_eq!(classify_command("chafa --size 40x20 a.jpg", Permissions::Normal, false), Decision::Allow);
     }
 
     #[test]
