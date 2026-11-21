@@ -204,7 +204,25 @@ pub const THEMES: &[Theme] = &[
 /// Light text means a dark theme.
 pub fn tint(c: [u8; 3], text: [u8; 3]) -> [u8; 3] {
     let dark = text.iter().map(|&v| v as u32).sum::<u32>() > 384;
-    c.map(|v| if dark { (v as u32 * 22 / 100) as u8 } else { (255 - (255 - v as u32) * 18 / 100) as u8 })
+    c.map(|v| if dark { (v as u32 * 22 / 100) as u8 } else { (255 - (255 - v as u32) * 12 / 100) as u8 })
+}
+
+/// `tint` for 256 colours, as (background, text). The nearest entry turns
+/// every tint grey, so the hue is kept by lifting the slot's strong channels
+/// one cube step. That step is bright on dark themes, so the text goes white.
+pub fn tint_256(c: [u8; 3], text: [u8; 3]) -> (u8, u8) {
+    let dark = text.iter().map(|&v| v as u32).sum::<u32>() > 384;
+    let max = *c.iter().max().unwrap_or(&0) as u32;
+    let [r, g, b] = c.map(|v| {
+        let strong = v as u32 * 10 >= max * 8;
+        match (dark, strong) {
+            (true, true) => 1,
+            (true, false) => 0,
+            (false, true) => 5,
+            (false, false) => 4,
+        }
+    });
+    (16 + 36 * r + 6 * g + b, if dark { 231 } else { to_256(text) })
 }
 
 pub fn to_256([r, g, b]: [u8; 3]) -> u8 {
@@ -301,6 +319,49 @@ pub fn save(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn contrast(a: [u8; 3], b: [u8; 3]) -> f64 {
+        let lum = |c: [u8; 3]| {
+            let f = |v: u8| {
+                let v = v as f64 / 255.0;
+                if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    /// The 256-colour cube or grey ramp entry as RGB.
+    fn from_256(i: u8) -> [u8; 3] {
+        const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+        if i >= 232 {
+            [8 + 10 * (i - 232); 3]
+        } else {
+            let i = i - 16;
+            [STEPS[(i / 36) as usize], STEPS[(i / 6 % 6) as usize], STEPS[(i % 6) as usize]]
+        }
+    }
+
+    #[test]
+    fn diff_text_reads_on_its_tint() {
+        for t in THEMES {
+            let fg = t.rgb(Slot::Text);
+            for slot in [Slot::Success, Slot::Error] {
+                let bg = tint(t.rgb(slot), fg);
+                let true_c = contrast(fg, bg);
+                let (b256, f256) = tint_256(t.rgb(slot), fg);
+                let bg256 = from_256(b256);
+                let fb_c = contrast(from_256(f256), bg256);
+                assert!(true_c >= 4.5 && fb_c >= 4.5, "{} {slot:?}", t.name);
+            }
+            // Added and removed must still differ where only 256 colours exist.
+            let (add, del) = (tint_256(t.rgb(Slot::Success), fg).0, tint_256(t.rgb(Slot::Error), fg).0);
+            if t.rgb(Slot::Success) != t.rgb(Slot::Error) {
+                assert_ne!(add, del, "{}: + and - share a 256 background", t.name);
+            }
+        }
+    }
 
     #[test]
     fn tint_is_dark_on_dark_and_pale_on_light() {
