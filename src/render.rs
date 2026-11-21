@@ -121,6 +121,77 @@ pub fn fit_sgr(text: &str, width: usize) -> String {
     out
 }
 
+/// Commands that draw fenced blocks, by language, from the config.
+static RENDERERS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+pub fn set_renderers(list: &[(String, String)]) {
+    if let Ok(mut r) = RENDERERS.lock() {
+        *r = list.to_vec();
+    }
+}
+
+/// Results by command, width, and text, failures included, so a redraw
+/// never starts the process again.
+// ponytail: grows with each new diagram for the life of the process; an LRU if sessions draw thousands.
+static DRAWN: std::sync::Mutex<Vec<(u64, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+
+/// A fenced block drawn by its language's command, or `None` to show it as
+/// code: no command, a failure, empty output, or two seconds passed.
+fn render_block(lang: &str, body: &str, width: usize) -> Option<String> {
+    let command = RENDERERS.lock().ok()?.iter().find(|(l, _)| l == lang)?.1.clone();
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (&command, width, body).hash(&mut h);
+    let key = h.finish();
+    if let Some((_, hit)) = DRAWN.lock().ok()?.iter().find(|(k, _)| *k == key) {
+        return hit.clone();
+    }
+    let drawn = run_renderer(&command, body, width);
+    if let Ok(mut d) = DRAWN.lock() {
+        d.push((key, drawn.clone()));
+    }
+    drawn
+}
+
+fn run_renderer(command: &str, body: &str, width: usize) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .env("COLUMNS", width.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdin = child.stdin.take()?;
+    let input = body.to_string();
+    std::thread::spawn(move || {
+        let _ = stdin.write_all(input.as_bytes());
+    });
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        out
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let status = loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let out = String::from_utf8_lossy(&reader.join().ok()?).into_owned();
+    (status.success() && !out.trim().is_empty()).then_some(out)
+}
+
 /// Rows of raw spans for shown output, each cut to `width`.
 pub fn raw_rows(text: &str, width: usize) -> Vec<Vec<Span>> {
     keep_sgr(text)
@@ -177,6 +248,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
     let width = width.max(8);
     let mut rows = Vec::new();
     let mut fence: Option<char> = None;
+    let mut fence_lang = String::new();
     let mut fence_body: Vec<String> = Vec::new();
 
     let markdown = clean(markdown).replace('\t', "    ");
@@ -188,6 +260,13 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
         let line = raw.trim_end();
         if let Some(marker) = fence {
             if is_fence(line, marker) {
+                // A closed block in a language with a command is drawn by it.
+                if let Some(drawn) = render_block(&fence_lang, &fence_body.join("\n"), width) {
+                    rows.extend(raw_rows(&drawn, width));
+                    fence_body.clear();
+                    fence = None;
+                    continue;
+                }
                 for body in std::mem::take(&mut fence_body) {
                     rows.extend(hard_wrap(
                         &[Span::styled(body, Style { dim: true, ..Style::default() })],
@@ -202,6 +281,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
         }
         if let Some(marker) = fence_start(line) {
             fence = Some(marker);
+            fence_lang = line.trim_start().trim_start_matches(marker).trim().to_ascii_lowercase();
             continue;
         }
         if let Some(aligns) = all.get(at).and_then(|next| separator(next)).filter(|_| line.contains('|')) {
@@ -792,6 +872,29 @@ mod tests {
         let rows = raw_rows("\u{1b}[32m▀▀\u{1b}[0m\nab\n", 10);
         assert_eq!(rows.len(), 2);
         assert!(rows[0][0].style.raw && rows[0][0].text.starts_with("\u{1b}[32m▀▀"));
+    }
+
+    #[test]
+    fn fenced_blocks_render_through_their_command() {
+        let marker = std::env::temp_dir().join(format!("imp-render-runs-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        set_renderers(&[
+            ("imptest".into(), format!("echo run >> {}; printf '[%s:%s]' \"$COLUMNS\" \"$(cat)\"", marker.display())),
+            ("impfail".into(), "exit 1".into()),
+        ]);
+        let reply = "before\n```imptest\nA --> B\n```\nafter";
+        let rows = lines(reply, 30, false);
+        let texts: Vec<String> = rows.iter().map(|r| r.iter().map(|s| s.text.clone()).collect()).collect();
+        assert_eq!(texts[1], "[30:A --> B]\u{1b}[0m", "{texts:?}");
+        assert!(rows[1][0].style.raw);
+        let _ = lines(reply, 30, false);
+        let runs = std::fs::read_to_string(&marker).unwrap_or_default().lines().count();
+        assert_eq!(runs, 1, "a redraw ran the command again");
+        let open = lines("```imptest\nA --> C", 30, false);
+        assert!(open.iter().all(|r| !r[0].style.raw), "an open fence was drawn");
+        let failed = lines("```impfail\nx\n```", 30, false);
+        assert_eq!(failed[0][0].text, "x");
+        assert!(failed[0][0].style.dim);
     }
 
     #[test]

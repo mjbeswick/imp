@@ -153,6 +153,8 @@ pub struct Config {
     /// Credentials by host: `host[:port]` and a header template naming
     /// environment variables.
     pub auth: Vec<(String, String)>,
+    /// Commands that draw fenced blocks of a language in replies.
+    pub render: Vec<(String, String)>,
     pub links: Links,
     pub skills_dir: Option<PathBuf>,
 }
@@ -184,6 +186,7 @@ impl Default for Config {
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
             auth: Vec::new(),
+            render: Vec::new(),
             links: Links::Auto,
             skills_dir: None,
         }
@@ -264,6 +267,14 @@ impl Config {
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Managed profile lines were read before this pass.
             key if key.starts_with("provider.") => {}
+            key if key.starts_with("render.") => {
+                let lang = key["render.".len()..].trim().to_ascii_lowercase();
+                if lang.is_empty() || value.trim().is_empty() {
+                    return Err("render needs a language and a command, such as `render.mermaid = mmd`".into());
+                }
+                self.render.retain(|(l, _)| *l != lang);
+                self.render.push((lang, value.trim().to_string()));
+            }
             // Unknown keys are ignored so newer configs do not break older runs.
             _ => {}
         }
@@ -897,6 +908,15 @@ mod tests {
         cfg.set("auth", "API.github.com Authorization: Bearer $GITHUB_TOKEN").unwrap();
         assert_eq!(cfg.auth, [("api.github.com".to_string(), "Authorization: Bearer $GITHUB_TOKEN".to_string())]);
         assert!(cfg.set("auth", "api.github.com").is_err());
+    }
+
+    #[test]
+    fn render_lines_name_a_command_per_language() {
+        let mut cfg = Config::default();
+        cfg.set("render.Mermaid", "mmd --color").unwrap();
+        cfg.set("render.mermaid", "mmd").unwrap();
+        assert_eq!(cfg.render, [("mermaid".to_string(), "mmd".to_string())]);
+        assert!(cfg.set("render.d2", " ").is_err());
     }
 
     #[test]
