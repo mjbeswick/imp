@@ -2094,6 +2094,14 @@ impl App {
             }
             Ev::Done(err) => {
                 self.status.streaming = false;
+                self.status.quiet_since = None;
+                if let Some(start) = self.status.task_start.take() {
+                    if self.verbosity != Verbosity::Low {
+                        let (hit, miss, out) = self.status.task_usage;
+                        let cost = self.task_cost(hit, miss, out);
+                        self.push(Role::Thinking, task_line(start.elapsed(), self.status.steps, hit, miss, out, cost));
+                    }
+                }
                 if let Some(e) = err {
                     self.push(Role::Error, e);
                 }
@@ -3690,6 +3698,13 @@ impl App {
             && self.last_redraw.elapsed() >= Duration::from_millis(100)
     }
 
+    /// What a task cost, where imp knows the provider's prices.
+    fn task_cost(&self, hit: u64, miss: u64, out: u64) -> Option<f64> {
+        (self.cfg.provider == crate::providers::Provider::DeepSeek)
+            .then(|| crate::pricing::cost(&self.cfg.model, crate::pricing::now(), hit, miss, out))
+            .flatten()
+    }
+
     /// Start counting a task: its time, steps, and tokens.
     fn begin_task(&mut self) {
         let now = Instant::now();
@@ -4361,7 +4376,15 @@ impl App {
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
-        let right = tilde(&self.root);
+        // A running task's meter takes its place.
+        let right = match self.status.task_start.filter(|_| self.status.streaming) {
+            Some(start) => {
+                let s = &self.status;
+                let out = s.task_usage.2.max(s.chars as u64 / 4);
+                format!("{} · {} · ↓{}", span(start.elapsed()), steps(s.steps), compact_tokens(out))
+            }
+            None => tilde(&self.root),
+        };
         let gap = cols.saturating_sub(left.chars().count() + right.chars().count());
         if gap >= 2 {
             format!("{left}{}{right}", " ".repeat(gap))
@@ -4472,6 +4495,31 @@ fn tail(text: &str, width: usize) -> String {
 }
 
 /// The prompt asks with the verb alone; the tool row above names the command.
+/// `1 step`, `3 steps`.
+fn steps(n: usize) -> String {
+    if n == 1 { "1 step".into() } else { format!("{n} steps") }
+}
+
+/// A finished task in one line: `42s · 5 steps · 18K in (92% cached) · 1.4K out · $0.004`.
+/// Parts that are unknown are left out.
+pub fn task_line(took: Duration, step_count: usize, hit: u64, miss: u64, out: u64, cost: Option<f64>) -> String {
+    let mut parts = vec![span(took)];
+    if step_count > 0 {
+        parts.push(steps(step_count));
+    }
+    let input = hit + miss;
+    if input > 0 {
+        parts.push(format!("{} in ({}% cached)", compact_tokens(input), hit * 100 / input));
+    }
+    if out > 0 {
+        parts.push(format!("{} out", compact_tokens(out)));
+    }
+    if let Some(c) = cost.filter(|c| *c > 0.0) {
+        parts.push(if c < 0.1 { format!("${c:.3}") } else { format!("${c:.2}") });
+    }
+    parts.join(" · ")
+}
+
 /// A duration as `4s` or `1m12s`.
 fn span(d: Duration) -> String {
     let s = d.as_secs();
@@ -6241,6 +6289,36 @@ mod tests {
         for line in out.split("\r\n") {
             assert!(line.chars().filter(|c| *c != '\u{7}').count() <= 65, "{line:?}");
         }
+    }
+
+    #[test]
+    fn a_task_reports_its_meter_and_finish_line() {
+        assert_eq!(
+            task_line(Duration::from_secs(42), 5, 16_560, 1_440, 1_400, Some(0.004)),
+            "42s · 5 steps · 18K in (92% cached) · 1.4K out · $0.004"
+        );
+        assert_eq!(task_line(Duration::from_secs(72), 1, 0, 0, 0, None), "1m12s · 1 step");
+
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.input = "go".into();
+        a.cursor = 2;
+        a.handle_key(Key::Enter, &tx);
+        a.apply(Ev::ToolStart { name: "bash".into(), summary: "ls".into(), args: String::new() });
+        a.apply(Ev::Usage { tokens: None, hit: 900, miss: 100, output: 2100, model: None });
+        let status = strip(&a.status_line(80));
+        assert!(status.ends_with("0s · 1 step · ↓2.1K"), "{status}");
+        a.apply(Ev::Done(None));
+        let last = a.entries.last().unwrap();
+        assert!(last.text.starts_with("0s · 1 step · 1K in (90% cached) · 2.1K out"), "{}", last.text);
+        assert!(!strip(&a.status_line(80)).contains("step"), "the meter stayed");
+
+        a.verbosity = Verbosity::Low;
+        a.begin_task();
+        a.status.streaming = true;
+        let n = a.entries.len();
+        a.apply(Ev::Done(None));
+        assert_eq!(a.entries.len(), n, "a finish line at verbosity low");
     }
 
     #[test]

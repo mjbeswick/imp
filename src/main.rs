@@ -198,7 +198,9 @@ fn run() -> Result<(), String> {
     let (result, id) = match prompt {
         Some(text) => {
             let mut session = session;
+            let start = std::time::Instant::now();
             let result = session.turn(&text, &mut Cli { verbosity: tui_cfg.verbosity, palette: tui::Palette::detect(&tui_cfg) });
+            finish_line(&session, start, tui_cfg.verbosity);
             let id = session.log.as_ref().map(|l| l.id.clone());
             (result, id)
         }
@@ -671,11 +673,25 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
             println!();
             continue;
         }
+        let start = std::time::Instant::now();
         if let Err(e) = session.turn(text, cli) {
             eprintln!("imp: {e}");
         }
+        finish_line(session, start, cli.verbosity);
         println!();
     }
+}
+
+/// The task's time, steps, tokens, and cost on stderr, as the chat shows it.
+fn finish_line(session: &Session, start: std::time::Instant, verbosity: config::Verbosity) {
+    if verbosity == config::Verbosity::Low {
+        return;
+    }
+    let t = session.task;
+    let cost = (session.cfg.provider == providers::Provider::DeepSeek)
+        .then(|| pricing::cost(&session.cfg.model, pricing::now(), t.hit, t.miss, t.out))
+        .flatten();
+    eprintln!("\n{}", tui::task_line(start.elapsed(), t.steps, t.hit, t.miss, t.out, cost));
 }
 
 /// Values as aligned rows, with `current` beside the active one.
