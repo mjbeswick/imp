@@ -187,7 +187,7 @@ fn safe_pipeline(cmd: &str, masked: &str) -> bool {
         let short = |c: char| args.iter().any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains(c));
         match first {
             "git" => match args.first().copied() {
-                Some("status") => true,
+                Some("status" | "ls-files") => true,
                 Some("diff" | "log" | "show") => !flag(&["--output"]),
                 Some("branch") => args[1..].iter().all(|a| {
                     matches!(*a, "-a" | "-r" | "-v" | "-vv" | "--all" | "--remotes" | "--list" | "--show-current")
@@ -527,7 +527,7 @@ mod tests {
         for c in [
             "rg TODO src | head -20", "git diff --stat", "git branch -a", "find . -name '*.rs'", "sort -n f", "uniq f",
             "ls -la | wc -l", "file \"$IMP_TMP/a.png\"; ls -l \"$IMP_TMP/a.png\"", "cd src && ls | wc -l",
-            "git status || echo 'not a repo; fine'", "echo 'a && b | c'",
+            "git status || echo 'not a repo; fine'", "git ls-files | head -50", "echo 'a && b | c'",
         ] {
             assert_eq!(ask(c), Decision::Allow, "{c}");
         }
