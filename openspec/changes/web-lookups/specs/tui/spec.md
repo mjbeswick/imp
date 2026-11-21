@@ -19,3 +19,19 @@ The system SHALL keep a per-session verbosity with three levels, `low`, `medium`
 #### Scenario: Fetch label
 - **WHEN** the model fetches a URL with a long query string
 - **THEN** the row names the host and path without the query
+
+#### Scenario: Line mode
+- **WHEN** the user runs `/verbosity high` in line mode
+- **THEN** each following call prints its arguments and capped output as plain text
+
+#### Scenario: No argument
+- **WHEN** the user runs `/verbosity` with no level in the chat interface
+- **THEN** the picker lists `low`, `medium`, and `high` with the current level highlighted and choosing one applies it
+
+#### Scenario: Line mode no argument
+- **WHEN** the user runs `/verbosity` with no level in line mode
+- **THEN** the transcript reports the current level and no picker opens
+
+#### Scenario: Unknown level
+- **WHEN** the user runs `/verbosity loud`
+- **THEN** the transcript refuses the value and names `low`, `medium`, and `high`
