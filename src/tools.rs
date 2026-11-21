@@ -557,6 +557,11 @@ impl Tools {
 
         let script = format!("exec 2>&1\n{command}");
         let mut cmd = Command::new("sh");
+        // Only the agent's commands hand over; what the user types keeps the
+        // full environment.
+        if hand_over {
+            crate::secrets::scrub(&mut cmd);
+        }
         cmd.arg("-c")
             .arg(script)
             .current_dir(&self.root)

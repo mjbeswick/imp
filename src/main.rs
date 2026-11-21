@@ -11,6 +11,7 @@ mod pricing;
 mod prompt;
 mod providers;
 mod render;
+mod secrets;
 mod store;
 mod theme;
 mod tools;
@@ -56,6 +57,7 @@ fn run() -> Result<(), String> {
     }
 
     let mut cfg = config::Config::load(&config::Config::config_path())?;
+    secrets::keep(&cfg.pass_env);
     let mut prompt_words: Vec<String> = Vec::new();
     let mut mode = "auto";
     let mut agent_name: Option<String> = None;

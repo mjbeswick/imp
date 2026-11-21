@@ -146,6 +146,8 @@ pub struct Config {
     pub mouse: bool,
     /// Move to the next waiting session after handing one work.
     pub auto_next: bool,
+    /// Secret-looking variables the agent's commands may still see.
+    pub pass_env: Vec<String>,
     pub links: Links,
     pub skills_dir: Option<PathBuf>,
 }
@@ -174,6 +176,7 @@ impl Default for Config {
             color: ColorMode::Auto,
             mouse: true,
             auto_next: true,
+            pass_env: Vec::new(),
             links: Links::Auto,
             skills_dir: None,
         }
@@ -233,6 +236,7 @@ impl Config {
             "permissions" => self.set_permissions(Permissions::parse(value)?),
             "allow_sudo" => self.allow_sudo = parse_bool(value)?,
             "allow" => self.allows(value),
+            "pass_env" => self.pass_env.extend(value.split(',').map(str::trim).filter(|n| !n.is_empty()).map(String::from)),
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
             "max_tokens" => self.max_tokens = parse_u32(key, value)?,
@@ -834,6 +838,14 @@ mod tests {
         let cfg = Config::from_str(&text).unwrap();
         assert_eq!(cfg.named, named);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pass_env_lists_accumulate() {
+        let mut cfg = Config::default();
+        cfg.set("pass_env", "GH_TOKEN, NPM_TOKEN").unwrap();
+        cfg.set("pass_env", "HF_TOKEN").unwrap();
+        assert_eq!(cfg.pass_env, ["GH_TOKEN", "NPM_TOKEN", "HF_TOKEN"]);
     }
 
     #[test]

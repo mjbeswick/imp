@@ -63,6 +63,8 @@ impl Jobs {
 
         let script = format!("exec 2>&1\n{command}");
         let mut cmd = Command::new("sh");
+        // Jobs are the agent's: no secrets unless passed through.
+        crate::secrets::scrub(&mut cmd);
         cmd.arg("-c")
             .arg(script)
             .stdin(Stdio::null())
