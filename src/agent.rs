@@ -124,6 +124,12 @@ pub fn schema() -> Vec<Value> {
     ]
 }
 
+/// `command` for `sh -c`, run from `dir` rather than imp's launch directory.
+pub fn in_dir(dir: &std::path::Path, command: &str) -> String {
+    let dir = dir.display().to_string().replace('\'', "'\\''");
+    format!("cd '{dir}' && {command}")
+}
+
 fn diff_detail(name: &str, args: &Value) -> String {
     let mut lines: Vec<String> = Vec::new();
     match name {
@@ -1037,7 +1043,7 @@ impl Session {
                 }
                 // Only after the deny list, the opt-in, and any confirmation.
                 if cmd.split_whitespace().next() == Some("sudo") {
-                    if let Some(code) = hooks.run_attached(cmd) {
+                    if let Some(code) = hooks.run_attached(&in_dir(&self.tools.root, cmd)) {
                         return (code == 0, format!("exit {code}\n(ran attached to the terminal)"));
                     }
                 }
@@ -1789,6 +1795,15 @@ mod tests {
         assert_eq!(old_id, before);
         assert_eq!(s.log.as_ref().unwrap().id, new_id);
         assert_ne!(new_id, old_id);
+    }
+
+    #[test]
+    fn in_dir_survives_a_quote_in_the_path() {
+        let dir = std::env::temp_dir().join("imp it's here");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = std::process::Command::new("sh").arg("-c").arg(in_dir(&dir, "pwd")).output().unwrap();
+        let got = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(std::fs::canonicalize(got.trim()).unwrap(), std::fs::canonicalize(&dir).unwrap());
     }
 
     #[test]
