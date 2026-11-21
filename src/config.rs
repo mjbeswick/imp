@@ -140,6 +140,8 @@ pub struct Config {
     pub compact_at: u32,
     pub max_tokens: u32,
     pub max_steps: usize,
+    /// Rounds a `/goal` may run before it stops.
+    pub goal_rounds: u32,
     pub thinking: bool,
     pub color: ColorMode,
     /// Capture the mouse wheel in the chat.
@@ -181,6 +183,7 @@ impl Default for Config {
             compact_at: 60_000,
             max_tokens: 8192,
             max_steps: 24,
+            goal_rounds: 5,
             thinking: false,
             color: ColorMode::Auto,
             mouse: true,
@@ -262,6 +265,12 @@ impl Config {
             "compact_at" => self.compact_at = parse_u32(key, value)?,
             "max_tokens" => self.max_tokens = parse_u32(key, value)?,
             "max_steps" => self.max_steps = parse_max_steps(value)?,
+            "goal_rounds" => {
+                self.goal_rounds = parse_u32("goal_rounds", value)?;
+                if !(1..=20).contains(&self.goal_rounds) {
+                    return Err(format!("goal_rounds is 1 to 20, got {}", self.goal_rounds));
+                }
+            }
             "thinking" => self.thinking = parse_bool(value)?,
             "links" => self.links = Links::parse(value)?,
             "color" => self.color = ColorMode::parse(value)?,

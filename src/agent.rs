@@ -63,6 +63,14 @@ pub enum Ui {
     Usage { hit: u64, miss: u64, output: u64, model: Option<String> },
 }
 
+/// A `/goal`: its text and how many rounds it has run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Goal {
+    pub text: String,
+    pub round: u32,
+    pub rounds: u32,
+}
+
 /// What one task has used so far: steps and tokens over all its requests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TaskTotals {
@@ -196,6 +204,10 @@ pub struct Session {
     pub last_usage: (u64, u64, u64),
     /// The current or last task's totals.
     pub task: TaskTotals,
+    /// A goal that carries the work across turns.
+    pub goal: Option<Goal>,
+    /// The user declined a confirmation since the goal last checked.
+    declined: bool,
     pub last_model: Option<String>,
     pub attachments: Vec<Image>,
     pub transport: Box<dyn Transport>,
@@ -248,6 +260,8 @@ impl Session {
             log: None,
             last_usage: (0, 0, 0),
             task: TaskTotals::default(),
+            goal: None,
+            declined: false,
             last_model: None,
             attachments: Vec::new(),
             transport: Box::new(Live),
@@ -840,6 +854,58 @@ impl Session {
         self.say(Message::system(format!("Today is {}.", crate::prompt::date_of(day))));
     }
 
+    /// Set a goal and return the first round's message.
+    pub fn start_goal(&mut self, text: &str) -> String {
+        let rounds = self.cfg.goal_rounds.clamp(1, 20);
+        self.goal = Some(Goal { text: text.to_string(), round: 1, rounds });
+        self.declined = false;
+        format!(
+            "[Goal from imp, not the user.] Work until this goal is met: {text}\n{}",
+            GOAL_ENDINGS
+        )
+    }
+
+    /// After a round: the next round's message, or why the goal ended. The
+    /// goal is cleared when it ends.
+    pub fn goal_next(&mut self) -> Result<String, String> {
+        let Some(goal) = self.goal.clone() else { return Err("no goal".into()) };
+        let last = self
+            .history
+            .iter()
+            .rev()
+            .find(|m| m.role == crate::api::Role::Assistant && !m.content.trim().is_empty())
+            .and_then(|m| m.content.lines().rev().find(|l| !l.trim().is_empty()))
+            .unwrap_or("")
+            .trim()
+            .trim_matches(|c: char| c == '*' || c == '_' || c == '`')
+            .to_string();
+        let upper = last.to_ascii_uppercase();
+        let end = if upper.starts_with("GOAL MET") {
+            Some("goal met".to_string())
+        } else if upper.starts_with("GOAL BLOCKED") {
+            let why = last["GOAL BLOCKED".len()..].trim_start_matches([':', ' ']).trim();
+            Some(if why.is_empty() { "goal blocked".into() } else { format!("goal blocked: {why}") })
+        } else if std::mem::take(&mut self.declined) {
+            Some("goal stopped: a confirmation was declined".into())
+        } else if goal.round >= goal.rounds {
+            Some(format!("goal not met after {} rounds", goal.rounds))
+        } else {
+            None
+        };
+        if let Some(why) = end {
+            self.goal = None;
+            return Err(why);
+        }
+        let round = goal.round + 1;
+        if let Some(g) = &mut self.goal {
+            g.round = round;
+        }
+        Ok(format!(
+            "[Goal check from imp, not the user.] Round {round} of {}. Goal: {}\n{GOAL_ENDINGS}",
+            goal.rounds, goal.text
+        ))
+    }
+
     /// Tell the model how wide the screen is, once per change.
     fn note_width(&mut self) {
         let width = self.cols.load(std::sync::atomic::Ordering::Relaxed);
@@ -859,6 +925,15 @@ impl Session {
     }
 
     fn dispatch(&mut self, call: &ToolCall, hooks: &mut dyn Hooks) -> String {
+        let out = self.dispatch_inner(call, hooks);
+        // Every decline reads "refused: the user declined …".
+        if out.starts_with("refused: the user declined") {
+            self.declined = true;
+        }
+        out
+    }
+
+    fn dispatch_inner(&mut self, call: &ToolCall, hooks: &mut dyn Hooks) -> String {
         self.task.steps += 1;
         let args: Value = match serde_json::from_str(&call.arguments) {
             Ok(v) => v,
@@ -1395,6 +1470,10 @@ impl Session {
     }
 
 }
+
+/// How a goal round's reply must end, so imp knows whether to go on.
+const GOAL_ENDINGS: &str = "End your reply with a last line of GOAL MET and the evidence when the goal is met, \
+or GOAL BLOCKED: <why> when you need the user. Otherwise do the next part of the work.";
 
 /// A suggestion as the user would send it: one short line, quotes stripped.
 fn clean_suggestion(text: &str) -> Option<String> {
@@ -2222,6 +2301,48 @@ mod tests {
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
         }
+    }
+
+    #[test]
+    fn a_goal_runs_until_met_blocked_or_out_of_rounds() {
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(text_reply("Fixed one test; two remain.")),
+            Script::Ok(text_reply("I will write GOAL MET when done.\nStill working.")),
+            Script::Ok(text_reply("All pass.\n**GOAL MET** 13 tests OK")),
+        ]);
+        s.cfg.goal_rounds = 5;
+        let first = s.start_goal("all tests pass");
+        assert!(first.contains("all tests pass") && first.contains("GOAL MET"));
+        s.turn(&first, &mut Null).unwrap();
+        let next = s.goal_next().unwrap();
+        assert!(next.contains("Round 2 of 5"), "{next}");
+        s.turn(&next, &mut Null).unwrap();
+        let next = s.goal_next().expect("a mention mid-reply ended the goal");
+        s.turn(&next, &mut Null).unwrap();
+        assert_eq!(s.goal_next(), Err("goal met".into()));
+        assert!(s.goal.is_none());
+
+        let (mut s, _fake) = scripted(vec![Script::Ok(text_reply("GOAL BLOCKED: needs the API key"))]);
+        let first = s.start_goal("deploy");
+        s.turn(&first, &mut Null).unwrap();
+        assert_eq!(s.goal_next(), Err("goal blocked: needs the API key".into()));
+
+        let (mut s, _fake) = scripted(vec![Script::Ok(text_reply("a")), Script::Ok(text_reply("b"))]);
+        s.cfg.goal_rounds = 2;
+        let first = s.start_goal("x");
+        s.turn(&first, &mut Null).unwrap();
+        let next = s.goal_next().unwrap();
+        s.turn(&next, &mut Null).unwrap();
+        assert_eq!(s.goal_next(), Err("goal not met after 2 rounds".into()));
+
+        let args = json!({"command": "npm publish"}).to_string();
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(crate::transport::tool_reply("c1", "bash", &args)),
+            Script::Ok(text_reply("could not publish")),
+        ]);
+        let first = s.start_goal("publish");
+        s.turn(&first, &mut Null).unwrap();
+        assert_eq!(s.goal_next(), Err("goal stopped: a confirmation was declined".into()));
     }
 
     #[test]
