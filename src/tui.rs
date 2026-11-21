@@ -972,6 +972,7 @@ struct ToolRow {
     ms: u128,
     running: bool,
     expanded: bool,
+    started: Instant,
 }
 
 fn preview_detail(text: &str) -> Vec<String> {
@@ -1535,6 +1536,15 @@ struct Status {
     streaming: bool,
     /// A likely next message, shown while the input is empty.
     suggestion: Option<String>,
+    /// When the running task began; `None` while idle.
+    task_start: Option<Instant>,
+    steps: usize,
+    /// Streamed characters, for an output estimate before usage arrives.
+    chars: usize,
+    /// The task's own hit, miss, and output tokens.
+    task_usage: (u64, u64, u64),
+    /// Since when nothing has streamed and no tool has run.
+    quiet_since: Option<Instant>,
 }
 
 const COMMANDS: &[(&str, &str)] = crate::help::COMMANDS;
@@ -1586,7 +1596,7 @@ impl App {
                 output: 0,
                 served: String::new(),
                 streaming: false,
-                suggestion: None,
+                ..Default::default()
             },
             verbosity,
             root,
@@ -1902,10 +1912,13 @@ impl App {
             Ev::Woke(what) => {
                 self.status.suggestion = None;
                 self.push(Role::Info, format!("⏰ {what}"));
+                self.begin_task();
                 self.status.streaming = true;
                 self.dirty = true;
             }
             Ev::Token(t) => {
+                self.status.chars += t.len();
+                self.status.quiet_since = None;
                 if let Some(last) = self.entries.last_mut() {
                     if last.role == Role::Assistant {
                         last.text.push_str(&t);
@@ -1946,7 +1959,10 @@ impl App {
                     ms: 0,
                     running: true,
                     expanded: false,
+                    started: Instant::now(),
                 });
+                self.status.steps += 1;
+                self.status.quiet_since = None;
                 let frame = spinner_frame(self.spinner);
                 self.push(Role::Tool, format!("{frame} {summary}"))
             }
@@ -1957,6 +1973,7 @@ impl App {
                 detail,
                 ms,
             } => {
+                self.status.quiet_since = Some(Instant::now());
                 let role = if ok { Role::Tool } else { Role::Error };
                 match self.tool.take() {
                     Some(mut row) => {
@@ -2034,6 +2051,9 @@ impl App {
                 if let Some(tokens) = tokens {
                     self.status.tokens = tokens;
                 }
+                self.status.task_usage.0 += hit;
+                self.status.task_usage.1 += miss;
+                self.status.task_usage.2 += output;
                 self.status.hit += hit;
                 self.status.miss += miss;
                 self.status.output += output;
@@ -2045,6 +2065,7 @@ impl App {
             Ev::Confirm { what, reply, always } => {
                 self.pending = Some(Pending::Confirm { what, reply, always });
                 self.pending_since = Some(Instant::now());
+                self.tick_spinner();
                 self.since = Instant::now();
                 self.bell_pending = true;
                 self.dirty = true;
@@ -2061,6 +2082,7 @@ impl App {
                 self.since = Instant::now();
                 self.bell_pending = true;
                 self.dirty = true;
+                self.tick_spinner();
             }
             Ev::Stop(reason) => {
                 self.pending = None;
@@ -2688,6 +2710,7 @@ impl App {
         }
         self.push(Role::User, text.clone());
         self.status.streaming = true;
+        self.begin_task();
         let _ = tx.send(Cmd::Prompt(text));
     }
 
@@ -3663,8 +3686,26 @@ impl App {
 
     /// The spinner advances at most ten times a second while a tool runs.
     fn spinner_due(&self) -> bool {
-        self.tool.as_ref().is_some_and(|row| row.running)
+        (self.tool.as_ref().is_some_and(|row| row.running) || self.thinking_row().is_some())
             && self.last_redraw.elapsed() >= Duration::from_millis(100)
+    }
+
+    /// Start counting a task: its time, steps, and tokens.
+    fn begin_task(&mut self) {
+        let now = Instant::now();
+        let s = &mut self.status;
+        (s.task_start, s.steps, s.chars, s.task_usage, s.quiet_since) = (Some(now), 0, 0, (0, 0, 0), Some(now));
+    }
+
+    /// `⠋ thinking · 4s` while the model works and nothing shows it.
+    fn thinking_row(&self) -> Option<(Role, Line)> {
+        let since = self.status.quiet_since?;
+        let busy = self.status.streaming && self.pending.is_none();
+        let tool = self.tool.as_ref().is_some_and(|row| row.running);
+        (busy && !tool).then(|| {
+            let text = format!("{} thinking · {}", spinner_frame(self.spinner), span(since.elapsed()));
+            (Role::Thinking, Line::Text(text))
+        })
     }
 
     /// Ids of live sessions whose agent is working.
@@ -3714,14 +3755,23 @@ impl App {
         }
     }
 
-    /// Advance the running row's glyph in place.
+    /// Advance the running row's glyph in place, with its time, or mark it
+    /// as waiting on the user.
     fn tick_spinner(&mut self) {
         self.spinner += 1;
         let frame = spinner_frame(self.spinner);
+        let waiting = matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. }));
         if let Some(row) = &self.tool {
             if row.running {
                 if let Some(entry) = self.entries.get_mut(row.index) {
-                    entry.text = format!("{frame} {}", row.summary);
+                    let took = row.started.elapsed();
+                    entry.text = if waiting {
+                        format!("▌ {} · waiting for you", row.summary)
+                    } else if took >= Duration::from_secs(1) {
+                        format!("{frame} {} · {}", row.summary, span(took))
+                    } else {
+                        format!("{frame} {}", row.summary)
+                    };
                 }
             }
         }
@@ -3778,8 +3828,11 @@ impl App {
         // A quiet hint until the first message. The status line says where.
         let hint = (Role::Thinking, Line::Text("imp · / for commands".into()));
         let hint = self.entries.is_empty().then_some(&hint);
+        let thinking = self.thinking_row();
 
-        let total = self.drawn.iter().map(|slot| slot.1.len()).sum::<usize>() + usize::from(hint.is_some());
+        let total = self.drawn.iter().map(|slot| slot.1.len()).sum::<usize>()
+            + usize::from(hint.is_some())
+            + usize::from(thinking.is_some());
         let max_top = total.saturating_sub(body_rows);
         self.body_rows = body_rows;
         self.max_top = max_top;
@@ -3793,6 +3846,7 @@ impl App {
             .iter()
             .flat_map(|slot| slot.1.iter())
             .chain(hint)
+            .chain(thinking.as_ref())
             .skip(self.top)
             .take(body_rows)
             .collect();
@@ -3921,16 +3975,8 @@ impl App {
         let secs = format!("{}s", self.seconds_left());
         // "▌ " + question + "   " + chips + at least one space + countdown.
         let fixed = 2 + 3 + keys.chars().count() + 1 + secs.len();
-        // A labelled row hides the command, so the question names it.
-        let shown = self.tool.as_ref().is_none_or(|row| {
-            let command = what.split('`').nth(1).unwrap_or(what);
-            row.summary.contains(command)
-        });
-        let ask = if shown {
-            verb(what).to_string()
-        } else {
-            format!("{}?", fit(what, cols.saturating_sub(fixed + 1).max(8)))
-        };
+        // The command is on screen, in its tool row or above this one.
+        let ask = verb(what).to_string();
         let bell = if self.bell_pending { "\u{7}" } else { "" };
         let used = fixed - 1 + ask.chars().count();
         let p = &self.palette;
@@ -4102,6 +4148,32 @@ impl App {
     /// `space` is what is left after the status line and the menu. The caret
     /// keeps its own row visible, and the area never takes more than eight rows
     /// or half the space.
+    /// A confirmation whose tool row shows only a label: the command,
+    /// wrapped and dim, above the approval row, at most a third of the screen.
+    fn labelled_command(&self, cols: usize, space: usize) -> Option<Vec<String>> {
+        let Some(Pending::Confirm { what, always, .. }) = &self.pending else { return None };
+        let command = what.split('`').nth(1);
+        let row = self.tool.as_ref()?;
+        if row.summary.contains(command.unwrap_or(what)) {
+            return None;
+        }
+        let text = command.map_or(what.clone(), |c| format!("$ {c}"));
+        let cap = (space / 3).max(1);
+        let mut lines = wrap(&text, cols.saturating_sub(2));
+        if lines.len() > cap {
+            lines.truncate(cap);
+            if let Some(last) = lines.last_mut() {
+                *last = last.chars().take(cols.saturating_sub(3)).chain(['…']).collect();
+            }
+        }
+        let mut rows: Vec<String> = lines
+            .iter()
+            .map(|l| self.palette.paint(Role::Thinking, &format!("  {l}")))
+            .collect();
+        rows.push(self.confirm_row(what, *always, cols));
+        Some(rows)
+    }
+
     /// An open question as rows: the question, one per choice, then the keys,
     /// each wrapped behind the accent bar. At most `space` rows, keys last.
     fn question_rows(&self, cols: usize, space: usize) -> Option<Vec<String>> {
@@ -4156,6 +4228,9 @@ impl App {
                 self.palette.paint(tone, "> "),
                 self.palette.paint(Role::Thinking, &hint)
             )];
+        }
+        if let Some(rows) = self.labelled_command(cols, space) {
+            return rows;
         }
         if let Some(row) = self.pending_row(cols) {
             return vec![row];
@@ -4397,6 +4472,12 @@ fn tail(text: &str, width: usize) -> String {
 }
 
 /// The prompt asks with the verb alone; the tool row above names the command.
+/// A duration as `4s` or `1m12s`.
+fn span(d: Duration) -> String {
+    let s = d.as_secs();
+    if s < 60 { format!("{s}s") } else { format!("{}m{:02}s", s / 60, s % 60) }
+}
+
 fn verb(what: &str) -> &'static str {
     match what.split_whitespace().next().unwrap_or("") {
         "run" => "run it?",
@@ -5599,7 +5680,8 @@ mod tests {
         let (reply, _rx) = channel();
         a.apply(Ev::Confirm { what: "run `find . | wc -l`".into(), reply, always: false });
         let frame = strip(&a.frame(80, 20));
-        assert!(frame.contains("run `find . | wc -l`?   [y] yes  [n] no"), "{frame:?}");
+        assert!(frame.contains("  $ find . | wc -l\r\n"), "{frame:?}");
+        assert!(frame.contains("▌ run it?   [y] yes  [n] no"), "{frame:?}");
     }
 
     #[test]
@@ -6139,6 +6221,29 @@ mod tests {
     }
 
     #[test]
+    fn the_active_step_is_always_visible() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.input = "go".into();
+        a.cursor = 2;
+        a.handle_key(Key::Enter, &tx);
+        assert!(strip(&a.frame(65, 12)).contains("thinking · 0s"), "no thinking row");
+
+        a.apply(Ev::ToolStart { name: "bash".into(), summary: "Run test suite".into(), args: String::new() });
+        assert!(!strip(&a.frame(65, 12)).contains("thinking"), "thinking beside a running tool");
+        let (reply, _r) = channel();
+        let command = format!("python3 -m unittest {} 2>&1 | tail -5", "tests/test_cart.py ".repeat(14));
+        a.apply(Ev::Confirm { what: format!("run `{command}`"), reply, always: true });
+        let out = strip(&a.frame(65, 20));
+        assert!(out.contains("▌ Run test suite · waiting for you"), "{out}");
+        assert!(out.contains("$ python3 -m unittest"), "{out}");
+        assert!(out.contains("tests/test_cart.py tests/test_cart.py"), "{out}");
+        for line in out.split("\r\n") {
+            assert!(line.chars().filter(|c| *c != '\u{7}').count() <= 65, "{line:?}");
+        }
+    }
+
+    #[test]
     fn usage_without_tokens_keeps_the_context() {
         let mut a = app();
         a.apply(Ev::Usage { tokens: Some(5000), hit: 1, miss: 2, output: 3, model: None });
@@ -6333,7 +6438,13 @@ mod tests {
             detail: String::new(),
             ms: 7,
         });
-        assert!(!a.spinner_due(), "a finished tool kept ticking");
+        // The model is thinking about the next step, so the thinking row spins.
+        let done = a.entries[0].text.clone();
+        assert!(a.spinner_due(), "the thinking row did not spin");
+        a.tick_spinner();
+        assert_eq!(a.entries[0].text, done, "a finished tool kept ticking");
+        a.apply(Ev::Done(None));
+        assert!(!a.spinner_due(), "an idle session ticked");
     }
 
     #[test]
