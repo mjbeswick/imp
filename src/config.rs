@@ -666,7 +666,8 @@ pub const SPINNERS: &[(&str, &str)] = &[
     ("pulse", "·•●•"),
     ("bar", "▁▂▃▄▅▆▇█▇▆▅▄▃▂"),
     ("star", "✶✸✹✺✹✷"),
-    ("random", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*+=?"),
+    // No digits or letters: rows trim leading frames, and counts start with digits.
+    ("random", "@#$%&*+=?~^!"),
 ];
 
 /// How much of each tool step the interface shows.
@@ -747,6 +748,7 @@ mod tests {
         for (name, frames) in SPINNERS {
             // Wide glyphs sit outside these ranges; one cell keeps rows still.
             assert!(frames.chars().all(|c| (c as u32) < 0x2E80), "{name} has a wide frame");
+            assert!(!frames.chars().any(|c| c.is_alphanumeric()), "{name} could eat a count");
         }
     }
 
