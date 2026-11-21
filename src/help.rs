@@ -378,7 +378,7 @@ mod tests {
         let text = commands(80, true);
         for phrase in [
             "pick a session",
-            "low, high, or pick",
+            "low, medium, high, or pick",
             "browse or change the directory",
             "browse or attach an image",
         ] {
