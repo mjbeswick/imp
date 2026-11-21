@@ -176,14 +176,27 @@ pub fn mode_line(mode: Permissions) -> &'static str {
     }
 }
 
-/// A fetch: `yolo` never asks, `strict` always does, and `normal` asks once
-/// per host per session.
-pub fn classify_fetch(mode: Permissions, host_approved: bool) -> Decision {
+/// URLs longer than this ask in `normal`: a long one can carry data out.
+pub const LONG_URL: usize = 300;
+
+/// A fetch: `yolo` never asks, `strict` always does, and `normal` asks only
+/// for a long URL.
+pub fn classify_fetch(mode: Permissions, url: &str) -> Decision {
     match mode {
         Permissions::Yolo => Decision::Allow,
         Permissions::Strict => Decision::Ask,
-        Permissions::Normal if host_approved => Decision::Allow,
-        Permissions::Normal => Decision::Ask,
+        Permissions::Normal if url.len() > LONG_URL => Decision::Ask,
+        Permissions::Normal => Decision::Allow,
+    }
+}
+
+/// The confirmation for a fetch that asks.
+pub fn fetch_question(url: &str) -> String {
+    let host = url_host(url);
+    if url.len() > LONG_URL {
+        format!("fetch from {host}: a {}-character URL", url.len())
+    } else {
+        format!("fetch {}", url.trim())
     }
 }
 
@@ -194,8 +207,8 @@ pub fn url_host(url: &str) -> String {
     authority.rsplit('@').next().unwrap_or("").to_ascii_lowercase()
 }
 
-/// The host of a `bash` command that is one plain `curl` GET, piped only into
-/// read-only filters, so it can share the `fetch` approval. Anything else is
+/// The URL of a `bash` command that is one plain `curl` GET, piped only into
+/// read-only filters, so it is approved as a `fetch`. Anything else is
 /// `None` and classified as a command.
 // ponytail: whitespace tokens, whole-word quotes only; odd quoting falls back to asking.
 pub fn plain_get(cmd: &str) -> Option<String> {
@@ -230,7 +243,7 @@ pub fn plain_get(cmd: &str) -> Option<String> {
             return None;
         }
     }
-    Some(url_host(url?))
+    url.map(str::to_string)
 }
 
 /// A word without one pair of surrounding quotes; `None` when quotes remain.
@@ -412,10 +425,12 @@ mod tests {
 
     #[test]
     fn fetches_ask_by_mode() {
-        assert_eq!(classify_fetch(Permissions::Normal, false), Decision::Ask);
-        assert_eq!(classify_fetch(Permissions::Normal, true), Decision::Allow);
-        assert_eq!(classify_fetch(Permissions::Strict, true), Decision::Ask);
-        assert_eq!(classify_fetch(Permissions::Yolo, false), Decision::Allow);
+        let long = format!("https://x.example/?q={}", "a".repeat(400));
+        assert_eq!(classify_fetch(Permissions::Normal, "https://wttr.in/Woking"), Decision::Allow);
+        assert_eq!(classify_fetch(Permissions::Normal, &long), Decision::Ask);
+        assert_eq!(classify_fetch(Permissions::Strict, "https://wttr.in/"), Decision::Ask);
+        assert_eq!(classify_fetch(Permissions::Yolo, &long), Decision::Allow);
+        assert_eq!(fetch_question(&long), format!("fetch from x.example: a {}-character URL", long.len()));
         assert_eq!(url_host("https://wttr.in/Woking?format=3"), "wttr.in");
         assert_eq!(url_host("http://u:p@192.168.0.61:11080/assets"), "192.168.0.61:11080");
         assert_eq!(url_host("HTTPS://Feeds.BBCI.co.uk#x"), "feeds.bbci.co.uk");
@@ -429,7 +444,7 @@ mod tests {
             ("curl --silent -m 5 http://192.168.0.61:11080/assets | jq '.items[0]'", "192.168.0.61:11080"),
             ("curl https://example.com", "example.com"),
         ] {
-            assert_eq!(plain_get(cmd).as_deref(), Some(host), "{cmd}");
+            assert_eq!(plain_get(cmd).map(|u| url_host(&u)).as_deref(), Some(host), "{cmd}");
         }
         for cmd in [
             "curl -X POST https://api.example.com",

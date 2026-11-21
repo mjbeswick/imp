@@ -138,8 +138,6 @@ pub struct Session {
     pub roster: Vec<Agent>,
     pub jobs: Jobs,
     pub job_dir: std::path::PathBuf,
-    /// Hosts the user approved for `fetch` in this session.
-    fetch_hosts: std::collections::HashSet<String>,
     /// Command shapes answered `always` in this session.
     always: std::collections::HashSet<String>,
     pub log: Option<Log>,
@@ -187,7 +185,6 @@ impl Session {
             roster,
             jobs: Jobs::default(),
             job_dir,
-            fetch_hosts: std::collections::HashSet::new(),
             always: std::collections::HashSet::new(),
             log: None,
             last_usage: (0, 0, 0),
@@ -227,7 +224,6 @@ impl Session {
             .cloned()
             .collect();
         self.history = system;
-        self.fetch_hosts.clear();
         self.always.clear();
     }
 
@@ -767,12 +763,9 @@ impl Session {
                 };
                 // A plain curl GET shares the per-host fetch approval.
                 let get = perm::plain_get(cmd).filter(|_| !matches!(decision, Decision::Deny(_)) && named.is_none());
-                if let Some(host) = get {
-                    if perm::classify_fetch(mode, self.fetch_hosts.contains(&host)) == Decision::Ask {
-                        if !hooks.confirm(&format!("fetch from {host} for this session")) {
-                            return (false, format!("refused: the user declined fetching from {host}"));
-                        }
-                        self.fetch_hosts.insert(host);
+                if let Some(url) = get {
+                    if perm::classify_fetch(mode, &url) == Decision::Ask && !hooks.confirm(&perm::fetch_question(&url)) {
+                        return (false, format!("refused: the user declined fetching from {}", perm::url_host(&url)));
                     }
                 } else {
                     match decision {
@@ -923,14 +916,11 @@ impl Session {
                 if !crate::tools::fetchable(url) {
                     return (false, "refused: fetch takes an http or https URL".into());
                 }
-                // A URL can carry data out, so a new host asks once.
-                let host = perm::url_host(url);
-                let approved = self.fetch_hosts.contains(&host);
-                if perm::classify_fetch(self.cfg.live_permissions(), approved) == Decision::Ask {
-                    if !hooks.confirm(&format!("fetch from {host} for this session")) {
-                        return (false, format!("refused: the user declined fetching from {host}"));
-                    }
-                    self.fetch_hosts.insert(host);
+                // Reading does not ask; a long URL can carry data out, so it does.
+                if perm::classify_fetch(self.cfg.live_permissions(), url) == Decision::Ask
+                    && !hooks.confirm(&perm::fetch_question(url))
+                {
+                    return (false, format!("refused: the user declined fetching from {}", perm::url_host(url)));
                 }
                 match crate::http::fetch(url, 15_000, 2 * 1024 * 1024) {
                     Ok((status, kind, body)) => {
@@ -1879,49 +1869,28 @@ mod tests {
     }
 
     #[test]
-    fn fetch_asks_once_per_host_in_normal() {
+    fn reading_the_web_does_not_ask_in_normal() {
         let (mut s, _fake) = scripted(vec![]);
         s.cfg.set_permissions(Permissions::Normal);
         let mut hooks = CountingHooks::default();
         let a = serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\none");
-        let b = serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ntwo");
-        // Both servers are 127.0.0.1 but on different ports: two hosts.
         assert!(s.run_tool("fetch", &json!({"url": a}), &mut hooks).0);
-        assert_eq!(hooks.confirms, 1);
-        let again = format!("{}?x=1", a.trim_end_matches("/data"));
-        let _ = s.run_tool("fetch", &json!({"url": again}), &mut hooks);
-        assert_eq!(hooks.confirms, 1, "the same host asked again");
-        assert!(s.run_tool("fetch", &json!({"url": b}), &mut hooks).0);
-        assert_eq!(hooks.confirms, 2, "a new host did not ask");
+        let b = serve_once("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\ntwo");
+        let out = s.run_tool("bash", &json!({"command": format!("curl -s {b} | head -c 2")}), &mut hooks);
+        assert!(out.0, "{}", out.1);
+        assert_eq!(hooks.confirms, 0, "a plain read asked");
+        let long = format!("{a}?q={}", "x".repeat(400));
+        let _ = s.run_tool("fetch", &json!({"url": long}), &mut hooks);
+        assert_eq!(hooks.confirms, 1, "a long URL did not ask");
+        let _ = s.run_tool("bash", &json!({"command": format!("curl -X POST {b}")}), &mut hooks);
+        assert_eq!(hooks.confirms, 2, "a post did not ask");
 
         let (mut strict, _f) = scripted(vec![]);
         strict.cfg.set_permissions(Permissions::Strict);
         let mut hooks = CountingHooks::default();
-        let c = serve_once("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nx");
-        let _ = strict.run_tool("fetch", &json!({"url": c}), &mut hooks);
+        let _ = strict.run_tool("fetch", &json!({"url": "http://127.0.0.1:9/"}), &mut hooks);
         let _ = strict.run_tool("fetch", &json!({"url": "http://127.0.0.1:9/"}), &mut hooks);
         assert_eq!(hooks.confirms, 2, "strict did not ask every time");
-    }
-
-    #[test]
-    fn curl_gets_share_the_fetch_approval() {
-        let (mut s, _fake) = scripted(vec![]);
-        s.cfg.set_permissions(Permissions::Normal);
-        let mut hooks = CountingHooks::default();
-        let a = serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\none");
-        assert!(s.run_tool("fetch", &json!({"url": a}), &mut hooks).0);
-        assert_eq!(hooks.confirms, 1);
-        let b = serve_once("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\ntwo");
-        let port = a.trim_start_matches("http://127.0.0.1:").split('/').next().unwrap().to_string();
-        let same = b.replace(b.trim_start_matches("http://127.0.0.1:").split('/').next().unwrap(), &port);
-        let _ = s.run_tool("bash", &json!({"command": format!("curl -s {same} | head -c 2")}), &mut hooks);
-        assert_eq!(hooks.confirms, 1, "curl to an approved host asked");
-        let _ = s.run_tool("bash", &json!({"command": format!("curl -s {b}")}), &mut hooks);
-        assert_eq!(hooks.confirms, 2, "curl to a new host did not ask");
-        let _ = s.run_tool("fetch", &json!({"url": b}), &mut hooks);
-        assert_eq!(hooks.confirms, 2, "fetch after a curl approval asked");
-        let _ = s.run_tool("bash", &json!({"command": format!("curl -X POST {b}")}), &mut hooks);
-        assert_eq!(hooks.confirms, 3, "a post did not ask");
     }
 
     #[test]
