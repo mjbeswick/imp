@@ -148,6 +148,8 @@ pub struct Config {
     pub mouse: bool,
     /// Offer a likely next message after each turn in the chat.
     pub suggest: bool,
+    /// Show the lines an edit or write changed under its tool row.
+    pub diffs: bool,
     /// Move to the next waiting session after handing one work.
     pub auto_next: bool,
     /// Secret-looking variables the agent's commands may still see.
@@ -188,6 +190,7 @@ impl Default for Config {
             color: ColorMode::Auto,
             mouse: true,
             suggest: true,
+            diffs: true,
             auto_next: true,
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
@@ -276,6 +279,7 @@ impl Config {
             "color" => self.color = ColorMode::parse(value)?,
             "mouse" => self.mouse = parse_bool(value)?,
             "suggest" => self.suggest = parse_bool(value)?,
+            "diffs" => self.diffs = parse_bool(value)?,
             "auto_next" => self.auto_next = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Managed profile lines were read before this pass.

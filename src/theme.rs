@@ -200,6 +200,13 @@ pub const THEMES: &[Theme] = &[
 ];
 
 /// The nearest xterm 256-colour index: the 6×6×6 cube or the grey ramp.
+/// A quiet background in a slot's hue: dark on dark themes, pale on light.
+/// Light text means a dark theme.
+pub fn tint(c: [u8; 3], text: [u8; 3]) -> [u8; 3] {
+    let dark = text.iter().map(|&v| v as u32).sum::<u32>() > 384;
+    c.map(|v| if dark { (v as u32 * 22 / 100) as u8 } else { (255 - (255 - v as u32) * 18 / 100) as u8 })
+}
+
 pub fn to_256([r, g, b]: [u8; 3]) -> u8 {
     const STEPS: [i32; 6] = [0, 95, 135, 175, 215, 255];
     let near = |v: u8| {
@@ -294,6 +301,13 @@ pub fn save(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tint_is_dark_on_dark_and_pale_on_light() {
+        let green = [0x7f, 0xd6, 0x8f];
+        assert!(tint(green, [0xe6; 3]).iter().all(|&v| v < 0x40));
+        assert!(tint(green, [0x1f; 3]).iter().all(|&v| v > 0xd0));
+    }
 
     #[test]
     fn names_are_stable() {

@@ -21,6 +21,7 @@ const CONFIG_TEMPLATE: &str = "\
 # mouse=on                    # wheel scrolls the chat; Option-drag selects
 # goal_rounds=5               # turns a /goal may run, 1 to 20
 # suggest=on                  # a greyed next message after each reply; Tab takes it
+# diffs=on                    # changed lines under each edit or write
 # skills_dir=~/.config/imp/skills
 ";
 

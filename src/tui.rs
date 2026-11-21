@@ -481,6 +481,19 @@ impl Palette {
         };
         let [r, g, b] = self.theme.rgb(slot);
         let fallback = crate::theme::to_256([r, g, b]);
+        // Diff lines: plain text on a tint, so they never read as a ✓.
+        if matches!(role, Role::Add | Role::Delete) {
+            let fg = self.theme.rgb(Slot::Text);
+            let bg = crate::theme::tint([r, g, b], fg);
+            return if self.truecolor {
+                format!(
+                    "\x1b[48;2;{};{};{}m\x1b[38;2;{};{};{}m{text}\x1b[0m",
+                    bg[0], bg[1], bg[2], fg[0], fg[1], fg[2]
+                )
+            } else {
+                format!("\x1b[48;5;{}m\x1b[38;5;{}m{text}\x1b[0m", crate::theme::to_256(bg), crate::theme::to_256(fg))
+            };
+        }
         if self.truecolor {
             format!("\x1b[38;2;{r};{g};{b}m{text}\x1b[0m")
         } else {
@@ -950,7 +963,8 @@ const RAW: char = '\u{2}';
 const TIME: char = '\u{1}';
 
 /// Animated frames for a running tool row.
-const SPINNER: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+// ponytail: braille drew too small in kmscon; quarter circles fill the cell.
+const SPINNER: [char; 4] = ['◐', '◓', '◑', '◒'];
 
 fn spinner_frame(tick: usize) -> char {
     SPINNER[tick % SPINNER.len()]

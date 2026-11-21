@@ -950,7 +950,7 @@ impl Session {
         // No secret value reaches the conversation, the log, or the screen.
         let out = crate::secrets::redact(&out);
         let spent = start.elapsed().saturating_sub(hooks.last_wait());
-        let detail = if ok { diff_detail(&call.name, &args) } else { String::new() };
+        let detail = if ok && self.cfg.diffs { diff_detail(&call.name, &args) } else { String::new() };
         hooks.ui(Ui::ToolEnd {
             ok,
             // A success shows what came back; a failure shows why.

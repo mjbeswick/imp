@@ -211,6 +211,7 @@ wins when set.
 # mouse=on
 # goal_rounds=5         # turns a /goal may run, 1 to 20
 # suggest=on           # a greyed next message after each reply; Tab takes it
+# diffs=on             # changed lines under each edit or write
 # auto_next=on          # move to the next waiting session after you reply
 ```
 
