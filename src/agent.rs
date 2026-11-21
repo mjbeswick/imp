@@ -715,6 +715,13 @@ impl Session {
         self.tools.jail = crate::perm::jail_enabled(mode);
     }
 
+    /// A check-in due now, for tests of the worker.
+    #[cfg(test)]
+    pub fn check_in_now(&mut self) {
+        let now = std::time::Instant::now();
+        self.checkins.push((now, None, now));
+    }
+
     /// A note for a turn the session should start on its own: due check-ins,
     /// and ends of jobs the model asked to be told about. Other jobs that
     /// ended are recorded as system notes without waking anything.

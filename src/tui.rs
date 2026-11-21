@@ -641,6 +641,8 @@ pub enum Cmd {
 
 pub enum Ev {
     Token(String),
+    /// A turn the session started on its own, with a one-line summary.
+    Woke(String),
     /// A restored conversation, drawn in place of the transcript.
     Replay(Vec<(Role, String)>),
     Root(std::path::PathBuf),
@@ -1821,6 +1823,11 @@ impl App {
 
     fn apply(&mut self, ev: Ev) {
         match ev {
+            Ev::Woke(what) => {
+                self.push(Role::Info, format!("⏰ {what}"));
+                self.status.streaming = true;
+                self.dirty = true;
+            }
             Ev::Token(t) => {
                 if let Some(last) = self.entries.last_mut() {
                     if last.role == Role::Assistant {
@@ -4374,10 +4381,30 @@ fn send_replay(tx: &Sender<Ev>, history: &[crate::api::Message]) {
 /// and the id of the session it is logging to.
 type Worker = (Sender<Cmd>, Receiver<Ev>, std::sync::Arc<std::sync::Mutex<String>>);
 
+/// One line naming what woke the session: a check-in or a job's end.
+fn wake_summary(note: &str) -> String {
+    let jobs: Vec<String> = note
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|w| w[0].eq_ignore_ascii_case("job") && w[1].trim_end_matches(['.', ':']).parse::<u64>().is_ok())
+        .map(|w| format!("job {}", w[1].trim_end_matches(['.', ':'])))
+        .fold(Vec::new(), |mut acc, j| {
+            if !acc.contains(&j) {
+                acc.push(j);
+            }
+            acc
+        });
+    let kind = if note.contains("ended with exit") { "job ended" } else { "check-in" };
+    if jobs.is_empty() { kind.to_string() } else { format!("{kind}: {}", jobs.join(", ")) }
+}
+
 fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel::<Ev>();
     let mut worker_session = session;
+    // This worker can wake the session for check-ins.
+    worker_session.wakes = true;
     if worker_session
         .history
         .iter()
@@ -4396,7 +4423,32 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
         let ev_tx = ev_tx.clone();
         let session_id = session_id.clone();
         move || loop {
-            match cmd_rx.recv() {
+            // A second's wait, so a due check-in can start a turn while idle.
+            let next = match cmd_rx.recv_timeout(Duration::from_secs(1)) {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(note) = worker_session.due() {
+                        let what = wake_summary(&note);
+                        let _ = ev_tx.send(Ev::Woke(what));
+                        let mut hooks = WorkerHooks {
+                            tx: ev_tx.clone(),
+                            waited: Duration::ZERO,
+                        };
+                        let result = worker_session.turn(&note, &mut hooks);
+                        let _ = ev_tx.send(Ev::Usage {
+                            tokens: crate::api::estimate_tokens(&worker_session.history),
+                            hit: worker_session.last_usage.0,
+                            miss: worker_session.last_usage.1,
+                            output: worker_session.last_usage.2,
+                            model: worker_session.last_model.clone(),
+                        });
+                        let _ = ev_tx.send(Ev::Done(result.err()));
+                    }
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(std::sync::mpsc::RecvError),
+                Ok(cmd) => Ok(cmd),
+            };
+            match next {
                 Ok(Cmd::Attach(images)) => {
                     for image in images {
                         if let Err(e) = worker_session.attach_image(image) {
@@ -5028,6 +5080,55 @@ mod tests {
         assert_eq!(desc(&a).chars().count(), first.chars().count(), "the cell changed width");
         a.last_redraw = Instant::now() - Duration::from_millis(200);
         assert!(!a.spin_sessions(), "an idle picker repainted");
+    }
+
+    #[test]
+    fn a_due_check_in_runs_a_turn_in_the_worker() {
+        let dir = std::env::temp_dir().join(format!("imp-wake-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let mut cfg = Config::default();
+        cfg.color = ColorMode::Never;
+        let mut session = Session::new(
+            cfg,
+            dir.clone(),
+            dir.join("out"),
+            String::new(),
+            crate::store::Agent::builtin(),
+            Vec::new(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+        );
+        session.transport = Box::new(std::sync::Arc::new(crate::transport::Fake::new(vec![
+            crate::transport::Script::Ok(crate::transport::text_reply("the copy is 64% done")),
+        ])));
+        session.check_in_now();
+        let (_tx, rx, _) = spawn_worker(session, dir.join("sessions"));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut woke, mut text, mut done) = (None, String::new(), false);
+        while !done && Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(Ev::Woke(w)) => woke = Some(w),
+                Ok(Ev::Token(t)) => text.push_str(&t),
+                Ok(Ev::Done(_)) => done = true,
+                _ => {}
+            }
+        }
+        assert_eq!(woke.as_deref(), Some("check-in"));
+        assert!(done && text.contains("64% done"), "{text:?}");
+    }
+
+    #[test]
+    fn a_woken_session_out_of_view_joins_the_queue() {
+        let mut a = multi_app("woke");
+        let (tx, _rx) = channel();
+        a.run_command("new", &tx);
+        assert_eq!((a.at, a.queue().len()), (1, 0));
+        a.apply_to(0, Ev::Woke("check-in: job 3".into()));
+        assert!(a.panes[0].as_ref().unwrap().status.streaming, "the woken session is not working");
+        a.apply_to(0, Ev::Token("64% done".into()));
+        a.apply_to(0, Ev::Done(None));
+        assert_eq!(a.queue(), vec![0], "the woken session is not waiting");
+        assert!(a.panes[0].as_ref().unwrap().entries.iter().any(|e| e.text == "⏰ check-in: job 3"));
+        assert_eq!(wake_summary("[Check-in from imp]\nJob 3 ended with exit 0. job 3 x"), "job ended: job 3");
     }
 
     #[test]
