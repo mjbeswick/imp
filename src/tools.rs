@@ -567,6 +567,7 @@ impl Tools {
         // full environment.
         if hand_over {
             crate::secrets::scrub(&mut cmd);
+            crate::tui::size_env(&mut cmd);
         }
         cmd.arg("-c")
             .arg(script)
@@ -914,6 +915,15 @@ mod tests {
         let mut t = Tools::new(dir.clone(), dir.join(".out"));
         t.timeout = Duration::from_millis(300);
         (t, dir)
+    }
+
+    #[test]
+    fn agent_commands_see_the_screen_size() {
+        // Every test that sets SCREEN stores this same value, so they cannot race.
+        crate::tui::SCREEN.store(80 << 16 | 24, Ordering::Relaxed);
+        let (mut t, _d) = tools();
+        let o = t.bash_handover("echo \"$COLUMNS $LINES\"", &AtomicBool::new(false));
+        assert_eq!(o.text.trim(), "80 24", "{}", o.text);
     }
 
     #[test]

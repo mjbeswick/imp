@@ -47,6 +47,23 @@ const TIOCGWINSZ: c_ulong = 0x4008_7468;
 #[cfg(not(target_os = "macos"))]
 const TIOCGWINSZ: c_ulong = 0x5413;
 
+/// The chat screen as `cols << 16 | rows`, 0 until the first frame.
+// ponytail: one global, as a process has one screen.
+pub static SCREEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The chat screen's columns and rows, or None before the first frame.
+pub fn screen() -> Option<(u16, u16)> {
+    let v = SCREEN.load(Ordering::Relaxed);
+    (v != 0).then(|| ((v >> 16) as u16, v as u16))
+}
+
+/// Give an agent command `COLUMNS` and `LINES` for the screen, when known.
+pub fn size_env(cmd: &mut std::process::Command) {
+    if let Some((cols, rows)) = screen() {
+        cmd.env("COLUMNS", cols.to_string()).env("LINES", rows.to_string());
+    }
+}
+
 fn size() -> (usize, usize) {
     let mut ws = Winsize {
         rows: 0,
@@ -3688,6 +3705,7 @@ impl App {
         let (cols, rows) = size();
         self.last_size = (cols, rows);
         self.cols.store(cols as u16, Ordering::Relaxed);
+        SCREEN.store((cols as u32) << 16 | rows as u32 & 0xffff, Ordering::Relaxed);
         if rows < 5 || cols < 20 {
             return;
         }

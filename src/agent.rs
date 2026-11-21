@@ -164,7 +164,7 @@ pub struct Session {
     pub history: Vec<Message>,
     pub cancel: std::sync::Arc<AtomicBool>,
     pub cols: std::sync::Arc<std::sync::atomic::AtomicU16>,
-    last_cols: Option<u16>,
+    last_cols: Option<(u16, u16)>,
     /// The day the model was last told the date, as days since the epoch.
     last_day: Option<u64>,
     pub agent: Agent,
@@ -800,12 +800,18 @@ impl Session {
     /// Tell the model how wide the screen is, once per change.
     fn note_width(&mut self) {
         let width = self.cols.load(std::sync::atomic::Ordering::Relaxed);
-        if width < 20 || self.last_cols == Some(width) {
+        let rows = crate::tui::screen().map_or(0, |(_, r)| r);
+        if width < 20 || self.last_cols == Some((width, rows)) {
             return;
         }
-        self.last_cols = Some(width);
+        self.last_cols = Some((width, rows));
+        let size = if rows > 0 {
+            format!("{width} columns wide and {rows} rows high")
+        } else {
+            format!("{width} columns wide")
+        };
         self.say(Message::system(format!(
-            "Environment: the terminal is {width} columns wide. Keep code, tables, and rules inside it."
+            "Environment: the terminal is {size}. Keep code, tables, and rules inside it."
         )));
     }
 
@@ -1777,6 +1783,7 @@ mod tests {
             Script::Ok(text_reply("two")),
             Script::Ok(text_reply("three")),
         ]);
+        crate::tui::SCREEN.store(80 << 16 | 24, std::sync::atomic::Ordering::Relaxed);
         s.cols.store(60, std::sync::atomic::Ordering::Relaxed);
         s.turn("a", &mut Null).unwrap();
         s.turn("b", &mut Null).unwrap();
@@ -1789,7 +1796,7 @@ mod tests {
             .map(|m| m.content.as_str())
             .collect();
         assert_eq!(notes.len(), 2, "notes: {notes:?}");
-        assert!(notes[0].contains("60"), "first: {}", notes[0]);
+        assert!(notes[0].contains("60 columns wide and 24 rows high"), "first: {}", notes[0]);
         assert!(notes[1].contains("100"), "second: {}", notes[1]);
     }
 
