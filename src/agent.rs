@@ -373,6 +373,7 @@ impl Session {
                 &wire.url,
                 &headers,
                 wire.body.to_string().as_bytes(),
+                &self.cancel,
                 &mut |bytes| {
                     if raw.len() < 4096 {
                         raw.extend_from_slice(bytes);
@@ -396,7 +397,7 @@ impl Session {
                     }
                 }
                 Err(e) => {
-                    if attempt == 1 {
+                    if attempt == 1 && !self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                         hooks.ui(Ui::Info(format!("retrying after: {e}")));
                         std::thread::sleep(std::time::Duration::from_millis(800));
                         continue;
@@ -599,6 +600,7 @@ impl Session {
             &wire.url,
             &headers,
             wire.body.to_string().as_bytes(),
+            &self.cancel,
             &mut |b| {
                 for ev in parser.push(b, adapter.as_mut()) {
                     acc.apply(ev);
@@ -641,7 +643,13 @@ impl Session {
                 self.say(Message::system(note));
             }
             self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
-            let acc = self.request(hooks)?;
+            let acc = match self.request(hooks) {
+                Err(_) if self.cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                    hooks.ui(Ui::Info("cancelled".into()));
+                    return Ok(());
+                }
+                other => other?,
+            };
 
             let mut assistant = Message::assistant(acc.content.clone());
             assistant.reasoning = acc.reasoning.clone();
@@ -1039,7 +1047,7 @@ impl Session {
         let auth = format!("Authorization: Bearer {}", self.cfg.api_key);
         let headers = ["Content-Type: application/json", auth.as_str()];
         let mut raw = Vec::new();
-        let resp = self.transport.post(&url, &headers, body.to_string().as_bytes(), &mut |b| {
+        let resp = self.transport.post(&url, &headers, body.to_string().as_bytes(), &self.cancel, &mut |b| {
             if raw.len() < 2 * 1024 * 1024 {
                 raw.extend_from_slice(b);
             }
@@ -1581,6 +1589,30 @@ mod tests {
             .content
             .clone();
         assert!(tool.contains("cancelled"), "{tool}");
+    }
+
+    #[test]
+    fn a_cancelled_request_is_not_retried() {
+        let (mut s, fake) = scripted(vec![Script::Cancel, Script::Ok(text_reply("retried"))]);
+        struct Notes(Vec<String>);
+        impl Hooks for Notes {
+            fn ui(&mut self, event: Ui) {
+                if let Ui::Info(t) | Ui::Error(t) = event {
+                    self.0.push(t);
+                }
+            }
+            fn confirm(&mut self, _: &str) -> bool {
+                false
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+        }
+        let mut hooks = Notes(Vec::new());
+        s.turn("hello", &mut hooks).unwrap();
+        assert_eq!(fake.attempts(), 1, "the cancelled request was sent again");
+        assert_eq!(hooks.0, vec!["cancelled".to_string()]);
+        assert!(!s.history.iter().any(|m| m.content == "retried"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub trait Transport: Send {
         url: &str,
         headers: &[&str],
         body: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
         on_chunk: &mut dyn FnMut(&[u8]),
     ) -> Result<u16, String>;
 }
@@ -22,9 +23,10 @@ impl Transport for Live {
         url: &str,
         headers: &[&str],
         body: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
         on_chunk: &mut dyn FnMut(&[u8]),
     ) -> Result<u16, String> {
-        crate::http::post_stream(url, headers, body, on_chunk).map(|r| r.status)
+        crate::http::post_stream(url, headers, body, cancel, on_chunk).map(|r| r.status)
     }
 }
 
@@ -34,6 +36,8 @@ pub enum Script {
     Ok(Vec<String>),
     Fails(u16, String),
     Transport(String),
+    /// The user cancels mid-request: sets the flag, as the cancel key does.
+    Cancel,
 }
 
 /// Replays scripted replies and records what was sent. Tests only.
@@ -68,6 +72,7 @@ impl Transport for Fake {
         _url: &str,
         _headers: &[&str],
         body: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
         on_chunk: &mut dyn FnMut(&[u8]),
     ) -> Result<u16, String> {
         self.sent
@@ -93,6 +98,10 @@ impl Transport for Fake {
                 Ok(status)
             }
             Script::Transport(message) => Err(message),
+            Script::Cancel => {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                Err("cancelled".into())
+            }
         }
     }
 }
@@ -192,8 +201,9 @@ impl<T: Transport + Send + Sync + ?Sized> Transport for std::sync::Arc<T> {
         url: &str,
         headers: &[&str],
         body: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
         on_chunk: &mut dyn FnMut(&[u8]),
     ) -> Result<u16, String> {
-        (**self).post(url, headers, body, on_chunk)
+        (**self).post(url, headers, body, cancel, on_chunk)
     }
 }

@@ -1,6 +1,7 @@
 //! libcurl through FFI. One POST, streamed into a callback.
 
 use std::ffi::{c_char, c_long, c_void, CStr, CString};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
 const CURLOPT_URL: u32 = 10_002;
@@ -23,7 +24,14 @@ const CURLOPT_MAXREDIRS: u32 = 68;
 const CURLOPT_PROTOCOLS_STR: u32 = 10_318;
 const CURLOPT_REDIR_PROTOCOLS_STR: u32 = 10_319;
 
+const CURLOPT_NOPROGRESS: u32 = 43;
+const CURLOPT_XFERINFOFUNCTION: u32 = 20_219;
+const CURLOPT_XFERINFODATA: u32 = 10_057;
+const CURLOPT_LOW_SPEED_LIMIT: u32 = 19;
+const CURLOPT_LOW_SPEED_TIME: u32 = 20;
+
 const CURLE_OK: i32 = 0;
+const CURLE_ABORTED_BY_CALLBACK: i32 = 42;
 
 #[repr(C)]
 struct CurlSlist {
@@ -59,23 +67,25 @@ pub struct Response {
 }
 
 /// Headers are ordinary `Name: value` strings; `Content-Type` is added for you.
+/// Setting `cancel` aborts the request within about a second.
 pub fn post_stream<F>(
     url: &str,
     headers: &[&str],
     body: &[u8],
+    cancel: &AtomicBool,
     on_chunk: F,
 ) -> Result<Response, String>
 where
     F: FnMut(&[u8]),
 {
-    request_stream(url, headers, Some(body), 600_000, false, on_chunk)
+    request_stream(url, headers, Some(body), 600_000, false, Some(cancel), on_chunk)
 }
 
 /// One GET, collecting the body. Used for small JSON documents such as a
 /// provider's model list.
 pub fn get(url: &str, headers: &[&str], timeout_ms: u64) -> Result<(u16, String), String> {
     let mut body = Vec::new();
-    let response = request_stream(url, headers, None, timeout_ms, false, |chunk| {
+    let response = request_stream(url, headers, None, timeout_ms, false, None, |chunk| {
         body.extend_from_slice(chunk);
     })?;
     Ok((response.status, String::from_utf8_lossy(&body).into_owned()))
@@ -85,7 +95,7 @@ pub fn get(url: &str, headers: &[&str], timeout_ms: u64) -> Result<(u16, String)
 /// the body kept up to `cap` bytes. Returns status, content type, and body.
 pub fn fetch(url: &str, timeout_ms: u64, cap: usize) -> Result<(u16, String, String), String> {
     let mut body = Vec::new();
-    let response = request_stream(url, &[], None, timeout_ms, true, |chunk| {
+    let response = request_stream(url, &[], None, timeout_ms, true, None, |chunk| {
         if body.len() < cap {
             body.extend_from_slice(chunk);
         }
@@ -103,6 +113,7 @@ fn request_stream<F>(
     body: Option<&[u8]>,
     timeout_ms: u64,
     follow: bool,
+    cancel: Option<&AtomicBool>,
     mut on_chunk: F,
 ) -> Result<Response, String>
 where
@@ -147,6 +158,15 @@ where
         setopt_long(handle, CURLOPT_TIMEOUT_MS, timeout_ms as c_long);
         setopt_long(handle, CURLOPT_CONNECTTIMEOUT_MS, 15_000);
         setopt_long(handle, CURLOPT_NOSIGNAL, 1);
+        // A stalled stream ends: under one byte a second for a minute.
+        setopt_long(handle, CURLOPT_LOW_SPEED_LIMIT, 1);
+        setopt_long(handle, CURLOPT_LOW_SPEED_TIME, 60);
+        if let Some(flag) = cancel {
+            // curl calls this about once a second, bytes or not.
+            setopt_ptr(handle, CURLOPT_XFERINFOFUNCTION, progress_cb as *const c_void);
+            setopt_ptr(handle, CURLOPT_XFERINFODATA, flag as *const AtomicBool as *const c_void);
+            setopt_long(handle, CURLOPT_NOPROGRESS, 0);
+        }
         setopt_str(handle, CURLOPT_USERAGENT, agent.as_ptr());
         setopt_ptr(handle, CURLOPT_ACCEPT_ENCODING, std::ptr::null());
         setopt_ptr(handle, CURLOPT_ERRORBUFFER, errbuf.as_mut_ptr() as *const c_void);
@@ -173,6 +193,9 @@ where
         curl_slist_free_all(slist);
         curl_easy_cleanup(handle);
 
+        if code == CURLE_ABORTED_BY_CALLBACK {
+            return Err("cancelled".into());
+        }
         if code != CURLE_OK {
             let detail = read_errbuf(&errbuf);
             let base = CStr::from_ptr(curl_easy_strerror(code))
@@ -213,6 +236,12 @@ fn read_errbuf(buf: &[c_char; 256]) -> String {
     String::from_utf8_lossy(&bytes).trim().to_string()
 }
 
+/// Non-zero aborts the transfer.
+extern "C" fn progress_cb(flag: *mut c_void, _: i64, _: i64, _: i64, _: i64) -> i32 {
+    let flag = unsafe { &*(flag as *const AtomicBool) };
+    i32::from(flag.load(Ordering::Relaxed))
+}
+
 extern "C" fn write_cb<F>(data: *mut c_char, size: usize, nmemb: usize, userdata: *mut c_void) -> usize
 where
     F: FnMut(&[u8]),
@@ -232,6 +261,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_aborts_a_stalled_request() {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", server.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut conn, _) = server.accept().unwrap();
+            use std::io::Write;
+            let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: hi\n\n");
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        });
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let start = std::time::Instant::now();
+        let mut got = Vec::new();
+        let r = post_stream(&url, &[], b"{}", &cancel, |b| got.extend_from_slice(b));
+        assert_eq!(r.err().as_deref(), Some("cancelled"));
+        assert!(start.elapsed() < std::time::Duration::from_secs(2), "{:?}", start.elapsed());
+        assert!(String::from_utf8_lossy(&got).contains("hi"));
+    }
 
     #[test]
     fn error_buffer_reads_until_nul() {
