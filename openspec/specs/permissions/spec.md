@@ -57,6 +57,10 @@ The system SHALL run a command without confirmation in `normal` only when every 
 - **WHEN** the model runs `jq -r '.events[] | select(.date > "2026")' f.json` or `rg 'a|b' src`
 - **THEN** it runs without a prompt, while `echo "$(rm x)"` still asks
 
+#### Scenario: Quoted flag
+- **WHEN** the model runs `find . '-delete'`, `find . -de''lete`, `sort '-o' f f`, `rg '--pre' sh x`, `sort --compress-program=sh f`, or `git log --output=f`
+- **THEN** a confirmation is required
+
 ### Requirement: Everything else asks before acting
 
 The system SHALL require confirmation for any file mutation outside the session directory and for any command not on the safe list, SHALL treat a refusal as a tool result rather than an error, and SHALL let the model continue.
