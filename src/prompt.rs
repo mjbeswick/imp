@@ -48,6 +48,11 @@ pub fn compose(root: &std::path::Path, cfg: &crate::config::Config) -> String {
          results, or releases, search, then fetch the best source, and say how current the answer is.\n",
     );
 
+    prompt.push_str(&format!(
+        "Session directory: {}. Commands start there; it is the project unless the user names another place.\n",
+        root.display()
+    ));
+
     if let Some(dir) = crate::tools::scratch() {
         prompt.push_str(&format!(
             "Scratch: {} is yours, as $IMP_TMP in commands. Put downloads and temporary files there, never /tmp; \
@@ -132,6 +137,7 @@ mod tests {
         let text = compose(&d, &crate::config::Config::default());
         assert!(text.contains("A system note gives today's date."), "{text}");
         assert!(text.contains("search, then fetch the best source"));
+        assert!(text.contains(&format!("Session directory: {}.", d.display())), "{text}");
     }
 
     #[test]

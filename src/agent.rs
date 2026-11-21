@@ -870,6 +870,8 @@ impl Session {
                 let named = crate::secrets::mentioned(cmd);
                 let decision = match decision {
                     Decision::Allow if named.is_some() && mode != Permissions::Yolo => Decision::Ask,
+                    // Leaving the project is worth a look, even to read.
+                    Decision::Allow if mode != Permissions::Yolo && perm::leaves_dir(cmd, &self.tools.root) => Decision::Ask,
                     other => other,
                 };
                 // A plain curl GET shares the per-host fetch approval.

@@ -178,6 +178,39 @@ fn safe_pipeline(cmd: &str, masked: &str) -> bool {
     })
 }
 
+/// True when a `cd` in the command may leave `root`: an absolute, `~`, or
+/// `..` target outside it, a variable or `-` target, or a bare `cd`.
+// ponytail: whitespace words, quotes stripped; an odd spelling counts as leaving.
+pub fn leaves_dir(cmd: &str, root: &std::path::Path) -> bool {
+    let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    // `cd` counts only where a command starts.
+    for part in cmd.split([';', '&', '|', '\n']) {
+        let words: Vec<String> = part.split_whitespace().map(|w| w.replace(['\'', '"'], "")).collect();
+        if words.first().map(String::as_str) != Some("cd") {
+            continue;
+        }
+        let Some(target) = words.get(1) else { return true };
+        if target.starts_with('$') || target.starts_with('-') || target.starts_with('~') {
+            return true;
+        }
+        let joined = if target.starts_with('/') { std::path::PathBuf::from(target) } else { root.join(target) };
+        let mut norm = std::path::PathBuf::new();
+        for c in joined.components() {
+            match c {
+                std::path::Component::ParentDir => {
+                    norm.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => norm.push(other.as_os_str()),
+            }
+        }
+        if !norm.starts_with(root) && !norm.starts_with(&canon) {
+            return true;
+        }
+    }
+    false
+}
+
 /// The agent may not rewrite its own settings, except in `yolo`, where the user
 /// has waived every prompt.
 pub fn self_config(path: &std::path::Path, mode: Permissions) -> Option<Decision> {
@@ -589,6 +622,17 @@ mod tests {
         assert_eq!(url_host("https://wttr.in/Woking?format=3"), "wttr.in");
         assert_eq!(url_host("http://u:p@192.168.0.61:11080/assets"), "192.168.0.61:11080");
         assert_eq!(url_host("HTTPS://Feeds.BBCI.co.uk#x"), "feeds.bbci.co.uk");
+    }
+
+    #[test]
+    fn cd_out_of_the_session_is_noticed() {
+        let root = std::path::Path::new("/work/shop");
+        for out in ["cd /Users/me/other && rg x", "cd ..; ls", "cd ~ && ls", "cd $HOME", "cd", "ls; cd -", "cd 'src/../..'"] {
+            assert!(leaves_dir(out, root), "{out}");
+        }
+        for inside in ["cd src && ls", "cd /work/shop/tests; ls", "ls cd", "cd ./a/../b && ls", "echo hi"] {
+            assert!(!leaves_dir(inside, root), "{inside}");
+        }
     }
 
     #[test]
