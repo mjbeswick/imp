@@ -111,8 +111,35 @@ fn mask(cmd: &str) -> Option<String> {
 /// True when the whole command is read-only: no chaining, redirects, or
 /// substitution outside quotes, and every pipe part is a safe program without
 /// a flag that writes or runs something.
+/// Redirects that write no file, blanked in the command and its mask alike,
+/// so the offsets still line up.
+const QUIET: &[&str] = &[
+    "&>/dev/null", "1>/dev/null", "2>/dev/null", ">/dev/null", "2> /dev/null", "1> /dev/null", "> /dev/null", "2>&1",
+];
+
+fn quiet(cmd: &str, masked: &str) -> (String, String) {
+    let (mut c, mut m) = (cmd.to_string(), masked.to_string());
+    for token in QUIET {
+        let mut from = 0;
+        while let Some(at) = m[from..].find(token).map(|i| i + from) {
+            let end = at + token.len();
+            let before = at == 0 || m.as_bytes()[at - 1].is_ascii_whitespace();
+            let after = m.as_bytes().get(end).is_none_or(|b| b.is_ascii_whitespace() || b";|&".contains(b));
+            if before && after {
+                let blank = " ".repeat(token.len());
+                m.replace_range(at..end, &blank);
+                c.replace_range(at..end, &blank);
+            }
+            from = end;
+        }
+    }
+    (c, m)
+}
+
 fn safe_shell(cmd: &str) -> bool {
     let Some(masked) = mask(cmd) else { return false };
+    let (cmd, masked) = quiet(cmd, &masked);
+    let cmd = cmd.as_str();
     if [">", "<", "`", "$(", "\n"].iter().any(|c| masked.contains(c)) {
         return false;
     }
@@ -258,9 +285,17 @@ pub fn shell_touches_self_config(command: &str, mode: Permissions) -> Option<Dec
 /// compound commands, whose later parts an approved first word would hide.
 // ponytail: whitespace words, so a quoted space splits a word; that only narrows a match.
 pub fn shape(cmd: &str) -> Option<String> {
-    if ["&", ";", "|", ">", "<", "`", "$(", "\n"].iter().any(|c| cmd.contains(c)) {
+    let masked = mask(cmd)?;
+    let (cmd, masked) = quiet(cmd, &masked);
+    if ["&", ";", ">", "<", "`", "$(", "\n"].iter().any(|c| masked.contains(c)) {
         return None;
     }
+    // Piped only into safe filters, it is judged by its first command.
+    let cmd = match masked.find('|') {
+        Some(at) if safe_pipeline(&cmd[at + 1..].to_ascii_lowercase(), &masked[at + 1..]) => &cmd[..at],
+        Some(_) => return None,
+        None => cmd.as_str(),
+    };
     let mut words = Vec::new();
     for w in cmd.split_whitespace() {
         words.push(w);
@@ -622,6 +657,27 @@ mod tests {
         assert_eq!(url_host("https://wttr.in/Woking?format=3"), "wttr.in");
         assert_eq!(url_host("http://u:p@192.168.0.61:11080/assets"), "192.168.0.61:11080");
         assert_eq!(url_host("HTTPS://Feeds.BBCI.co.uk#x"), "feeds.bbci.co.uk");
+    }
+
+    #[test]
+    fn quiet_redirects_are_not_writes() {
+        let run = |c: &str| classify_command(c, Permissions::Normal, false);
+        for c in ["cat README 2>/dev/null", "rg x src 2>&1 | head", "ls nope 2> /dev/null; ls", "find . -name x >/dev/null"] {
+            assert_eq!(run(c), Decision::Allow, "{c}");
+        }
+        for c in ["cat a 2>err.log", "cat a 2>/dev/nullx", "ls >/dev/null2", "echo x >/dev/null/../f", "cat a 2>&1x"] {
+            assert_eq!(run(c), Decision::Ask, "{c}");
+        }
+    }
+
+    #[test]
+    fn always_covers_a_filtered_command() {
+        assert_eq!(shape("python3 -m unittest 2>&1 | tail -5").as_deref(), Some("python3 -m unittest"));
+        assert_eq!(shape("cargo test 2>&1 | grep -E 'FAIL|ok' | head").as_deref(), Some("cargo test"));
+        assert_eq!(shape("make | sh"), None);
+        assert_eq!(shape("make | tee log"), None);
+        assert_eq!(shape("make > log"), None);
+        assert_eq!(shape("make && rm x"), None);
     }
 
     #[test]
