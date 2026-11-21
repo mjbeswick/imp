@@ -61,7 +61,7 @@ pub enum Ui {
 
 pub fn schema() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."},"description":{"type":"string","description":"A few words on what it does, shown to the user instead of a long command."}},"required":["command"]}}}),
+        json!({"type":"function","function":{"name":"bash","description":"Run a shell command. Output is capped; larger output is written to a file whose path is returned.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Command line, run with sh -c."},"background":{"type":"boolean","description":"Start it as a job and return an id immediately."},"delay_s":{"type":"integer","description":"Start it as a job after this many seconds, up to 86400."},"description":{"type":"string","description":"A few words on what it does, shown to the user instead of a long command."}},"required":["command"]}}}),
         json!({"type":"function","function":{"name":"job","description":"List background jobs, wait for one, or kill one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["list","wait","kill"]},"id":{"type":"integer"},"timeout_s":{"type":"integer","description":"For wait; up to 55 seconds."}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"read","description":"Read files with line numbers, or list a directory. Add several paths in one call.","parameters":{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"},"depth":{"type":"integer","description":"Directory levels, 1 to 3. Default 1."}},"required":["paths"]}}}),
         json!({"type":"function","function":{"name":"edit","description":"Replace exact text in a file. Every old string must match exactly once; all edits apply or none do.","parameters":{"type":"object","properties":{"path":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}}}),
@@ -827,14 +827,20 @@ impl Session {
                         return (code == 0, format!("exit {code}\n(ran attached to the terminal)"));
                     }
                 }
-                if args.get("background").and_then(Value::as_bool).unwrap_or(false) {
-                    return match self.jobs.start(cmd, &self.job_dir) {
+                let delay = args.get("delay_s").and_then(Value::as_u64);
+                if delay.is_some_and(|d| !(1..=86_400).contains(&d)) {
+                    return (false, "refused: delay_s is 1 to 86400 seconds".into());
+                }
+                if delay.is_some() || args.get("background").and_then(Value::as_bool).unwrap_or(false) {
+                    let wait = std::time::Duration::from_secs(delay.unwrap_or(0));
+                    return match self.jobs.start_after(cmd, &self.job_dir, wait) {
                         Ok(id) => {
                             let _ = self.jobs.poll();
                             (
                                 true,
                                 format!(
-                                    "job {id} started in the background; output: {}",
+                                    "job {id} {} in the background; output: {}",
+                                    if wait.is_zero() { "started".to_string() } else { format!("starts in {}", crate::jobs::span(wait)) },
                                     self.job_dir.join(format!("job-{id}.log")).display()
                                 ),
                             )

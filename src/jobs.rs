@@ -21,6 +21,8 @@ pub struct Job {
     pub output: PathBuf,
     pub cursor: u64,
     pub started: Instant,
+    /// When the command itself begins; later than `started` for a delayed job.
+    pub begins: Instant,
     child: Option<Child>,
     code: Option<i32>,
 }
@@ -32,13 +34,56 @@ impl Job {
     }
 
     pub fn status_line(&self) -> String {
+        let now = Instant::now();
+        let waiting = self.code.is_none() && now < self.begins;
         let state = match self.code {
+            _ if waiting => format!("starts in {}", span(self.begins - now)),
             Some(c) => format!("exit {c}"),
-            None => format!("running {}s", self.started.elapsed().as_secs()),
+            None => format!("running {}", span(now - self.begins)),
         };
         let cmd: String = self.command.chars().take(60).collect();
-        format!("job {}  {state}  {cmd}", self.id)
+        let mut line = format!("job {}  {state}  {cmd}", self.id);
+        if !waiting {
+            let size = std::fs::metadata(&self.output).map_or(0, |m| m.len());
+            line.push_str(&format!("\n  output {}", bytes(size)));
+            if let Some(last) = last_line(&self.output) {
+                line.push_str(&format!(" · last: {last}"));
+            }
+        }
+        line
     }
+}
+
+/// A duration as `45s`, `12m 5s`, or `1h 59m`.
+pub fn span(d: Duration) -> String {
+    let s = d.as_secs();
+    match s {
+        0..=59 => format!("{s}s"),
+        60..=3599 => format!("{}m {}s", s / 60, s % 60),
+        _ => format!("{}h {}m", s / 3600, s % 3600 / 60),
+    }
+}
+
+fn bytes(n: u64) -> String {
+    match n {
+        0..=1023 => format!("{n} B"),
+        1024..=1_048_575 => format!("{:.1} KB", n as f64 / 1024.0),
+        _ => format!("{:.1} MB", n as f64 / 1_048_576.0),
+    }
+}
+
+/// The last non-empty line of a log. Progress meters redraw with `\r`, so
+/// both `\r` and `\n` end a line.
+fn last_line(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(1024))).ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    let text = String::from_utf8_lossy(&tail);
+    let line = text.split(['\r', '\n']).map(str::trim).rfind(|l| !l.is_empty())?;
+    Some(line.chars().take(100).collect())
 }
 
 /// Job ids are unique across the process, so sessions running side by side
@@ -56,12 +101,19 @@ pub struct Jobs {
 
 impl Jobs {
     pub fn start(&mut self, command: &str, dir: &Path) -> Result<u64, String> {
+        self.start_after(command, dir, Duration::ZERO)
+    }
+
+    /// Start a job whose command waits `delay` first; killing it before then
+    /// means the command never runs.
+    pub fn start_after(&mut self, command: &str, dir: &Path, delay: Duration) -> Result<u64, String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let id = next_id();
         let output = dir.join(format!("job-{id}.log"));
         let file = std::fs::File::create(&output).map_err(|e| e.to_string())?;
 
-        let script = format!("exec 2>&1\n{command}");
+        let wait = if delay.is_zero() { String::new() } else { format!("sleep {}\n", delay.as_secs()) };
+        let script = format!("{wait}exec 2>&1\n{command}");
         let mut cmd = Command::new("sh");
         // Jobs are the agent's: no secrets unless passed through.
         crate::secrets::scrub(&mut cmd);
@@ -85,6 +137,7 @@ impl Jobs {
                 output,
                 cursor: 0,
                 started: Instant::now(),
+                begins: Instant::now() + delay,
                 child: Some(child),
                 code: None,
             },
@@ -103,6 +156,7 @@ impl Jobs {
                 output,
                 cursor: 0,
                 started: Instant::now(),
+                begins: Instant::now(),
                 child: Some(child),
                 code: None,
             },
@@ -302,6 +356,35 @@ mod tests {
         let listing = jobs.list();
         assert!(listing.contains(&format!("job {id}")), "{listing}");
         assert!(!listing.contains("running"), "{listing}");
+    }
+
+    #[test]
+    fn a_delayed_job_waits_and_can_be_cancelled_first() {
+        let d = dir();
+        let mut jobs = Jobs::default();
+        let marker = d.join("ran");
+        let id = jobs.start_after(&format!("touch {}", marker.display()), &d, Duration::from_secs(2)).unwrap();
+        assert!(jobs.list().contains("starts in 1s") || jobs.list().contains("starts in 2s"), "{}", jobs.list());
+        jobs.kill(id).unwrap();
+        std::thread::sleep(Duration::from_millis(2500));
+        assert!(!marker.exists(), "a cancelled delayed job ran");
+
+        let id = jobs.start_after("echo late", &d, Duration::from_secs(1)).unwrap();
+        let out = jobs.wait(id, Duration::from_secs(5)).unwrap();
+        assert!(out.contains("exit 0") && out.contains("late"), "{out}");
+    }
+
+    #[test]
+    fn status_shows_size_and_the_last_progress_line() {
+        let d = dir();
+        let mut jobs = Jobs::default();
+        let id = jobs.start("printf 'copying\\n  10%%\\r  45%% 12MB/s\\r'; sleep 3", &d).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        let text = jobs.list();
+        assert!(text.contains("output 27 B · last: 45% 12MB/s"), "{text}");
+        let _ = jobs.kill(id);
+        assert_eq!(span(Duration::from_secs(7_140)), "1h 59m");
+        assert_eq!(span(Duration::from_secs(725)), "12m 5s");
     }
 
     #[test]
