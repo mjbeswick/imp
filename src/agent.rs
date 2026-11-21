@@ -966,6 +966,10 @@ impl Session {
                     hooks.ui(Ui::Show(first_lines(&full, SHOW_LINES)));
                     return (o.ok, format!("exit {}\n{}", o.code.unwrap_or(-1), self.tools.cap(&for_model(&full))));
                 }
+                // A file printed whole counts as read; a capped one was not seen whole.
+                if o.ok && !o.text.contains("imp://out/") {
+                    self.tools.mark_read(&perm::cat_paths(cmd));
+                }
                 (o.ok, format!("exit {}\n{}", o.code.unwrap_or(-1), o.text))
             }
             "read" => {
@@ -2166,6 +2170,18 @@ mod tests {
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
         }
+    }
+
+    #[test]
+    fn a_cat_read_lets_a_write_overwrite() {
+        let (mut s, _fake) = scripted(vec![]);
+        std::fs::write(s.tools.root.join("notes.md"), "old\n").unwrap();
+        let (ok, out) = s.run_tool("write", &json!({"path": "notes.md", "content": "new"}), &mut Null);
+        assert!(!ok && out.contains("before overwriting"), "{out}");
+        let (ok, _) = s.run_tool("bash", &json!({"command": "cat -n notes.md"}), &mut Null);
+        assert!(ok);
+        let (ok, out) = s.run_tool("write", &json!({"path": "notes.md", "content": "new"}), &mut Null);
+        assert!(ok, "{out}");
     }
 
     #[test]

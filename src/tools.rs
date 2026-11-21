@@ -505,6 +505,16 @@ impl Tools {
         full.starts_with(&out)
     }
 
+    /// Count files the model saw whole elsewhere, such as through `cat`, as
+    /// read. The jail still applies.
+    pub fn mark_read(&mut self, paths: &[String]) {
+        for raw in paths {
+            if let Ok(path) = self.resolve(raw) {
+                self.read_paths.insert(path);
+            }
+        }
+    }
+
     /// Cap a result, storing the rest in memory and pointing at its buffer.
     pub fn cap(&mut self, text: &str) -> String {
         if text.len() <= INLINE_CAP {

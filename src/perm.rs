@@ -205,6 +205,54 @@ fn safe_pipeline(cmd: &str, masked: &str) -> bool {
     })
 }
 
+/// The files a command prints whole with `cat`: each part of a `;` or `&&`
+/// chain that is `cat`, at most `-n`, and plain paths. Pipes, globs,
+/// variables, and `cd` give none.
+pub fn cat_paths(cmd: &str) -> Vec<String> {
+    let Some(masked) = mask(cmd) else { return Vec::new() };
+    let (cmd, masked) = quiet(cmd, &masked);
+    if ["|", ">", "<", "`", "$", "\n"].iter().any(|c| masked.contains(c)) {
+        return Vec::new();
+    }
+    // Separators come from the mask; the words from the command at the same offsets.
+    let (mut parts, mut start, mut i) = (Vec::new(), 0, 0);
+    while i < masked.len() {
+        let width = if masked[i..].starts_with("&&") { 2 } else { usize::from(masked.as_bytes()[i] == b';') };
+        if width == 0 && masked.as_bytes()[i] == b'&' {
+            return Vec::new();
+        }
+        if width > 0 {
+            parts.push(&cmd[start..i]);
+            start = i + width;
+        }
+        i += width.max(1);
+    }
+    parts.push(&cmd[start..]);
+    let mut paths = Vec::new();
+    for part in parts {
+        let words: Vec<String> = match part.split_whitespace().map(unquote).collect::<Option<_>>() {
+            Some(w) => w,
+            None => return Vec::new(),
+        };
+        match words.split_first() {
+            Some((first, rest)) if first == "cat" => {
+                for w in rest {
+                    if w == "-n" {
+                        continue;
+                    }
+                    if w.starts_with('-') || w.contains(['*', '?', '[', '~']) {
+                        return Vec::new();
+                    }
+                    paths.push(w.clone());
+                }
+            }
+            Some((first, _)) if first == "cd" => return Vec::new(),
+            _ => {}
+        }
+    }
+    paths
+}
+
 /// True when a `cd` in the command may leave `root`: an absolute, `~`, or
 /// `..` target outside it, a variable or `-` target, or a bare `cd`.
 // ponytail: whitespace words, quotes stripped; an odd spelling counts as leaving.
@@ -657,6 +705,15 @@ mod tests {
         assert_eq!(url_host("https://wttr.in/Woking?format=3"), "wttr.in");
         assert_eq!(url_host("http://u:p@192.168.0.61:11080/assets"), "192.168.0.61:11080");
         assert_eq!(url_host("HTTPS://Feeds.BBCI.co.uk#x"), "feeds.bbci.co.uk");
+    }
+
+    #[test]
+    fn cat_paths_are_whole_reads() {
+        assert_eq!(cat_paths("cat -n README.md"), vec!["README.md"]);
+        assert_eq!(cat_paths("cat a.py 'b.py' 2>/dev/null && ls; cat d"), vec!["a.py", "b.py", "d"]);
+        for none in ["cat a | head", "cat *.py", "cat $F", "cd x && cat a", "cat -A a", "cat a > b", "cat ~/a", "cat a & rm b"] {
+            assert!(cat_paths(none).is_empty(), "{none}");
+        }
     }
 
     #[test]
