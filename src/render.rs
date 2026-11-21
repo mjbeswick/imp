@@ -192,6 +192,8 @@ pub struct Style {
     pub bold: bool,
     pub italic: bool,
     pub code: bool,
+    /// A fenced block's body: the code colour without inline code's weight.
+    pub fence: bool,
     pub dim: bool,
     /// Table lines, painted in the border colour.
     pub border: bool,
@@ -254,7 +256,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
                 }
                 for body in std::mem::take(&mut fence_body) {
                     rows.extend(hard_wrap(
-                        &[Span::styled(body, Style { dim: true, ..Style::default() })],
+                        &[Span::styled(body, Style { fence: true, ..Style::default() })],
                         width,
                     ));
                 }
@@ -308,7 +310,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
     // An unterminated fence is still shown as code, which is what the model meant.
     for body in fence_body {
         rows.extend(hard_wrap(
-            &[Span::styled(body, Style { dim: true, ..Style::default() })],
+            &[Span::styled(body, Style { fence: true, ..Style::default() })],
             width,
         ));
     }
@@ -471,6 +473,15 @@ fn is_fence(line: &str, marker: char) -> bool {
 
 /// The marker, the remaining text, and the style the whole row takes.
 fn block(line: &str) -> (String, &str, Style) {
+    // A nested list item keeps its indent ahead of its marker.
+    let inner = line.trim_start_matches(' ');
+    let depth = line.len() - inner.len();
+    if depth > 0 && !inner.is_empty() {
+        let (prefix, rest, style) = block(inner);
+        if !prefix.is_empty() && !prefix.starts_with('│') && !prefix.starts_with('─') {
+            return (format!("{}{prefix}", " ".repeat(depth.min(8))), rest, style);
+        }
+    }
     let dim = Style { dim: true, ..Style::default() };
     if line.trim().is_empty() {
         return (String::new(), line, Style::default());
@@ -530,6 +541,17 @@ fn inline(text: &str, base: Style, links: bool) -> Vec<Span> {
                     Style { code: true, ..base },
                 ));
                 i += end + 2;
+                continue;
+            }
+        }
+
+        if c == '~' && chars.get(i + 1) == Some(&'~') {
+            if let Some(end) = (i + 2..chars.len().saturating_sub(1)).find(|&j| chars[j] == '~' && chars[j + 1] == '~') {
+                flush(&mut spans, &mut plain, base);
+                let body: String = chars[i + 2..end].iter().collect();
+                // ponytail: struck text is dimmed, not crossed; not every font draws SGR 9.
+                spans.push(Span::styled(body, Style { dim: true, ..base }));
+                i = end + 2;
                 continue;
             }
         }
@@ -653,13 +675,17 @@ pub fn wrap(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
     let mut row: Vec<Span> = Vec::new();
     let mut used = 0;
 
+    // A span that starts where the last one ended, with no space between,
+    // continues its word: `*a*.` is `a.`, not `a .`.
+    let mut glue = false;
     for span in spans {
-        for piece in split_words(&span.text) {
+        for (k, piece) in split_words(&span.text).into_iter().enumerate() {
+            let joined = k == 0 && glue;
             if piece.is_empty() {
                 continue;
             }
             let len = piece.chars().count();
-            let space = if used == 0 { 0 } else { 1 };
+            let space = if used == 0 || joined { 0 } else { 1 };
             if used + space + len > width && used > 0 {
                 rows.push(std::mem::take(&mut row));
                 used = 0;
@@ -678,7 +704,7 @@ pub fn wrap(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
                 }
                 continue;
             }
-            if used > 0 {
+            if used > 0 && !joined {
                 row.push(Span::plain(" "));
                 used += 1;
             }
@@ -689,6 +715,7 @@ pub fn wrap(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
             });
             used += len;
         }
+        glue = !span.text.is_empty() && !span.text.ends_with(' ');
     }
     if !row.is_empty() {
         rows.push(row);
@@ -878,7 +905,7 @@ mod tests {
         assert!(open.iter().all(|r| !r[0].style.raw), "an open fence was drawn");
         let failed = lines("```impfail\nx\n```", 30, false);
         assert_eq!(failed[0][0].text, "x");
-        assert!(failed[0][0].style.dim);
+        assert!(failed[0][0].style.fence);
     }
 
     #[test]
@@ -887,7 +914,7 @@ mod tests {
         let rows = lines(text, 80, false);
         let joined = plain(&rows);
         assert!(joined.iter().any(|r| r == "**not bold**"));
-        assert!(rows[1][0].style.dim, "the fence body should be dim");
+        assert!(rows[1][0].style.fence, "the fence body should be marked");
         assert!(!rows[1][0].style.code, "a fence body is not inline code");
     }
 
@@ -899,6 +926,28 @@ mod tests {
         assert_eq!(joined[1], "• two");
         assert_eq!(joined[2], "│ quoted");
         assert_eq!(joined[3], "title");
+    }
+
+    #[test]
+    fn struck_text_drops_its_markers() {
+        let rows = lines("a ~~old~~ b", 80, false);
+        assert_eq!(text(&rows[0]), "a old b");
+        assert!(rows[0].iter().any(|s| s.text == "old" && s.style.dim));
+    }
+
+    #[test]
+    fn nested_items_keep_their_indent() {
+        let rows = lines("- top\n  1. inner\n    - deeper", 80, false);
+        assert_eq!(text(&rows[1]), "  1. inner");
+        assert_eq!(text(&rows[2]), "    • deeper");
+    }
+
+    #[test]
+    fn styled_words_keep_their_punctuation() {
+        let row = |md: &str| text(&lines(md, 80, false)[0]);
+        assert_eq!(row("ran the *tests*."), "ran the tests.");
+        assert_eq!(row("call `x`, then"), "call x, then");
+        assert_eq!(row("**a**b and **c** d"), "ab and c d");
     }
 
     #[test]

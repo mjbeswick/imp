@@ -4025,7 +4025,7 @@ impl App {
             }
             let colour = if span.style.border {
                 Role::Border
-            } else if span.style.code {
+            } else if span.style.code || span.style.fence {
                 Role::Code
             } else if span.link.is_some() {
                 Role::Link
