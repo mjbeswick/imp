@@ -924,8 +924,16 @@ impl Session {
                 }
                 match crate::http::fetch(url, 15_000, 2 * 1024 * 1024) {
                     Ok((status, kind, body)) => {
-                        let html = kind.contains("html") || body.trim_start().starts_with('<') && kind.is_empty();
-                        let body = if html { crate::tools::html_text(&body) } else { body };
+                        let start = body.trim_start();
+                        let xml = kind.contains("xml") || kind.contains("rss") || kind.contains("atom") || start.starts_with("<?xml");
+                        let html = !xml && (kind.contains("html") || start.starts_with('<') && kind.is_empty());
+                        let body = if html {
+                            crate::web::markdown(&body, url)
+                        } else if xml {
+                            crate::web::feed(&body).unwrap_or(body)
+                        } else {
+                            body
+                        };
                         let kind = kind.split(';').next().unwrap_or("").trim().to_string();
                         let text = self.tools.cap(&format!("{status} {kind}\n{body}"));
                         (status < 400, text)
@@ -1862,7 +1870,7 @@ mod tests {
         );
         let (ok, out) = s.run_tool("fetch", &json!({"url": page}), &mut Null);
         assert!(!ok, "{out}");
-        assert!(out.starts_with("404 text/html\nGone"), "{out}");
+        assert!(out.starts_with("404 text/html\n# Gone\n\nNo such page"), "{out}");
 
         let (ok, out) = s.run_tool("fetch", &json!({"url": "file:///etc/passwd"}), &mut Null);
         assert!(!ok && out.contains("http or https"), "{out}");

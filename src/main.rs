@@ -17,6 +17,7 @@ mod theme;
 mod tools;
 mod transport;
 mod tui;
+mod web;
 
 use agent::{Hooks, Session, Ui};
 use std::io::{BufRead, Write};

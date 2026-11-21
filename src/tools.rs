@@ -870,77 +870,6 @@ fn walk_dir(
     }
 }
 
-/// An HTML page as readable text: the title first, then the text with
-/// scripts and styles dropped, block tags as line breaks, and common entities
-/// decoded.
-pub fn html_text(html: &str) -> String {
-    let lower = html.to_ascii_lowercase();
-    let title = lower
-        .find("<title")
-        .and_then(|at| Some((at, lower[at..].find('>')? + at + 1)))
-        .and_then(|(_, start)| Some((start, lower[start..].find("</title")? + start)))
-        .map(|(start, end)| html[start..end].trim().to_string())
-        .unwrap_or_default();
-    let mut text = String::new();
-    let mut at = 0;
-    while let Some(open) = lower[at..].find('<').map(|i| i + at) {
-        text.push_str(&html[at..open]);
-        let Some(close) = lower[open..].find('>').map(|i| i + open) else {
-            at = html.len();
-            break;
-        };
-        let tag = lower[open + 1..close].trim_start_matches('/');
-        let name: String = tag.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
-        at = close + 1;
-        if matches!(name.as_str(), "script" | "style" | "noscript" | "title" | "head")
-            && !lower[open + 1..].starts_with('/')
-        {
-            // Skip to the matching close tag, content and all.
-            let end = format!("</{name}");
-            at = lower[at..].find(&end).map_or(html.len(), |i| i + at);
-            continue;
-        }
-        if matches!(
-            name.as_str(),
-            "p" | "br" | "div" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "section" | "article" | "header" | "footer" | "table" | "ul" | "ol"
-        ) {
-            text.push('\n');
-        }
-    }
-    if at < html.len() {
-        text.push_str(&html[at..]);
-    }
-    let decode = |t: &str| {
-        t.replace("&nbsp;", " ")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&amp;", "&")
-    };
-    let text = decode(&text);
-    let mut out = String::new();
-    if !title.is_empty() {
-        out.push_str(&decode(&title));
-        out.push_str("\n\n");
-    }
-    // At most one blank line in a row, and none straight after the title.
-    let mut blank = true;
-    for line in text.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")) {
-        if line.is_empty() {
-            if !blank && !out.is_empty() {
-                out.push('\n');
-            }
-            blank = true;
-        } else {
-            out.push_str(&line);
-            out.push('\n');
-            blank = false;
-        }
-    }
-    out.trim_end().to_string()
-}
-
 /// Only `http` and `https` URLs may be fetched.
 pub fn fetchable(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
@@ -1160,19 +1089,6 @@ mod tests {
         let o = t.bash("sleep 5", &cancel);
         assert!(!o.ok);
         assert!(o.text.contains("cancelled"), "{}", o.text);
-    }
-
-    #[test]
-    fn html_becomes_readable_text() {
-        let page = "<html><head><title>Moon &amp; Sun</title><style>p{}</style></head>\
-            <body><script>alert(1)</script><h1>Phase</h1><p>Waxing&nbsp;gibbous</p>\
-            <p>Next: <b>full</b> &lt;3 days&gt;</p></body></html>";
-        let text = html_text(page);
-        assert!(text.starts_with("Moon & Sun\n\n"), "{text:?}");
-        let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines, vec!["Moon & Sun", "Phase", "Waxing gibbous", "Next: full <3 days>"]);
-        assert!(!text.contains("\n\n\n"), "{text:?}");
-        assert!(!text.contains("alert") && !text.contains("p{}"), "{text:?}");
     }
 
     #[test]
