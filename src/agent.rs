@@ -590,10 +590,13 @@ impl Session {
              Then add up to three lines starting with MEMORY: for durable facts worth saving.\n\
              Be terse. 400 tokens maximum.\n\n{transcript}"
         );
-        let summary = self.complete_once(&[
-            Message::system("You compress conversations without losing decisions."),
-            Message::user(prompt),
-        ])?;
+        let (summary, _) = self.complete_once(
+            &[
+                Message::system("You compress conversations without losing decisions."),
+                Message::user(prompt),
+            ],
+            400,
+        )?;
 
         let mut facts = facts_from_summary(&summary);
         for fact in facts.drain(..) {
@@ -623,10 +626,22 @@ impl Session {
         Ok(())
     }
 
-    fn complete_once(&self, messages: &[Message]) -> Result<String, String> {
+    /// The user's likely next message, from the history as it stands, and the
+    /// request's usage. `None` when the reply is not a usable suggestion.
+    pub fn suggest(&self) -> Option<(String, (u64, u64, u64))> {
+        let mut messages = self.history.clone();
+        messages.push(Message::system(
+            "Write the user's most likely next message, 2 to 8 words, in their voice. \
+             Reply with only that message, or with nothing if there is no clear next step.",
+        ));
+        let (text, usage) = self.complete_once(&messages, 24).ok()?;
+        Some((clean_suggestion(&text)?, usage))
+    }
+
+    fn complete_once(&self, messages: &[Message], max_tokens: u32) -> Result<(String, (u64, u64, u64)), String> {
         let opts = RequestOptions {
             model: self.cfg.model.clone(),
-            max_tokens: 400,
+            max_tokens,
             thinking: false,
             temperature: Some(0.0),
         };
@@ -651,7 +666,10 @@ impl Session {
             },
         );
         match result {
-            Ok(200) => Ok(acc.content),
+            Ok(200) => {
+                let usage = (acc.cache_hit, acc.cache_miss, acc.completion_tokens);
+                Ok((acc.content, usage))
+            }
             Ok(code) => Err(format!("summariser failed: HTTP {code}")),
             Err(e) => Err(e),
         }
@@ -1350,6 +1368,14 @@ impl Session {
         }
     }
 
+}
+
+/// A suggestion as the user would send it: one short line, quotes stripped.
+fn clean_suggestion(text: &str) -> Option<String> {
+    let t = text.trim();
+    let t = ['"', '\'', '`', '“'].iter().fold(t, |t, q| t.strip_prefix(*q).unwrap_or(t));
+    let t = ['"', '\'', '`', '”'].iter().fold(t, |t, q| t.strip_suffix(*q).unwrap_or(t)).trim();
+    (!t.is_empty() && !t.contains('\n') && t.chars().count() <= 60).then(|| t.to_string())
 }
 
 /// Index to keep from: the fourth-newest user message. `None` if too short.
@@ -2170,6 +2196,27 @@ mod tests {
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
         }
+    }
+
+    #[test]
+    fn suggestions_are_one_short_line() {
+        assert_eq!(clean_suggestion(" \"yes, run them\"\n").as_deref(), Some("yes, run them"));
+        assert_eq!(clean_suggestion(""), None);
+        assert_eq!(clean_suggestion("a\nb"), None);
+        assert_eq!(clean_suggestion(&"x".repeat(61)), None);
+    }
+
+    #[test]
+    fn a_suggestion_leaves_the_history_alone() {
+        let (mut s, _fake) = scripted(vec![
+            Script::Ok(text_reply("Shall I run the tests?")),
+            Script::Ok(text_reply("yes, run them")),
+        ]);
+        s.turn("fix it", &mut Null).unwrap();
+        let before = s.history.len();
+        let (text, _) = s.suggest().unwrap();
+        assert_eq!(text, "yes, run them");
+        assert_eq!(s.history.len(), before);
     }
 
     #[test]

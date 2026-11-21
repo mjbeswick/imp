@@ -19,6 +19,7 @@ const CONFIG_TEMPLATE: &str = "\
 # max_tokens=8192
 # color=auto                  # auto | always | never
 # mouse=on                    # wheel scrolls the chat; Option-drag selects
+# suggest=on                  # a greyed next message after each reply; Tab takes it
 # skills_dir=~/.config/imp/skills
 ";
 

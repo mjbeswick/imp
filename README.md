@@ -209,6 +209,7 @@ wins when set.
 # compact_at=60000
 # color=auto
 # mouse=on
+# suggest=on           # a greyed next message after each reply; Tab takes it
 # auto_next=on          # move to the next waiting session after you reply
 ```
 

@@ -144,6 +144,8 @@ pub struct Config {
     pub color: ColorMode,
     /// Capture the mouse wheel in the chat.
     pub mouse: bool,
+    /// Offer a likely next message after each turn in the chat.
+    pub suggest: bool,
     /// Move to the next waiting session after handing one work.
     pub auto_next: bool,
     /// Secret-looking variables the agent's commands may still see.
@@ -182,6 +184,7 @@ impl Default for Config {
             thinking: false,
             color: ColorMode::Auto,
             mouse: true,
+            suggest: true,
             auto_next: true,
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
@@ -263,6 +266,7 @@ impl Config {
             "links" => self.links = Links::parse(value)?,
             "color" => self.color = ColorMode::parse(value)?,
             "mouse" => self.mouse = parse_bool(value)?,
+            "suggest" => self.suggest = parse_bool(value)?,
             "auto_next" => self.auto_next = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Managed profile lines were read before this pass.
