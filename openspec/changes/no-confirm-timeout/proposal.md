@@ -13,11 +13,13 @@ for a quick approval and redraws the screen every second.
   refusal on time, no stopped turn.
 - The seconds-left countdown leaves the confirmation row.
 - Yes stays the default: `y` and Enter approve.
+- Esc on a confirmation or question stops the turn and returns the prompt.
+  `n` still declines one step and lets the turn carry on.
 - With a prompt open and nothing moving, the loop sleeps as long as when idle.
 
 ## Keyboard and resources
 
-No keys change. One fewer redraw per second while a prompt waits, which
+Esc on a prompt now stops the turn; no other key changes. One fewer redraw per second while a prompt waits, which
 matters on the Pi Zero.
 
 ## Capabilities

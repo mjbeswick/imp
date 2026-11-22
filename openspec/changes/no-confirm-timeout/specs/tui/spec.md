@@ -2,7 +2,7 @@
 
 ### Requirement: Confirmation prompts appear inline
 
-The system SHALL ask before a destructive command or a memory write on one row in the input area, naming the verb alone when the tool row names the command, SHALL show each answer as a chip, a bracketed key then its label, SHALL accept `y` or Enter, `n` or Esc, and `s` and `a` where offered, SHALL treat `y` and Enter as the default answer, and SHALL wait until answered, with no deadline and no countdown.
+The system SHALL ask before a destructive command or a memory write on one row in the input area, naming the verb alone when the tool row names the command, SHALL show each answer as a chip, a bracketed key then its label, SHALL accept `y` or Enter, `n`, and `s` and `a` where offered, SHALL decline and stop the turn on Esc, returning the prompt, SHALL treat `y` and Enter as the default answer, and SHALL wait until answered, with no deadline and no countdown.
 
 #### Scenario: Declined command
 - **WHEN** the model asks to run `rm -rf build` and the user refuses
@@ -36,6 +36,10 @@ The system SHALL ask before a destructive command or a memory write on one row i
 - **WHEN** a confirmation has been open for ten minutes
 - **THEN** it is still open, the command has not run, and the turn is still waiting
 
+#### Scenario: Esc stops the turn
+- **WHEN** the user presses Esc on a confirmation
+- **THEN** the command does not run, the turn stops, and the composer is ready for the next message
+
 #### Scenario: Enter approves
 - **WHEN** the user presses Enter on a confirmation
 - **THEN** the command runs as if `y` were pressed
@@ -47,3 +51,19 @@ The system SHALL ask before a destructive command or a memory write on one row i
 #### Scenario: Always is not offered
 - **WHEN** a confirmation cannot be approved beyond once
 - **THEN** the prompt shows only `[y] yes  [n] no`, and `s` and `a` do nothing
+
+### Requirement: Questions are answerable by key or by typing
+
+The system SHALL render an `ask` request as a picker above the input line listing the choices with number keys, SHALL offer a custom-answer row reachable by letter key or arrow, SHALL show the typed answer before sending it, and SHALL leave the question unanswered and stop the turn on Esc.
+
+#### Scenario: Pick by number
+- **WHEN** the question offers three choices
+- **THEN** pressing 2 selects the second and the answer is sent immediately
+
+#### Scenario: Type an answer
+- **WHEN** the user chooses the custom row and types a sentence
+- **THEN** that sentence is the answer and it appears in the transcript
+
+#### Scenario: Dismiss
+- **WHEN** the user presses Esc on a question
+- **THEN** the question closes, the tool result says it was not answered, the turn stops, and the input is ready

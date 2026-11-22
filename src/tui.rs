@@ -611,7 +611,7 @@ fn unpaint(s: &str) -> String {
 }
 
 /// Click targets in one drawn row: each `[k] label` chip replays `k`, and
-/// `Esc skip` replays Esc. A chip runs to the next double space.
+/// `Esc stop` replays Esc. A chip runs to the next double space.
 fn chip_targets(row: usize, text: &str) -> Vec<(usize, usize, usize, Target)> {
     let chars: Vec<char> = text.chars().collect();
     let end_of = |from: usize| {
@@ -2522,7 +2522,8 @@ impl App {
             // A key that answers a prompt or starts a turn hands the session off.
             let asked = matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. }));
             let (at, was_working) = (self.at, self.status.streaming);
-            let interrupt = matches!(key, Key::Ctrl('c'));
+            // Stopping is not answering: the view stays on this session.
+            let interrupt = matches!(key, Key::Ctrl('c') | Key::Esc);
             self.handle_key_inner(key, tx);
             let handed = self.at == at
                 && !interrupt
@@ -4240,7 +4241,12 @@ impl App {
                     Key::Char('y' | 'Y') | Key::Enter => Answer::Yes,
                     Key::Char('s' | 'S') if always => Answer::Session,
                     Key::Char('a' | 'A') if always => Answer::Always,
-                    Key::Esc | Key::Char('n' | 'N') => Answer::No,
+                    Key::Char('n' | 'N') => Answer::No,
+                    // Esc declines and stops the turn, so the prompt comes back.
+                    Key::Esc => {
+                        self.cancel.store(true, Ordering::Relaxed);
+                        Answer::No
+                    }
                     _ => {
                         self.pending = Some(Pending::Confirm { what, reply, always });
                         return;
@@ -4270,6 +4276,7 @@ impl App {
                         self.dirty = true;
                     }
                     Key::Esc => {
+                        self.cancel.store(true, Ordering::Relaxed);
                         let _ = reply.send(None);
                         self.dirty = true;
                     }
@@ -4990,7 +4997,7 @@ impl App {
             parts.push((format!("[{}] {o}", i + 1), 6));
         }
         parts.push(match mode {
-            AskMode::Choose => ("[e] answer   Esc skip".to_string(), 2),
+            AskMode::Choose => ("[e] answer   Esc stop".to_string(), 2),
             AskMode::Custom => (format!("> {typed}{CARET}"), 4),
         });
         let mut rows = Vec::new();
@@ -9162,6 +9169,31 @@ mod tests {
         b.push_diff("+short line".into());
         let plain = b.frame(54, 8);
         assert!(plain.contains("  +short line\x1b[K") || plain.contains("  +short line\r"), "{plain:?}");
+    }
+
+    #[test]
+    fn esc_on_a_prompt_stops_the_turn_but_n_only_declines() {
+        let (tx, _cmds) = channel();
+        let mut a = app();
+        let (reply, answers) = channel();
+        a.status.streaming = true;
+        a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
+        a.handle_key(Key::Char('n'), &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::No));
+        assert!(!a.cancel.load(Ordering::Relaxed), "n stopped the turn");
+        let (reply, answers) = channel();
+        a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
+        a.handle_key(Key::Esc, &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::No));
+        assert!(a.cancel.load(Ordering::Relaxed), "Esc did not stop the turn");
+        assert!(a.pending.is_none() && !a.quit);
+        // A question stops the same way.
+        let mut b = app();
+        let (reply, answers) = channel();
+        b.apply(Ev::Question { q: "which?".into(), opts: vec!["a".into(), "b".into(), "c".into()], reply });
+        b.handle_key(Key::Esc, &tx);
+        assert_eq!(answers.try_recv().ok(), Some(None));
+        assert!(b.cancel.load(Ordering::Relaxed), "Esc on a question did not stop the turn");
     }
 
     #[test]
