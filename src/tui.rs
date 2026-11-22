@@ -7,7 +7,7 @@
 use crate::agent::{Answer, Hooks, Session, Ui};
 use crate::config::{ColorMode, Config, Verbosity};
 use std::ffi::{c_int, c_ulong};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -172,6 +172,58 @@ extern "C" {
     fn tcsetattr(fd: c_int, action: c_int, termios: *const Termios) -> c_int;
     fn read(fd: c_int, buf: *mut std::ffi::c_void, len: usize) -> isize;
     fn pipe(fds: *mut c_int) -> c_int;
+    fn poll(fds: *mut PollFd, n: Nfds, timeout: c_int) -> c_int;
+}
+
+#[repr(C)]
+struct PollFd {
+    fd: c_int,
+    events: i16,
+    revents: i16,
+}
+
+#[cfg(target_os = "linux")]
+type Nfds = std::ffi::c_ulong;
+#[cfg(not(target_os = "linux"))]
+type Nfds = std::ffi::c_uint;
+
+/// A command, such as `/shell` or a password prompt, owns the terminal. The
+/// key reader must not read then: a read from the background stops imp, which
+/// ends the user's own shell, or fails and leaves imp deaf.
+static ATTACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The key reader has seen `ATTACHED` and stopped reading.
+static PARKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Read keys from `fd` and send them on, never reading while `attached` is
+/// set. Waits in `poll` so the flag is checked at least every 50 ms.
+fn read_keys(fd: c_int, tx: Sender<Vec<u8>>, attached: &std::sync::atomic::AtomicBool, parked: &std::sync::atomic::AtomicBool) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let mut buf = [0u8; 64];
+    loop {
+        if attached.load(SeqCst) {
+            parked.store(true, SeqCst);
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        parked.store(false, SeqCst);
+        let mut p = PollFd { fd, events: 1, revents: 0 };
+        // A timeout or a signal: look at the flag again.
+        if unsafe { poll(&mut p, 1, 50) } <= 0 || attached.load(SeqCst) {
+            continue;
+        }
+        let n = unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if n == 0 {
+            break;
+        }
+        if n < 0 {
+            // ponytail: a failed read is retried, not fatal; SIGHUP still ends imp.
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        if tx.send(buf[..n as usize].to_vec()).is_err() {
+            break;
+        }
+    }
 }
 
 /// Ask the terminal for its background with OSC 11, waiting at most about
@@ -1000,6 +1052,12 @@ impl Hooks for WorkerHooks {
     }
 
     fn run_attached(&mut self, command: &str) -> Option<i32> {
+        // Stop the key reader before the command takes the terminal.
+        ATTACHED.store(true, std::sync::atomic::Ordering::SeqCst);
+        let asked = Instant::now();
+        while !PARKED.load(std::sync::atomic::Ordering::SeqCst) && asked.elapsed() < Duration::from_millis(500) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         // The shell gets the mouse back, and imp takes it again after.
         print!("{MOUSE_OFF}\x1b[?25h\x1b[?1049l");
         std::io::stdout().flush().ok();
@@ -1020,6 +1078,7 @@ impl Hooks for WorkerHooks {
         }
         print!("{}", enter_sequence(MOUSE.load(Ordering::Relaxed)).replace("\x1b[>1u", ""));
         std::io::stdout().flush().ok();
+        ATTACHED.store(false, std::sync::atomic::Ordering::SeqCst);
         Some(status.ok().and_then(|s| s.code()).unwrap_or(-1))
     }
 
@@ -6066,20 +6125,7 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
     // Key reader.
     let (key_tx, key_rx) = channel::<Vec<u8>>();
     let key_tx_resize = key_tx.clone();
-    std::thread::spawn(move || {
-        let mut stdin = std::io::stdin();
-        let mut buf = [0u8; 64];
-        loop {
-            match stdin.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if key_tx.send(buf[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
+    std::thread::spawn(move || read_keys(0, key_tx, &ATTACHED, &PARKED));
 
     wake_on_resize(key_tx_resize);
 
@@ -6087,9 +6133,13 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
     let mut busy = Instant::now();
 
     app.render();
+    // A command held the terminal: every row is repainted when it returns.
+    let mut away = false;
     while !app.quit {
         let mut redraw = false;
-        match key_rx.recv_timeout(app.loop_wait(busy.elapsed())) {
+        // While a command holds the terminal, wake often to see it return.
+        let wait = if ATTACHED.load(Ordering::SeqCst) { Duration::from_millis(50) } else { app.loop_wait(busy.elapsed()) };
+        match key_rx.recv_timeout(wait) {
             Ok(bytes) => {
                 pending_bytes.extend(bytes);
                 for key in decode(&mut pending_bytes) {
@@ -6126,6 +6176,15 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
             app.dirty = true;
         }
 
+        // Nothing is drawn over a command that holds the terminal.
+        if ATTACHED.load(Ordering::SeqCst) {
+            away = true;
+            continue;
+        }
+        if std::mem::take(&mut away) {
+            app.shown_size = (0, 0);
+            app.dirty = true;
+        }
         if app.wants_render(redraw) {
             app.render();
         }
@@ -6409,6 +6468,37 @@ mod tests {
         a.cursor = 1;
         a.handle_key(Key::Delete, &tx);
         assert_eq!(a.input, "n", "a multi-byte character was split");
+    }
+
+    #[test]
+    fn the_key_reader_never_reads_while_a_command_holds_the_terminal() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        static ATT: AtomicBool = AtomicBool::new(false);
+        static PARK: AtomicBool = AtomicBool::new(false);
+        let mut fds = [0 as c_int; 2];
+        assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+        let (tx, rx) = channel();
+        let fd = fds[0];
+        std::thread::spawn(move || read_keys(fd, tx, &ATT, &PARK));
+        let put = |b: &[u8]| unsafe { write(fds[1], b.as_ptr().cast(), b.len()) };
+        put(b"a");
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).ok(), Some(b"a".to_vec()));
+        // Attached: the reader parks, and bytes stay for the command.
+        ATT.store(true, SeqCst);
+        let t = Instant::now();
+        while !PARK.load(SeqCst) && t.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(PARK.load(SeqCst), "the reader did not park");
+        put(b"for the shell");
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "it read while attached");
+        let mut left = [0u8; 32];
+        let n = unsafe { read(fds[0], left.as_mut_ptr().cast(), left.len()) };
+        assert_eq!(&left[..n as usize], b"for the shell");
+        // Back: it reads again.
+        ATT.store(false, SeqCst);
+        put(b"b");
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).ok(), Some(b"b".to_vec()));
     }
 
     #[test]
