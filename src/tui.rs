@@ -1744,7 +1744,7 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
     let left = start - 4;
     let mut label = item.label.clone();
     let mut desc = item.desc.clone();
-    if picker.kind != PickKind::Command {
+    if !matches!(picker.kind, PickKind::Command | PickKind::Keys) {
         label = fit(&label, left);
         if picker.kind == PickKind::Session {
             // Counts line up on their last digit.
@@ -1777,7 +1777,7 @@ fn desc_column(picker: &Picker, inner: usize) -> Option<usize> {
         return None;
     }
     let mut left = picker.items.iter().map(|item| item.label.chars().count()).max().unwrap_or(0).max(10) + 2;
-    if picker.kind != PickKind::Command {
+    if !matches!(picker.kind, PickKind::Command | PickKind::Keys) {
         // The right column stays whole, one space off the wall; the
         // label gives way.
         let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
