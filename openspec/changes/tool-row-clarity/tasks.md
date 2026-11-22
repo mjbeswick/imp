@@ -9,7 +9,7 @@
 ## 2. Expansion
 
 - [x] 2.1 Keep the latest turn's rows; Ctrl+E toggles all of them; tests with a `✗` before a `✓`
-- [ ] 2.2 A click toggles one row; test
+- [x] 2.2 A click toggles one row; test
 - [ ] 2.3 `$ command` and `key: value` lines instead of JSON; tests for bash and `edit`
 
 ## 3. Declines

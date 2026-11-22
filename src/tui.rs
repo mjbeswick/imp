@@ -550,6 +550,8 @@ enum Target {
     Row(usize),
     /// Copy entry `0`, or its fenced block `1` when set.
     Copy(usize, Option<usize>),
+    /// Expand or collapse the latest turn's tool row at this entry.
+    Tool(usize),
 }
 
 /// The copy label at a reply's or code block's right edge.
@@ -2574,6 +2576,7 @@ impl App {
                         self.copy(text);
                     }
                 }
+                Some(Target::Tool(i)) => self.toggle_row(i),
                 Some(Target::Row(i)) => {
                     if let Some(Pending::Pick(picker)) = &mut self.pending {
                         picker.index = i;
@@ -2800,6 +2803,24 @@ impl App {
                 entry.text = tool_row_text(row, self.verbosity);
             }
         }
+        self.expand_newest(expand);
+    }
+
+    /// Toggle the one kept tool row at entry `index`, as a click does.
+    fn toggle_row(&mut self, index: usize) {
+        if let Some(row) = self.done.iter_mut().find(|r| r.index == index) {
+            row.expanded = !row.expanded;
+            if let Some(entry) = self.entries.get_mut(index) {
+                entry.text = tool_row_text(row, self.verbosity);
+            }
+        } else if let Some(row) = self.tool.as_ref().filter(|r| r.index == index) {
+            let expand = !row.expanded;
+            self.expand_newest(expand);
+        }
+    }
+
+    /// The newest row, whose diff can still grow, as it is last on screen.
+    fn expand_newest(&mut self, expand: bool) {
         let Some(mut row) = self.tool.take() else {
             return;
         };
@@ -4469,13 +4490,17 @@ impl App {
         let mut labels: Vec<Option<Target>> = Vec::new();
         for (i, slot) in self.drawn.iter().enumerate() {
             let reply = self.cfg.mouse && self.entries[i].role == Role::Assistant;
+            // The latest turn's tool rows open on a click.
+            let kept = self.cfg.mouse && self.done.iter().chain(&self.tool).any(|r| r.index == i);
             let mut first = true;
             let mut block = 0;
             let mut in_fence = false;
             for (_, line) in &slot.1 {
                 let fence = matches!(line, Line::Spans(s) if s.iter().any(|s| s.style.fence));
                 let blank = matches!(line, Line::Text(t) if t.is_empty());
-                let label = if !reply || blank {
+                let label = if kept && !blank {
+                    Some(Target::Tool(i))
+                } else if !reply || blank {
                     None
                 } else if fence && !in_fence {
                     block += 1;
@@ -4533,6 +4558,9 @@ impl App {
                     row.push_str(&" ".repeat(gap));
                     row.push_str(&self.palette.paint(Role::Thinking, time));
                 }
+            }
+            if let Some(Target::Tool(i)) = &labels[n] {
+                self.targets.push((lead + n + 1, 1, cols, Target::Tool(*i)));
             }
             screen.push(row);
         }
@@ -8988,6 +9016,32 @@ mod tests {
         a.push(Role::Assistant, "fresh");
         a.handle_key(Key::Ctrl('e'), &tx);
         assert_eq!(a.entries[0].text, "fresh");
+    }
+
+    #[test]
+    fn a_click_toggles_one_tool_row() {
+        let mut a = app();
+        a.cfg.mouse = true;
+        let (tx, _cmds) = channel();
+        a.begin_task();
+        for cmd in ["false", "true"] {
+            a.apply(Ev::ToolStart { name: "bash".into(), summary: format!("run `{cmd}`"), args: "{}".into() });
+            a.apply(Ev::ToolEnd { ok: false, preview: String::new(), output: "exit 1".into(), detail: String::new(), ms: 1 });
+        }
+        a.frame(80, 14);
+        click(&mut a, &tx, |t| matches!(t, Target::Tool(0)));
+        assert!(a.entries[0].text.contains("args:"), "the clicked row did not open");
+        assert!(!a.entries[1].text.contains("args:"), "the other row opened too");
+        a.frame(80, 14);
+        click(&mut a, &tx, |t| matches!(t, Target::Tool(1)));
+        assert!(a.entries[1].text.contains("args:"), "the newest row did not open");
+        a.frame(80, 20);
+        click(&mut a, &tx, |t| matches!(t, Target::Tool(0)));
+        assert!(!a.entries[0].text.contains("args:"), "a second click did not close it");
+        // With the mouse off there is nothing to click.
+        a.cfg.mouse = false;
+        a.frame(80, 20);
+        assert!(!a.targets.iter().any(|t| matches!(t.3, Target::Tool(_))));
     }
 
     #[test]
