@@ -981,30 +981,6 @@ The system SHALL list built-in and custom providers for bare `/provider`, SHALL 
 - **WHEN** the user runs `/provider use work`
 - **THEN** the active provider becomes `work` for the session
 
-### Requirement: Messages can be stashed for the session
-
-The system SHALL keep a session-bound stash of messages, SHALL add text with `/stash <text>`, SHALL list entries numbered for bare `/stash`, SHALL load entry `n` into the composer and remove it for `pop n`, SHALL remove it without loading for `delete n`, SHALL load all entries joined by blank lines for `pop all`, and SHALL NOT send a request to the model.
-
-#### Scenario: Add while busy
-- **WHEN** the agent is streaming and the user runs `/stash check the tests`
-- **THEN** the text is stored and the turn is not interrupted
-
-#### Scenario: List
-- **WHEN** the user runs `/stash`
-- **THEN** each entry appears with its number
-
-#### Scenario: Pop into composer
-- **WHEN** the user runs `/stash pop 2`
-- **THEN** entry 2 is removed and its text sits in the composer, ready to edit
-
-#### Scenario: Pop all
-- **WHEN** the user runs `/stash pop all`
-- **THEN** every entry is removed and joined into the composer
-
-#### Scenario: Delete
-- **WHEN** the user runs `/stash delete 1`
-- **THEN** entry 1 is removed and the composer is unchanged
-
 ### Requirement: The status line has no spinner
 
 The system SHALL start the status line with the model name and SHALL NOT draw a
@@ -1752,3 +1728,55 @@ The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo
 #### Scenario: Text in the draft
 - **WHEN** the draft holds `fix` and the user presses Tab
 - **THEN** nothing changes
+
+### Requirement: Messages wait in a queue
+
+The system SHALL add the draft to a session queue on Enter while a turn runs in queue mode, SHALL draw queued messages dim above the composer, SHALL send the oldest when a turn ends unless a queued message is open or the user stopped the turn, SHALL NOT restart the running turn's meter for a queued message, and SHALL add, list, pop, delete, and clear queued messages with `/queue <text>`, `/queue`, `/queue pop n`, `/queue delete n`, and `/queue clear`.
+
+#### Scenario: Queue during a turn
+- **WHEN** a turn is running in queue mode and the user sends `also add tests`
+- **THEN** it shows above the composer, not in the transcript, and is sent when the turn ends
+
+#### Scenario: A stopped turn
+- **WHEN** the user stops a turn with Esc while a message is queued
+- **THEN** the message stays queued and no turn starts
+
+#### Scenario: Pop
+- **WHEN** the user runs `/queue pop 1`
+- **THEN** the first queued message is in the draft and gone from the queue
+
+### Requirement: Queued messages are edited in place
+
+The system SHALL walk from an empty draft through queued messages, newest first, and then history on ↑, and back on ↓, SHALL open a queued message in the composer with the rule reading `editing queued n/m · Enter save · ↑↓ move`, SHALL save it in its place on Enter or on leaving it, and SHALL remove it when saved empty.
+
+#### Scenario: Edit the next message
+- **WHEN** two messages are queued and the user presses ↑ twice on an empty draft
+- **THEN** the older one is open in the composer and highlighted in the queue
+
+#### Scenario: Save
+- **WHEN** the user changes the open message and presses Enter
+- **THEN** it keeps its place in the queue with the new text
+
+#### Scenario: Delete by emptying
+- **WHEN** the user clears the open message and presses Enter
+- **THEN** it is gone from the queue
+
+### Requirement: Enter steers or queues by a visible mode
+
+The system SHALL keep a per-session send mode, steer by default, SHALL toggle it on Ctrl+Q, SHALL show it while a turn runs as a label set into the rule above the composer, `steer · ^Q queue` or `queue · ^Q steer`, and as the prompt glyph, `>` for steer and a muted `»` for queue, SHALL on Enter in steer mode give the draft to the running turn before the model's next step and draw it as a user row marked `(steered)`, and SHALL send on Enter when no turn runs, whatever the mode.
+
+#### Scenario: Steer
+- **WHEN** a turn is running a tool in steer mode and the user types `use pnpm, not npm` and presses Enter
+- **THEN** the model's next request carries it and the turn goes on
+
+#### Scenario: Steered too late
+- **WHEN** the user steers a message while the model writes its final reply
+- **THEN** the message starts the next turn as soon as this one ends, or waits at the front of the queue if the user stopped the turn
+
+#### Scenario: Toggle
+- **WHEN** a turn is running in steer mode and the user presses Ctrl+Q
+- **THEN** the rule reads `queue · ^Q steer`, the prompt glyph is `»`, and the next Enter queues
+
+#### Scenario: Idle
+- **WHEN** no turn runs and the mode is queue
+- **THEN** Enter sends the message, the glyph is `>`, and the rule carries no label

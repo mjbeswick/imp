@@ -2,7 +2,7 @@
 
 ### Requirement: The interface is keyboard first
 
-The system SHALL provide Enter to send, or during a turn to steer or queue by the mode, Ctrl+Q to toggle that mode, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
+The system SHALL send on Enter, steer or queue during a turn by the mode, newline on Shift+Enter, Alt+Enter, or Ctrl+J, cancel a turn on Esc, retry on Ctrl+R, toggle tool rows on Ctrl+E, toggle thinking on Ctrl+T and Ctrl+H, clear the view on Ctrl+L, scroll on PgUp and PgDn, stop a turn or clear a draft on Ctrl+C, ask for a second Ctrl+C before quitting, exit on Ctrl+D, decode control bytes and `CSI` sequences alike, and never type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -80,13 +80,13 @@ The system SHALL provide Enter to send, or during a turn to steer or queue by th
 - **WHEN** nothing runs, the draft is empty, and the user presses Ctrl+C
 - **THEN** a line says `Ctrl+C again to quit`, and a second Ctrl+C within two seconds exits
 
-### Requirement: Twenty-three slash commands, no more
+### Requirement: Twenty-five slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/goal`, `/copy`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/queue`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
+The system SHALL provide exactly `/help`, `/keys`, `/diff`, `/new`, `/goal`, `/copy`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/queue`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all twenty-three commands appear with a one-line description
+- **THEN** all twenty-five commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
