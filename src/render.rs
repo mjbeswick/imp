@@ -454,6 +454,36 @@ fn table(head: &[String], aligns: &[Align], body: &[Vec<String>], width: usize, 
     out
 }
 
+/// The bodies of fenced blocks drawn as code, in order. A block whose
+/// language has a drawing command is left out, as it is not drawn as code.
+// ponytail: a command that fails draws its block as code but is still left out here; track failures if that matters.
+pub fn fences(markdown: &str) -> Vec<String> {
+    let has_command = |lang: &str| RENDERERS.lock().map(|r| r.iter().any(|(l, _)| l == lang)).unwrap_or(false);
+    let mut out = Vec::new();
+    let mut open: Option<(char, String, Vec<&str>)> = None;
+    for line in markdown.split('\n') {
+        match &mut open {
+            Some((marker, lang, body)) => {
+                if is_fence(line.trim_end(), *marker) {
+                    if !has_command(lang) {
+                        out.push(body.join("\n"));
+                    }
+                    open = None;
+                } else {
+                    body.push(line.trim_end());
+                }
+            }
+            None => {
+                if let Some(marker) = fence_start(line) {
+                    let lang = line.trim_start().trim_start_matches(marker).trim().to_ascii_lowercase();
+                    open = Some((marker, lang, Vec::new()));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn fence_start(line: &str) -> Option<char> {
     let trimmed = line.trim_start();
     if trimmed.starts_with("```") {

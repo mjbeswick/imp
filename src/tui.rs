@@ -518,7 +518,12 @@ extern "C" {
 enum Target {
     Key(Key),
     Row(usize),
+    /// Copy entry `0`, or its fenced block `1` when set.
+    Copy(usize, Option<usize>),
 }
+
+/// The copy label at a reply's or code block's right edge.
+const COPY: char = '⧉';
 
 /// Text without colour codes or control bytes, so columns match the screen.
 fn unpaint(s: &str) -> String {
@@ -1187,6 +1192,8 @@ pub struct App {
     targets: Vec<(usize, usize, usize, Target)>,
     /// `[a] always` was clicked once; a second click on it applies.
     armed: bool,
+    /// The latest copy, pasted by Ctrl+V.
+    clip: String,
     tool: Option<ToolRow>,
     /// The worker for the session in view; `None` in tests.
     worker: Option<Worker>,
@@ -1752,6 +1759,7 @@ impl App {
             drawn: Vec::new(),
             targets: Vec::new(),
             armed: false,
+            clip: String::new(),
             tool: None,
             worker: None,
             touched: Instant::now(),
@@ -2015,6 +2023,13 @@ impl App {
             }
             Err(e) => self.push(Role::Error, e),
         }
+    }
+
+    /// Keep `text` for Ctrl+V and say how much was copied.
+    fn copy(&mut self, text: String) {
+        let n = text.chars().count();
+        self.clip = text;
+        self.push(Role::Info, format!("copied {n} characters"));
     }
 
     fn push(&mut self, role: Role, text: impl Into<String>) {
@@ -2347,6 +2362,16 @@ impl App {
                     self.dirty = true;
                 }
                 Some(Target::Key(k)) => self.handle_key_inner(k, tx),
+                Some(Target::Copy(i, block)) => {
+                    let text = &self.entries[i].text;
+                    let text = match block {
+                        Some(k) => crate::render::fences(text).into_iter().nth(k),
+                        None => Some(text.clone()),
+                    };
+                    if let Some(text) = text {
+                        self.copy(text);
+                    }
+                }
                 Some(Target::Row(i)) => {
                     if let Some(Pending::Pick(picker)) = &mut self.pending {
                         picker.index = i;
@@ -4025,11 +4050,13 @@ impl App {
             // One blank row opens every turn after the first.
             let gap = entry.role == Role::User && spoke;
             spoke |= entry.role == Role::User;
+            // Replies leave two columns for their copy label.
+            let width = if self.cfg.mouse && entry.role == Role::Assistant { cols.saturating_sub(2) } else { cols };
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (cols, markdown, gap, entry.role as u8, &entry.text).hash(&mut h);
+            (width, markdown, gap, entry.role as u8, &entry.text).hash(&mut h);
             let key = h.finish();
             if self.drawn.get(i).map(|slot| slot.0) != Some(key) {
-                let slot = (key, entry_lines(entry, cols, markdown, gap));
+                let slot = (key, entry_lines(entry, width, markdown, gap));
                 if i < self.drawn.len() {
                     self.drawn[i] = slot;
                 } else {
@@ -4053,6 +4080,35 @@ impl App {
         }
         self.top = self.top.min(max_top);
         self.unseen = total.saturating_sub(self.top + body_rows);
+        // Each row with the copy label it carries, if any: a reply's first
+        // row, and the first row of each fenced block drawn as code.
+        let mut labels: Vec<Option<Target>> = Vec::new();
+        for (i, slot) in self.drawn.iter().enumerate() {
+            let reply = self.cfg.mouse && self.entries[i].role == Role::Assistant;
+            let mut first = true;
+            let mut block = 0;
+            let mut in_fence = false;
+            for (_, line) in &slot.1 {
+                let fence = matches!(line, Line::Spans(s) if s.iter().any(|s| s.style.fence));
+                let blank = matches!(line, Line::Text(t) if t.is_empty());
+                let label = if !reply || blank {
+                    None
+                } else if fence && !in_fence {
+                    block += 1;
+                    Some(Target::Copy(i, Some(block - 1)))
+                } else if first {
+                    Some(Target::Copy(i, None))
+                } else {
+                    None
+                };
+                first &= blank;
+                in_fence = fence;
+                labels.push(label);
+            }
+        }
+        labels.extend(hint.map(|_| None));
+        labels.extend(thinking.as_ref().map(|_| None));
+        let labels: Vec<Option<Target>> = labels.into_iter().skip(self.top).take(body_rows).collect();
         let visible: Vec<&(Role, Line)> = self
             .drawn
             .iter()
@@ -4062,16 +4118,26 @@ impl App {
             .skip(self.top)
             .take(body_rows)
             .collect();
+        self.targets.clear();
+        let lead = body_rows.saturating_sub(visible.len());
 
         let mut screen = String::from("\x1b[?25l\x1b[?7l\x1b[H");
         for _ in 0..body_rows.saturating_sub(visible.len()) {
             screen.push_str("\x1b[2K\r\n");
         }
-        for (role, line) in visible {
+        for (n, (role, line)) in visible.into_iter().enumerate() {
             screen.push_str("\x1b[2K");
             match line {
                 Line::Text(text) => screen.push_str(&self.marked(*role, &fit(text, cols))),
-                Line::Spans(spans) => screen.push_str(&self.paint_spans(*role, spans)),
+                Line::Spans(spans) => {
+                    screen.push_str(&self.paint_spans(*role, spans));
+                    if let Some(target) = labels[n].clone() {
+                        let used: usize = spans.iter().map(|s| s.text.chars().count()).sum();
+                        screen.push_str(&" ".repeat(cols.saturating_sub(used + 1)));
+                        screen.push_str(&self.palette.paint(Role::Thinking, &COPY.to_string()));
+                        self.targets.push((lead + n + 1, cols.saturating_sub(1), cols, target));
+                    }
+                }
                 Line::Timed(text, time) => {
                     screen.push_str(&self.marked(*role, text));
                     let gap = cols.saturating_sub(text.chars().count() + time.chars().count());
@@ -4096,7 +4162,6 @@ impl App {
             screen.push_str(&self.palette.paint(tone, &"─".repeat(cols)));
             screen.push_str("\r\n");
         }
-        self.targets.clear();
         let first = body_rows + rule + 1;
         for (i, row) in composer.iter().enumerate() {
             screen.push_str("\x1b[2K");
@@ -6168,6 +6233,34 @@ mod tests {
         a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
         a.handle_key(Key::Char('a'), &tx);
         assert_eq!(rx.try_recv().ok(), Some(Answer::Always));
+    }
+
+    #[test]
+    fn copy_labels_copy_a_reply_or_its_code() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let reply = "Run this:\n```sh\ncargo test\n```\nthen push.";
+        a.push(Role::Assistant, reply);
+        let frame = strip(&a.frame(40, 12));
+        for line in frame.split("\r\n") {
+            assert!(line.chars().count() <= 40, "too wide: {line:?}");
+        }
+        assert_eq!(frame.matches(COPY).count(), 2, "{frame}");
+        click(&mut a, &tx, |t| matches!(t, Target::Copy(_, Some(0))));
+        assert_eq!(a.clip, "cargo test");
+        a.frame(40, 12);
+        click(&mut a, &tx, |t| matches!(t, Target::Copy(_, None)));
+        assert_eq!(a.clip, reply);
+        assert!(a.entries.iter().any(|e| e.text == format!("copied {} characters", reply.len())));
+    }
+
+    #[test]
+    fn no_copy_labels_with_the_mouse_off() {
+        let mut a = app();
+        a.cfg.mouse = false;
+        a.push(Role::Assistant, "hello\n```\nx\n```");
+        assert!(!a.frame(40, 12).contains(COPY));
+        assert!(!a.targets.iter().any(|t| matches!(t.3, Target::Copy(..))));
     }
 
     #[test]
