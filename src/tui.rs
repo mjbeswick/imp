@@ -861,6 +861,8 @@ fn utf8_len(b: u8) -> usize {
 pub enum Cmd {
     Prompt(String),
     Attach(Vec<crate::api::Image>),
+    /// Drop the last unsent attachment.
+    Detach,
     SetThinking(bool),
     SetAgent(String),
     SetModel(String),
@@ -2822,6 +2824,9 @@ impl App {
                     self.input.replace_range(prev..self.cursor, "");
                     self.cursor = prev;
                     self.sync_menu();
+                } else if self.input.is_empty() {
+                    // Nothing left to delete: the last attached image goes.
+                    let _ = tx.send(Cmd::Detach);
                 }
             }
             Key::Left => self.move_caret(Move::Left),
@@ -5786,6 +5791,11 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         }
                     }
                 }
+                Ok(Cmd::Detach) => {
+                    if let Some(image) = worker_session.attachments.pop() {
+                        let _ = ev_tx.send(Ev::Info(format!("removed {}", crate::images::marker(&image))));
+                    }
+                }
                 Ok(Cmd::Prompt(text)) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
@@ -6572,6 +6582,47 @@ mod tests {
         assert_eq!(desc(&a).chars().count(), first.chars().count(), "the cell changed width");
         a.last_redraw = Instant::now() - Duration::from_millis(200);
         assert!(!a.spin_sessions(), "an idle picker repainted");
+    }
+
+    #[test]
+    fn backspace_on_an_empty_draft_removes_the_last_image() {
+        // The chat asks only when the draft is empty.
+        let (tx, cmds) = channel();
+        let mut a = app();
+        a.input = "x".into();
+        a.cursor = 1;
+        a.handle_key(Key::Backspace, &tx);
+        assert!(cmds.try_recv().is_err(), "a real delete detached an image");
+        a.handle_key(Key::Backspace, &tx);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Detach)));
+        // The worker drops the newest attachment and says which.
+        let dir = std::env::temp_dir().join(format!("imp-detach-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let session = Session::new(
+            Config::default(),
+            dir.clone(),
+            dir.join("out"),
+            String::new(),
+            crate::store::Agent::builtin(),
+            Vec::new(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+        );
+        let (tx, rx, _) = spawn_worker(session, dir.join("sessions"));
+        let image = |name: &str| crate::api::Image { file: format!("{name}.png"), name: name.into(), mime: "image/png".into(), bytes: 2048 };
+        tx.send(Cmd::Attach(vec![image("one"), image("two")])).unwrap();
+        tx.send(Cmd::Detach).unwrap();
+        tx.send(Cmd::Detach).unwrap();
+        tx.send(Cmd::Detach).unwrap();
+        let mut said = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while said.len() < 2 && Instant::now() < deadline {
+            if let Ok(Ev::Info(t)) = rx.recv_timeout(Duration::from_millis(100)) {
+                said.push(t);
+            }
+        }
+        assert_eq!(said, vec!["removed [image two · 2 KB]", "removed [image one · 2 KB]"]);
+        assert!(!matches!(rx.recv_timeout(Duration::from_millis(300)), Ok(Ev::Info(_))), "a third removal spoke");
+        let _ = tx.send(Cmd::Quit);
     }
 
     #[test]
