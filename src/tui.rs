@@ -5189,10 +5189,11 @@ impl App {
                 let out = s.task_usage.2.max(s.chars as u64 / 4);
                 format!("{} · {} · ↓{}", span(start.elapsed()), steps(s.steps), compact_tokens(out))
             }
-            None => tilde(&self.root),
+            // The directory shortens to what is left after two spaces.
+            None => fit_path(&tilde(&self.root), cols.saturating_sub(left.chars().count() + 2)).unwrap_or_default(),
         };
         let gap = cols.saturating_sub(left.chars().count() + right.chars().count());
-        if gap >= 2 {
+        if gap >= 2 && !right.is_empty() {
             format!("{left}{}{right}", " ".repeat(gap))
         } else {
             fit(&left, cols)
@@ -6958,9 +6959,25 @@ mod tests {
         assert!(wide.ends_with(&root), "{wide}");
         assert_eq!(wide.chars().count(), 100, "{wide}");
         assert!(wide.starts_with("deepseek-flash · "), "{wide}");
-        let narrow = a.status_line(40);
-        assert!(!narrow.contains(&root), "{narrow}");
+        let narrow = a.status_line(30);
         assert!(narrow.starts_with("deepseek-flash"), "{narrow}");
+    }
+
+    #[test]
+    fn the_status_line_shortens_a_long_directory() {
+        let mut a = app();
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+        a.root = home.join("Projects/imp/src/providers");
+        let left = "deepseek-flash · 0 tok · $0.00";
+        let at = |a: &App, cols: usize| {
+            let line = a.status_line(cols);
+            assert!(line.starts_with(left) && line.chars().count() <= cols, "{line}");
+            line
+        };
+        assert!(at(&a, 100).ends_with("~/Projects/imp/src/providers"));
+        assert!(at(&a, 54).ends_with("  ~/P/i/s/providers"));
+        assert!(at(&a, 40).ends_with("  …oviders"));
+        assert_eq!(at(&a, 38), left, "6 columns left: left out");
     }
 
     #[test]

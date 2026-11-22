@@ -9,7 +9,7 @@ The system SHALL draw the session directory at the right end of the status line,
 - **THEN** the status line ends with `~/Projects/imp` in the last column
 
 #### Scenario: Narrow terminal
-- **WHEN** the terminal is 40 columns
+- **WHEN** the root is `~/Projects/imp/src/providers` and 6 columns are left after the figures and two spaces
 - **THEN** the directory is absent and the model name is whole
 
 #### Scenario: Abbreviated parents
