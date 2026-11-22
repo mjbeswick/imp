@@ -448,7 +448,8 @@ impl Palette {
     /// The highlighted picker row: user text on the select background.
     pub(crate) fn select(&self, text: &str) -> String {
         if !self.on {
-            return text.to_string();
+            // Mono: no background, so the row is reversed.
+            return self.styled("7", text.to_string());
         }
         let back = self.theme.rgb(crate::theme::Slot::Select);
         let bg = if self.truecolor {
@@ -458,6 +459,17 @@ impl Palette {
         };
         // The fg reset inside `paint` keeps the background until the end.
         format!("{bg}{}\x1b[0m", self.paint(Role::User, text).replace("\x1b[0m", "\x1b[39m"))
+    }
+
+    /// SGR attributes ahead of painted text. `mono` keeps them; `NO_COLOR`
+    /// and `never` drop them with every other escape.
+    pub(crate) fn styled(&self, codes: &str, painted: String) -> String {
+        match (self.allowed && !codes.is_empty(), self.on) {
+            (false, _) => painted,
+            // `paint` already ends in a full reset.
+            (true, true) => format!("\x1b[{codes}m{painted}"),
+            (true, false) => format!("\x1b[{codes}m{painted}\x1b[0m"),
+        }
     }
 
     pub(crate) fn theme_name(&self) -> &'static str {
@@ -4557,15 +4569,14 @@ impl App {
             } else {
                 role
             };
-            let mut text = self.palette.paint(colour, &span.text);
-            if self.palette.on {
-                if span.style.bold || span.style.code {
-                    text = format!("\x1b[1m{text}");
-                }
-                if span.style.italic {
-                    text = format!("\x1b[3m{text}");
-                }
+            let mut codes = Vec::new();
+            if span.style.bold || span.style.code {
+                codes.push("1");
             }
+            if span.style.italic {
+                codes.push("3");
+            }
+            let mut text = self.palette.styled(&codes.join(";"), self.palette.paint(colour, &span.text));
             if let Some(url) = &span.link {
                 text = crate::render::hyperlink(url, &text);
             }
@@ -7011,6 +7022,22 @@ mod tests {
         let off = a.palette.with_theme(mono);
         assert!(!off.on);
         assert!(off.with_theme(crate::theme::by_name("nord").unwrap()).on);
+    }
+
+    #[test]
+    fn mono_keeps_bold_and_reverse_but_no_colour() {
+        let mut a = colour_app();
+        a.palette = a.palette.with_theme(crate::theme::by_name("mono").unwrap());
+        a.push(Role::Assistant, "a **loud** word");
+        let out = a.frame(60, 12);
+        assert!(out.contains("\x1b[1mloud\x1b[0m"), "{out:?}");
+        assert!(!out.contains("38;") && !out.contains("48;"), "colour in mono: {out:?}");
+        assert_eq!(a.palette.select("row"), "\x1b[7mrow\x1b[0m");
+        // NO_COLOR and `never` still mean no escapes at all.
+        let mut b = app();
+        b.push(Role::Assistant, "a **loud** word");
+        assert!(!b.frame(60, 12).contains("\x1b[1m"));
+        assert_eq!(b.palette.select("row"), "row");
     }
 
     #[test]
