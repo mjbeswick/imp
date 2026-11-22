@@ -4521,8 +4521,10 @@ impl App {
         let mut labels: Vec<Option<Target>> = Vec::new();
         for (i, slot) in self.drawn.iter().enumerate() {
             let reply = self.cfg.mouse && self.entries[i].role == Role::Assistant;
-            // The latest turn's tool rows open on a click.
-            let kept = self.cfg.mouse && self.done.iter().chain(&self.tool).any(|r| r.index == i);
+            // The latest turn's tool rows open on a click, unless an overlay
+            // sits over them and the click is meant for it.
+            let covered = matches!(self.pending, Some(Pending::Pick(_) | Pending::ConfirmDelete { .. }));
+            let kept = self.cfg.mouse && !covered && self.done.iter().chain(&self.tool).any(|r| r.index == i);
             let mut first = true;
             let mut block = 0;
             let mut in_fence = false;
@@ -9104,6 +9106,21 @@ mod tests {
         a.frame(80, 20);
         click(&mut a, &tx, |t| matches!(t, Target::Tool(0)));
         assert!(!a.entries[0].text.contains("$ false"), "a second click did not close it");
+        // A picker over the rows takes the click; no row opens beneath it.
+        a.handle_key(Key::Ctrl('e'), &tx);
+        a.handle_key(Key::Ctrl('e'), &tx);
+        assert!(!a.entries.iter().any(|e| e.text.contains("\n  $ ")));
+        // Enough rows that the picker sits over them.
+        for i in 0..12 {
+            let args = format!("{{\"command\":\"step{i}\"}}");
+            a.apply(Ev::ToolStart { name: "bash".into(), summary: format!("step {i}"), args });
+            a.apply(Ev::ToolEnd { ok: true, preview: String::new(), output: "exit 0".into(), detail: String::new(), ms: 1 });
+        }
+        open_many(&mut a, 3);
+        a.frame(80, 16);
+        click(&mut a, &tx, |t| matches!(t, Target::Row(1)));
+        assert!(!a.entries.iter().any(|e| e.text.contains("\n  $ ")), "a tool row opened under the picker");
+        assert!(!matches!(a.pending, Some(Pending::Pick(_))), "the picker did not take the click");
         // With the mouse off there is nothing to click.
         a.cfg.mouse = false;
         a.frame(80, 20);
