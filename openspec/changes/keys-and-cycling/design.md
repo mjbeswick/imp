@@ -21,8 +21,8 @@ shows `→ <agent>` until then.
 
 Today Ctrl+C quits whenever a prompt is open or the draft is empty, even
 mid-turn, against the spec's "Interrupt a prompt". The new order: an open
-prompt is declined and the turn stopped; a running turn is stopped; a
-non-empty draft is cleared; otherwise the first press writes `Ctrl+C again
+prompt is declined and the turn stopped; a non-empty draft is cleared, which
+never stops the turn, as in a shell; a running turn is stopped; otherwise the first press writes `Ctrl+C again
 to quit` and a second within two seconds quits. Esc keeps stopping turns.
 
 The keyboard requirement is modified from `message-queue`'s text; archive

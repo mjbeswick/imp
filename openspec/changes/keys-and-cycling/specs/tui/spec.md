@@ -54,7 +54,7 @@ The system SHALL paint the composer prompt glyph and the rule above the composer
 
 ### Requirement: The interface is keyboard first
 
-The system SHALL provide Enter to send, or during a turn to steer or queue by the mode, Ctrl+Q to toggle that mode, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, Ctrl+C to decline an open prompt and stop the turn, else to stop a running turn, else to clear a non-empty draft, else to ask for a second Ctrl+C within two seconds before exiting, Ctrl+D to exit on an empty draft, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
+The system SHALL provide Enter to send, or during a turn to steer or queue by the mode, Ctrl+Q to toggle that mode, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, Ctrl+C to decline an open prompt and stop the turn, else to clear a non-empty draft, else to stop a running turn, else to ask for a second Ctrl+C within two seconds before exiting, Ctrl+D to exit on an empty draft, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -117,8 +117,12 @@ The system SHALL provide Enter to send, or during a turn to steer or queue by th
 - **THEN** a newline is inserted and nothing is sent
 
 #### Scenario: Ctrl+C stops a turn
-- **WHEN** a turn is running and the user presses Ctrl+C
-- **THEN** the turn stops, the draft is kept, and imp stays open
+- **WHEN** a turn is running, the draft is empty, and the user presses Ctrl+C
+- **THEN** the turn stops and imp stays open
+
+#### Scenario: Ctrl+C clears a draft first
+- **WHEN** a turn is running and the draft holds text
+- **THEN** Ctrl+C clears the draft and the turn goes on
 
 #### Scenario: Ctrl+C on a prompt
 - **WHEN** a confirmation is open and the user presses Ctrl+C

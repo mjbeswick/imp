@@ -8,5 +8,5 @@
 
 ## 2. Keys
 
-- [ ] 2.0 Ctrl+C: decline a prompt and stop, stop a turn, clear the draft, or quit on a second press within two seconds; Ctrl+D quits; tests for each
+- [x] 2.0 Ctrl+C: decline a prompt and stop, stop a turn, clear the draft, or quit on a second press within two seconds; Ctrl+D quits; tests for each
 - [ ] 2.1 `/keys`, and `/help` without the keys section; tests

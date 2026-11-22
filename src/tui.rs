@@ -1457,6 +1457,8 @@ pub struct App {
     last_size: (usize, usize),
     dirty: bool,
     quit: bool,
+    /// When an idle Ctrl+C asked for a second one to quit.
+    quit_armed: Option<Instant>,
     spinner: usize,
     /// Rendered rows per entry, keyed by a hash of what shapes them.
     drawn: Vec<(u64, Vec<(Role, Line)>)>,
@@ -2144,6 +2146,7 @@ impl App {
             last_size: (0, 0),
             dirty: true,
             quit: false,
+            quit_armed: None,
             spinner: 0,
             drawn: Vec::new(),
             targets: Vec::new(),
@@ -2851,25 +2854,32 @@ impl App {
         // they keep the exit; a picker is part of composing, so it closes with
         // the text.
         if matches!(key, Key::Ctrl('c')) {
-            let prompt = matches!(
-                self.pending,
-                Some(Pending::Confirm { .. })
-                    | Some(Pending::ConfirmDelete { .. })
-                    | Some(Pending::Question { .. })
-                    | Some(Pending::Prompt { .. })
-                    | Some(Pending::ProviderForm { .. })
-                    | Some(Pending::RenameCurrent { .. })
-                    | Some(Pending::KeyEntry { .. })
-            );
-            if prompt || self.input.is_empty() {
-                self.quit = true;
-            } else {
+            // Stop before quitting: an open prompt is declined as Esc would,
+            // a draft is cleared, a running turn is stopped. Only an idle,
+            // empty Ctrl+C asks, and a second within two seconds quits.
+            self.dirty = true;
+            if let Some(pending) = self.pending.take() {
+                // A picker typed from the draft goes with its text.
+                let picker = matches!(pending, Pending::Pick(_));
+                self.answer(pending, Key::Esc, tx);
+                if picker {
+                    self.pending = None;
+                    self.input.clear();
+                    self.cursor = 0;
+                }
+            } else if !self.input.is_empty() {
+                // A draft goes first, so clearing it never stops the turn.
                 self.input.clear();
                 self.cursor = 0;
                 self.hist_pos = None;
-                self.pending = None;
                 self.follow_tail();
-                self.dirty = true;
+            } else if self.status.streaming {
+                self.cancel.store(true, Ordering::Relaxed);
+            } else if self.quit_armed.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+                self.quit = true;
+            } else {
+                self.quit_armed = Some(Instant::now());
+                self.push(Role::Info, "Ctrl+C again to quit");
             }
             return;
         }
@@ -10919,12 +10929,13 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_exits_while_streaming() {
+    fn ctrl_c_stops_a_running_turn_and_stays_open() {
         let mut a = app();
         a.status.streaming = true;
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.quit, "Ctrl+C did not exit mid-turn");
+        assert!(!a.quit, "Ctrl+C quit mid-turn");
+        assert!(a.cancel.load(Ordering::Relaxed), "the turn was not stopped");
     }
 
     #[test]
@@ -10943,11 +10954,19 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_exits_at_once_when_idle() {
+    fn an_idle_ctrl_c_asks_and_a_second_quits() {
         let mut a = app();
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.quit, "an idle Ctrl+C did not quit");
+        assert!(!a.quit, "one idle Ctrl+C quit");
+        assert_eq!(a.entries.last().unwrap().text, "Ctrl+C again to quit");
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert!(a.quit, "the second Ctrl+C did not quit");
+        // Too late for the second: it asks again.
+        let mut b = app();
+        b.quit_armed = Some(Instant::now() - Duration::from_secs(3));
+        b.handle_key(Key::Ctrl('c'), &tx);
+        assert!(!b.quit);
     }
 
     #[test]
@@ -10986,7 +11005,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_exits_from_a_picker() {
+    fn ctrl_c_closes_a_picker_without_quitting() {
         let mut a = app();
         a.pending = Some(Pending::Pick(Picker::new(
             "session",
@@ -11000,11 +11019,11 @@ mod tests {
         )));
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.quit, "Ctrl+C did not exit from a picker");
+        assert!(!a.quit, "Ctrl+C quit from a picker");
     }
 
     #[test]
-    fn ctrl_c_exits_from_a_question() {
+    fn ctrl_c_on_a_question_stops_the_turn() {
         let mut a = app();
         let (reply, _rx) = channel();
         a.pending = Some(Pending::Question {
@@ -11016,11 +11035,12 @@ mod tests {
         });
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.quit, "Ctrl+C did not exit from a question");
+        assert!(!a.quit, "Ctrl+C quit from a question");
+        assert!(a.cancel.load(Ordering::Relaxed), "the turn was not stopped");
     }
 
     #[test]
-    fn ctrl_c_exits_on_a_confirmation() {
+    fn ctrl_c_on_a_confirmation_stops_the_turn() {
         let mut a = app();
         let (reply, _rx) = channel();
         a.apply(Ev::Confirm {
@@ -11030,7 +11050,8 @@ mod tests {
         });
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('c'), &tx);
-        assert!(a.quit, "Ctrl+C did not exit on a confirmation");
+        assert!(!a.quit, "Ctrl+C quit from a confirmation");
+        assert!(a.cancel.load(Ordering::Relaxed), "the turn was not stopped");
     }
 
     #[test]
