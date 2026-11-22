@@ -1124,7 +1124,7 @@ impl Hooks for WorkerHooks {
             Ui::Info(t) => Ev::Info(t),
             Ui::Error(t) => Ev::Error(t),
             Ui::Show(t) => Ev::Show(t),
-            Ui::Usage { hit, miss, output, model } => Ev::Usage { tokens: None, hit, miss, output, model },
+            Ui::Usage { hit, miss, output, model, context } => Ev::Usage { tokens: Some(context), hit, miss, output, model },
         };
         let _ = self.tx.send(ev);
     }
@@ -6232,7 +6232,7 @@ impl App {
                 self.status.miss,
                 self.status.output,
             )
-            .map(|c| format!(" · ${c:.2}"))
+            .map(|c| if c > 0.0 && c < 0.1 { format!(" · ${c:.3}") } else { format!(" · ${c:.2}") })
             .unwrap_or_default()
         } else {
             String::new()
@@ -9669,6 +9669,19 @@ mod tests {
     }
 
     #[test]
+    fn a_usage_event_moves_the_context_mid_turn() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.input = "go".into();
+        a.cursor = 2;
+        a.handle_key(Key::Enter, &tx);
+        a.apply(Ev::Usage { tokens: Some(7700), hit: 10, miss: 90, output: 20, model: None });
+        let status = strip(&a.status_line(80));
+        assert!(status.contains("7.7K tok"), "{status}");
+        assert!(a.status.streaming, "the event ended the turn");
+    }
+
+    #[test]
     fn usage_without_tokens_keeps_the_context() {
         let mut a = app();
         a.apply(Ev::Usage { tokens: Some(5000), hit: 1, miss: 2, output: 3, model: None });
@@ -9758,7 +9771,8 @@ mod tests {
         assert!(line.contains("3.4K tok"), "{line}");
         let cost =
             crate::pricing::cost("deepseek-flash", crate::pricing::now(), 900, 100, 50).unwrap();
-        assert!(line.contains(&format!("${cost:.2}")), "{line}");
+        let shown = if cost < 0.1 { format!("${cost:.3}") } else { format!("${cost:.2}") };
+        assert!(line.contains(&shown), "{line}");
         assert!(!line.contains("cache"), "{line}");
         assert!(!line.contains("normal"), "{line}");
     }

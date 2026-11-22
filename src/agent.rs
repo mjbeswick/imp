@@ -77,7 +77,7 @@ pub enum Ui {
     /// Output shown to the user with its colours; the model gets text.
     Show(String),
     /// One request's usage, sent after every request.
-    Usage { hit: u64, miss: u64, output: u64, model: Option<String> },
+    Usage { hit: u64, miss: u64, output: u64, model: Option<String>, context: u64 },
 }
 
 /// A `/goal`: its text and how many rounds it has run.
@@ -689,6 +689,7 @@ impl Session {
                 miss: acc.cache_miss,
                 output: acc.completion_tokens,
                 model: acc.model.clone(),
+                context: crate::api::estimate_tokens(&self.history),
             });
             self.last_model = acc.model.clone();
             match api::classify(status, acc.finish.as_deref(), &raw_error) {
