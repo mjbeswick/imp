@@ -3322,6 +3322,23 @@ impl App {
                 self.begin_task();
                 let _ = tx.send(Cmd::Goal(text));
             }
+            "copy" | "copy code" => {
+                let last = self.entries.iter().rev().find(|e| e.role == Role::Assistant);
+                let text = match (cmd, last) {
+                    ("copy", Some(e)) => Some(e.text.clone()),
+                    (_, Some(_)) => self
+                        .entries
+                        .iter()
+                        .rev()
+                        .filter(|e| e.role == Role::Assistant)
+                        .find_map(|e| crate::render::fences(&e.text).pop()),
+                    _ => None,
+                };
+                match text {
+                    Some(text) => self.copy(text),
+                    None => self.push(Role::Info, "nothing to copy"),
+                }
+            }
             "compact" => {
                 let _ = tx.send(Cmd::Compact);
                 self.push(Role::Info, "compacting…");
@@ -6279,6 +6296,21 @@ mod tests {
         assert_eq!(a.osc52.as_deref(), Some("\x1b]52;c;YQpi\x07"));
         a.handle_key(Key::Ctrl('v'), &tx);
         assert_eq!(a.input, ">a\nb");
+    }
+
+    #[test]
+    fn copy_command_takes_the_last_reply_or_code_block() {
+        let mut a = app();
+        let (tx, cmds) = channel();
+        a.run_command("copy", &tx);
+        assert_eq!(a.entries.last().unwrap().text, "nothing to copy");
+        a.push(Role::Assistant, "first\n```\nold\n```");
+        a.push(Role::Assistant, "no code here");
+        a.run_command("copy", &tx);
+        assert_eq!(a.clip, "no code here");
+        a.run_command("copy code", &tx);
+        assert_eq!(a.clip, "old", "the newest block is in an earlier reply");
+        assert!(cmds.try_recv().is_err(), "a request was sent");
     }
 
     #[test]
