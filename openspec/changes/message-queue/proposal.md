@@ -12,9 +12,10 @@ second list for the same job.
 - Enter always sends. When idle it sends; during a turn it steers or queues,
   by a mode that Ctrl+Q toggles. Steer gives the message to the turn before
   the model's next step; queue holds it until the turn ends.
-- The mode shows while a turn runs: `>` steer, `»` queue, in the prompt glyph
-  and the status line. Steer is the default; the last choice holds for the
-  session.
+- The mode shows while a turn runs as a label in the rule above the composer,
+  `steer · ^Q queue` or `queue · ^Q steer`, and in the prompt glyph: `>`
+  steer, a muted `»` queue. Steer is the default; the last choice holds for
+  the session.
 - Queued messages show dim above the composer and are sent in order as turns
   end.
 - ↑/↓ from an empty draft move through queued messages, then history. A

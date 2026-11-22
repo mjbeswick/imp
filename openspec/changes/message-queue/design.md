@@ -17,9 +17,14 @@
 `App.queue: Vec<String>` per session, kept with the draft on a switch.
 `App.queue_mode: bool` per session, default off (steer). Enter during a
 turn steers, or appends to the queue when `queue_mode` is on; Ctrl+Q flips
-it and writes nothing to the transcript. While a turn runs the prompt glyph
-is `>` for steer and `»` for queue, and the status line says `steer` or
-`queue`. When idle, Enter sends and the glyph is `>`. When a turn ends and no queued message is open, the oldest is sent.
+it and writes nothing to the transcript. While a turn runs the rule above
+the composer carries `steer · ^Q queue` or `queue · ^Q steer`, set into it as
+the picker sets its title, in the rule's own colour, so yolo's red holds;
+the glyph is `>` for steer and a muted `»` for queue, which still shows when
+the screen is too short for the rule. The status line does not repeat it.
+While a queued message is open the rule reads `editing queued n/m · Enter
+save · ↑↓ move`. When idle, Enter sends, the glyph is `>`, and the rule is
+plain. When a turn ends and no queued message is open, the oldest is sent.
 Rows above the composer: `⋯ <text>`, one row each, at most three, then
 `+N more`; the open one is highlighted.
 

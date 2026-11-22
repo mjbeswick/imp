@@ -106,7 +106,7 @@ The system SHALL add the draft to a session queue on Enter while a turn runs in 
 
 ### Requirement: Queued messages are edited in place
 
-The system SHALL walk from an empty draft through queued messages, newest first, and then history on ↑, and back on ↓, SHALL open a queued message in the composer, SHALL save it in its place on Enter or on leaving it, and SHALL remove it when saved empty.
+The system SHALL walk from an empty draft through queued messages, newest first, and then history on ↑, and back on ↓, SHALL open a queued message in the composer with the rule reading `editing queued n/m · Enter save · ↑↓ move`, SHALL save it in its place on Enter or on leaving it, and SHALL remove it when saved empty.
 
 #### Scenario: Edit the next message
 - **WHEN** two messages are queued and the user presses ↑ twice on an empty draft
@@ -122,7 +122,7 @@ The system SHALL walk from an empty draft through queued messages, newest first,
 
 ### Requirement: Enter steers or queues by a visible mode
 
-The system SHALL keep a per-session send mode, steer by default, SHALL toggle it on Ctrl+Q, SHALL show it while a turn runs as `>` for steer and `»` for queue in the prompt glyph and as `steer` or `queue` in the status line, SHALL on Enter in steer mode give the draft to the running turn before the model's next step and draw it as a user row marked `(steered)`, and SHALL send on Enter when no turn runs, whatever the mode.
+The system SHALL keep a per-session send mode, steer by default, SHALL toggle it on Ctrl+Q, SHALL show it while a turn runs as a label set into the rule above the composer, `steer · ^Q queue` or `queue · ^Q steer`, and as the prompt glyph, `>` for steer and a muted `»` for queue, SHALL on Enter in steer mode give the draft to the running turn before the model's next step and draw it as a user row marked `(steered)`, and SHALL send on Enter when no turn runs, whatever the mode.
 
 #### Scenario: Steer
 - **WHEN** a turn is running a tool in steer mode and the user types `use pnpm, not npm` and presses Enter
@@ -130,8 +130,8 @@ The system SHALL keep a per-session send mode, steer by default, SHALL toggle it
 
 #### Scenario: Toggle
 - **WHEN** a turn is running in steer mode and the user presses Ctrl+Q
-- **THEN** the prompt glyph is `»`, the status line says `queue`, and the next Enter queues
+- **THEN** the rule reads `queue · ^Q steer`, the prompt glyph is `»`, and the next Enter queues
 
 #### Scenario: Idle
 - **WHEN** no turn runs and the mode is queue
-- **THEN** Enter sends the message and the glyph is `>`
+- **THEN** Enter sends the message, the glyph is `>`, and the rule carries no label
