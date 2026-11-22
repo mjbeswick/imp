@@ -3272,7 +3272,7 @@ impl App {
                 let rows = self.draft_rows_now();
                 let (row, col) = self.drawn_caret(&rows);
                 if row > 0 {
-                    self.cursor = self.drawn_at(&rows, row - 1, col);
+                    self.cursor = self.drawn_at(&rows, row - 1, col, true);
                     self.dirty = true;
                 } else if let Some(i) = self.queue_at {
                     // Older queued messages, then history.
@@ -3305,7 +3305,7 @@ impl App {
                 let rows = self.draft_rows_now();
                 let (row, col) = self.drawn_caret(&rows);
                 if row + 1 < rows.len() {
-                    self.cursor = self.drawn_at(&rows, row + 1, col);
+                    self.cursor = self.drawn_at(&rows, row + 1, col, false);
                     self.dirty = true;
                 } else if let Some(i) = self.queue_at {
                     // Newer queued messages, then an empty draft.
@@ -5831,9 +5831,11 @@ impl App {
         // Two columns for the prefix, one for a caret at the row's end.
         let width = cols.saturating_sub(3).max(1);
         let rows = draft_rows(text, width);
+        // A caret on a wrap boundary belongs to the row it starts.
         let caret_row = rows
             .iter()
-            .position(|(s, e)| cursor >= *s && cursor <= *e)
+            .position(|(s, e)| cursor >= *s && cursor < *e)
+            .or_else(|| rows.iter().position(|(s, e)| cursor >= *s && cursor <= *e))
             .unwrap_or(rows.len().saturating_sub(1));
         // The selection in this text's bytes, as the shell `!` shifts them.
         let off = usize::from(shell);
@@ -5970,8 +5972,8 @@ impl App {
             Move::Right => next_boundary(&self.input, self.cursor),
             Move::Home => 0,
             Move::End => self.input.len(),
-            Move::Up if row > 0 => self.drawn_at(&rows, row - 1, col),
-            Move::Down if row + 1 < rows.len() => self.drawn_at(&rows, row + 1, col),
+            Move::Up if row > 0 => self.drawn_at(&rows, row - 1, col, true),
+            Move::Down if row + 1 < rows.len() => self.drawn_at(&rows, row + 1, col, false),
             Move::Up | Move::Down => self.cursor,
         };
         self.dirty = true;
@@ -6000,23 +6002,32 @@ impl App {
         let probe = self.cursor.saturating_sub(off).min(text.len());
         let row = rows
             .iter()
-            .position(|(s, e)| probe >= *s && probe <= *e)
+            .position(|(s, e)| probe >= *s && probe < *e)
+            .or_else(|| rows.iter().position(|(s, e)| probe >= *s && probe <= *e))
             .unwrap_or(rows.len().saturating_sub(1));
         let (from, _) = rows[row];
         (row, text[from..probe].chars().count())
     }
 
-    /// The byte offset on a drawn row at a character column.
-    fn drawn_at(&self, rows: &[(usize, usize)], row: usize, col: usize) -> usize {
+    /// The byte offset on a drawn row at a character column. Moving up onto a
+    /// shorter row sits on its last character, so the caret stays on that row.
+    fn drawn_at(&self, rows: &[(usize, usize)], row: usize, col: usize, back: bool) -> usize {
         let Some(&(from, to)) = rows.get(row) else {
             return self.input.len();
         };
         let text = self.draft_text();
-        let at = text[from..to]
-            .char_indices()
-            .nth(col)
-            .map(|(i, _)| from + i)
-            .unwrap_or(to);
+        // The end of a wrapped row is the next row's start, so moving up onto
+        // it sits on the last character; the end of a newline row is its own.
+        let wrapped = to < text.len() && text.as_bytes()[to] != b'\n';
+        let at = match text[from..to].char_indices().nth(col).map(|(i, _)| from + i) {
+            Some(at) => at,
+            None if back && wrapped => text[from..to]
+                .char_indices()
+                .last()
+                .map(|(i, _)| from + i)
+                .unwrap_or(from),
+            None => to,
+        };
         at + usize::from(self.input.starts_with('!'))
     }
 
@@ -9159,7 +9170,7 @@ mod tests {
         let (tx, _cmds) = channel();
         a.input = "word ".repeat(30);
         a.cursor = a.input.len();
-        a.frame(54, 12);
+        a.cols.store(54, Ordering::Relaxed);
         let before = a.draft_rows_now();
         let (row, _) = a.drawn_caret(&before);
         assert_eq!(row, before.len() - 1, "the caret is not on the last row");
@@ -9170,12 +9181,26 @@ mod tests {
     }
 
     #[test]
-    fn up_on_the_top_row_recalls_history() {
+    fn down_moves_inside_a_wrapped_line() {
         let mut a = app();
+        let (tx, _cmds) = channel();
+        a.input = "word ".repeat(30);
+        a.cursor = 0;
+        a.cols.store(54, Ordering::Relaxed);
+        let rows = a.draft_rows_now();
+        assert_eq!(a.drawn_caret(&rows).0, 0);
+        a.handle_key(Key::Down, &tx);
+        assert_eq!(a.drawn_caret(&rows).0, 1, "Down did not move one drawn row");
+        assert_eq!(a.cursor, rows[1].0, "Down did not keep the column");
+        assert_eq!(a.input.len(), 150, "Down changed the draft");
+    }
+
+    #[test]
+    fn up_on_the_top_row_recalls_history() {        let mut a = app();
         let (tx, _cmds) = channel();
         a.input = "x".repeat(120);
         a.cursor = 0;
-        a.frame(54, 12);
+        a.cols.store(54, Ordering::Relaxed);
         a.history.push("earlier".into());
         a.handle_key(Key::Up, &tx);
         assert_eq!(a.input, "earlier", "Up in the first row did not reach history");
