@@ -5438,7 +5438,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         worker_session.cfg.api_key.clear();
                         if let Err(e) = worker_session
                             .cfg
-                            .resolve_key_env(|k| std::env::var(k).ok())
+                            .resolve_key_env(crate::config::key_lookup())
                         {
                             let _ = ev_tx.send(Ev::Error(e));
                         }

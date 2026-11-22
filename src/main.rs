@@ -147,7 +147,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    cfg.resolve_key_env(|k| std::env::var(k).ok())?;
+    cfg.resolve_key_env(config::key_lookup())?;
 
     let existing = match &resume {
         Some(id) => store::Log::open(&sessions_dir, id),

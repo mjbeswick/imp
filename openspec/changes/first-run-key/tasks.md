@@ -3,7 +3,7 @@
 ## 1. Store and resolution
 
 - [x] 1.1 Load and save the keys file at `$XDG_CONFIG_HOME/imp/keys`, one `NAME=value` per line, written `0600`; tests for parsing, replacement, and the mode
-- [ ] 1.2 Resolve `IMP_API_KEY`, the profile variable in the environment, then the keys file, then `api_key`; tests for the order and for a stored key
+- [x] 1.2 Resolve `IMP_API_KEY`, the profile variable in the environment, then the keys file, then `api_key`; tests for the order and for a stored key
 
 ## 2. Startup
 

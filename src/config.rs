@@ -411,16 +411,13 @@ impl Config {
         self.provider = next;
     }
 
-    /// Fill the key in order: config `api_key`, `IMP_API_KEY`, then the
-    /// provider's own variable. Providers that need none are left alone.
+    /// Fill the key in order: `IMP_API_KEY`, the profile's variable, then the
+    /// config `api_key`. Providers that need none are left alone.
     pub fn resolve_key_env(
         &mut self,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<(), String> {
         let filled = |v: String| !v.trim().is_empty();
-        if filled(self.api_key.clone()) {
-            return Ok(());
-        }
         if let Some(v) = lookup("IMP_API_KEY").filter(|v| filled(v.clone())) {
             self.api_key = v;
             return Ok(());
@@ -429,14 +426,18 @@ impl Config {
             .key_env
             .clone()
             .or_else(|| self.provider.profile().key_var.map(str::to_string));
+        if let Some(var) = &var {
+            if let Some(v) = lookup(var).filter(|v| filled(v.clone())) {
+                self.api_key = v;
+                return Ok(());
+            }
+        }
+        // A key in the config still counts, but anything exported wins.
+        if filled(self.api_key.clone()) {
+            return Ok(());
+        }
         match var {
-            Some(var) => match lookup(&var).filter(|v| filled(v.clone())) {
-                Some(v) => {
-                    self.api_key = v;
-                    Ok(())
-                }
-                None => Err(format!("{var} is not set")),
-            },
+            Some(var) => Err(format!("{var} is not set")),
             None => Ok(()),
         }
     }
@@ -629,6 +630,22 @@ fn write_key(path: &Path, name: &str, value: &str) -> Result<(), String> {
 
 pub fn save_key(name: &str, value: &str) -> Result<(), String> {
     write_key(&keys_path(), name, value)
+}
+
+/// Environment first, then the stored keys, as one lookup.
+pub fn key_lookup() -> impl Fn(&str) -> Option<String> {
+    let stored = load_keys();
+    move |name: &str| {
+        std::env::var(name)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                stored
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.clone())
+            })
+    }
 }
 
 /// State and config directories without pulling in a crate.
@@ -910,16 +927,8 @@ mod tests {
     }
 
     #[test]
-    fn key_order_is_config_then_imp_then_provider() {
+    fn key_order_is_imp_then_provider_then_config() {
         let mut cfg = Config::from_str("api_key=from-config\n").unwrap();
-        cfg.resolve_key_env(env(&[
-            ("IMP_API_KEY", "from-imp"),
-            ("DEEPSEEK_API_KEY", "from-provider"),
-        ]))
-        .unwrap();
-        assert_eq!(cfg.api_key, "from-config");
-
-        let mut cfg = Config::default();
         cfg.resolve_key_env(env(&[
             ("IMP_API_KEY", "from-imp"),
             ("DEEPSEEK_API_KEY", "from-provider"),
@@ -927,10 +936,14 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.api_key, "from-imp");
 
-        let mut cfg = Config::default();
+        let mut cfg = Config::from_str("api_key=from-config\n").unwrap();
         cfg.resolve_key_env(env(&[("DEEPSEEK_API_KEY", "from-provider")]))
             .unwrap();
         assert_eq!(cfg.api_key, "from-provider");
+
+        let mut cfg = Config::from_str("api_key=from-config\n").unwrap();
+        cfg.resolve_key_env(env(&[])).unwrap();
+        assert_eq!(cfg.api_key, "from-config");
     }
 
     #[test]
