@@ -533,6 +533,8 @@ pub enum Key {
     Ctrl(char),
     WheelUp,
     WheelDown,
+    /// A left-button press at a 1-based column and row.
+    Click(u16, u16),
     Unknown,
 }
 
@@ -594,7 +596,7 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
         if (0x40..=0x7e).contains(&b) {
             let params = &buf[2..i];
             if let (Some(sgr), b'M' | b'm') = (params.strip_prefix(b"<"), b) {
-                return Some((i + 1, mouse(sgr)));
+                return Some((i + 1, mouse(sgr, b == b'M')));
             }
             let key = match b {
                 b'A' => Key::Up,
@@ -619,14 +621,19 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
     None
 }
 
-/// An SGR mouse report `b;x;y`. Only the wheel matters; clicks are ignored.
-fn mouse(params: &[u8]) -> Key {
+/// An SGR mouse report `b;x;y`, ending `M` for a press and `m` for a release.
+/// The wheel and a left press matter; releases, drags, and other buttons do not.
+fn mouse(params: &[u8], press: bool) -> Key {
     let text = std::str::from_utf8(params).unwrap_or("");
-    let button: u32 = text.split(';').next().and_then(|b| b.parse().ok()).unwrap_or(0);
+    let mut parts = text.split(';').map(|p| p.parse::<u32>().ok());
+    let button = parts.next().flatten().unwrap_or(0);
+    let x = parts.next().flatten().unwrap_or(0) as u16;
+    let y = parts.next().flatten().unwrap_or(0) as u16;
     // Bits 4, 8, and 16 are shift, alt, and ctrl held during the event.
     match button & !0b11100 {
         64 => Key::WheelUp,
         65 => Key::WheelDown,
+        0 if press && x > 0 && y > 0 => Key::Click(x, y),
         _ => Key::Unknown,
     }
 }
@@ -5252,12 +5259,13 @@ mod tests {
     }
 
     #[test]
-    fn decodes_the_mouse_wheel_and_ignores_clicks() {
+    fn decodes_the_wheel_and_a_left_press() {
         let mut buf = b"\x1b[<64;10;5M\x1b[<65;10;5M\x1b[<0;3;4M\x1b[<0;3;4m\x1b[<68;1;1M".to_vec();
         let keys = decode(&mut buf);
         assert!(matches!(keys[0], Key::WheelUp), "{keys:?}");
         assert!(matches!(keys[1], Key::WheelDown), "{keys:?}");
-        assert!(matches!(keys[2], Key::Unknown) && matches!(keys[3], Key::Unknown), "{keys:?}");
+        assert!(matches!(keys[2], Key::Click(3, 4)), "press: {keys:?}");
+        assert!(matches!(keys[3], Key::Unknown), "release: {keys:?}");
         assert!(matches!(keys[4], Key::WheelUp), "shift+wheel: {keys:?}");
         assert!(buf.is_empty());
     }
