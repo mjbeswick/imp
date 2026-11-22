@@ -6,7 +6,7 @@
 
 ## 2. Queue
 
-- [ ] 2.1 Queue drafts, draw them above the composer, send them as turns end; the meter is not reset; tests
+- [x] 2.1 Queue drafts, draw them above the composer, send them as turns end; the meter is not reset; tests
 - [ ] 2.2 ↑/↓ walk the queue then history; edits save in place; empty removes; tests
 - [ ] 2.3 `/queue` with list, pop, delete, clear, replacing `/stash`; tests
 

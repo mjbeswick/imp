@@ -2654,6 +2654,15 @@ impl App {
                     self.push(Role::Error, e);
                 }
                 self.dirty = true;
+                // The next queued message starts, unless one is being edited or
+                // the user stopped the turn: then the queue waits.
+                let stopped = self.cancel.load(Ordering::Relaxed);
+                if self.queue_at.is_none() && !stopped && !self.queued.is_empty() {
+                    let text = self.queued.remove(0);
+                    if let Some(tx) = self.worker.as_ref().map(|w| w.0.clone()) {
+                        self.start_turn(text, &tx);
+                    }
+                }
             }
         }
     }
@@ -3364,9 +3373,24 @@ impl App {
         if self.history.len() > 1000 {
             self.history.drain(..self.history.len() - 1000);
         }
+        // During a turn, queue mode holds the message for the turn's end. A
+        // goal ends on any message, as before.
+        if self.status.streaming && self.queue_mode && self.status.goal.is_none() {
+            self.queued.push(text);
+            self.dirty = true;
+            return;
+        }
+        self.start_turn(text, tx);
+    }
+
+    /// Show a user message and send it as a turn. A turn already running
+    /// keeps its meter; the worker takes the message when it is free.
+    fn start_turn(&mut self, text: String, tx: &Sender<Cmd>) {
         self.push(Role::User, text.clone());
-        self.status.streaming = true;
-        self.begin_task();
+        if !self.status.streaming {
+            self.status.streaming = true;
+            self.begin_task();
+        }
         let _ = tx.send(Cmd::Prompt(text));
     }
 
@@ -4653,7 +4677,14 @@ impl App {
 
     /// The frame's rows, top to bottom, and what draws over them.
     fn layout(&mut self, cols: usize, rows: usize) -> (Vec<String>, String) {
-        let composer = self.composer(cols, rows.saturating_sub(1).max(1));
+        let mut composer = self.composer(cols, rows.saturating_sub(1).max(1));
+        // The queue sits above the draft, never above a prompt's rows, whose
+        // click targets count from the rule.
+        if self.pending.is_none() && !self.queued.is_empty() && rows >= 8 {
+            let mut both = self.queue_rows(cols);
+            both.append(&mut composer);
+            composer = both;
+        }
         // A rule sets the composer apart, unless the screen is too short.
         let rule = usize::from(rows >= 8);
         let body_rows = rows.saturating_sub(1 + rule + composer.len()).max(1);
@@ -5205,6 +5236,21 @@ impl App {
                 })
                 .collect(),
         )
+    }
+
+    /// Queued messages, dim above the composer: three at most, then a count.
+    /// The one open for editing is highlighted.
+    fn queue_rows(&self, cols: usize) -> Vec<String> {
+        let mut rows = Vec::new();
+        for (i, text) in self.queued.iter().enumerate().take(3) {
+            let first = text.lines().next().unwrap_or("");
+            let row = fit(&format!("⋯ {first}"), cols);
+            rows.push(if self.queue_at == Some(i) { self.palette.select(&row) } else { self.palette.paint(Role::Thinking, &row) });
+        }
+        if self.queued.len() > 3 {
+            rows.push(self.palette.paint(Role::Thinking, &format!("  +{} more", self.queued.len() - 3)));
+        }
+        rows
     }
 
     fn composer(&self, cols: usize, space: usize) -> Vec<String> {
@@ -6542,6 +6588,53 @@ mod tests {
         a.status.streaming = false;
         let done = strip(&a.frame(60, 10));
         assert!(a.queue_mode && !done.contains("^Q"), "{done:?}");
+    }
+
+    /// An app whose worker is a pair of test channels.
+    fn worker_app() -> (App, Receiver<Cmd>, Sender<Ev>) {
+        let mut a = app();
+        let (cmd_tx, cmd_rx) = channel();
+        let (ev_tx, ev_rx) = channel();
+        a.worker = Some((cmd_tx, ev_rx, Default::default()));
+        (a, cmd_rx, ev_tx)
+    }
+
+    #[test]
+    fn queued_messages_wait_for_the_turn_to_end() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.begin_task();
+        a.status.steps = 4;
+        a.queue_mode = true;
+        a.input = "also add tests".into();
+        a.cursor = a.input.len();
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.queued, vec!["also add tests"]);
+        assert!(!a.entries.iter().any(|e| e.text == "also add tests"), "queued text reached the transcript");
+        assert!(cmds.try_recv().is_err(), "a queued message was sent");
+        assert_eq!(a.status.steps, 4, "the meter restarted");
+        assert!(strip(&a.frame(60, 12)).contains("⋯ also add tests"));
+        // The turn ends: the queued message starts the next one.
+        a.apply(Ev::Done(None));
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "also add tests"));
+        assert!(a.queued.is_empty() && a.status.streaming);
+        // A stopped turn leaves the queue waiting.
+        a.queued.push("later".into());
+        a.cancel.store(true, Ordering::Relaxed);
+        a.apply(Ev::Done(None));
+        assert_eq!(a.queued, vec!["later"]);
+        assert!(cmds.try_recv().is_err());
+        // Steer mode, until steering lands, still keeps the meter.
+        let (mut b, _c, _e) = worker_app();
+        let tx = b.worker.as_ref().unwrap().0.clone();
+        b.status.streaming = true;
+        b.begin_task();
+        b.status.steps = 3;
+        b.input = "more".into();
+        b.cursor = 4;
+        b.handle_key(Key::Enter, &tx);
+        assert_eq!(b.status.steps, 3, "the meter restarted");
     }
 
     #[test]

@@ -24,7 +24,9 @@ the glyph is `>` for steer and a muted `»` for queue, which still shows when
 the screen is too short for the rule. The status line does not repeat it.
 While a queued message is open the rule reads `editing queued n/m · Enter
 save · ↑↓ move`. When idle, Enter sends, the glyph is `>`, and the rule is
-plain. When a turn ends and no queued message is open, the oldest is sent.
+plain. When a turn ends, no queued message is open, and the user did not stop it,
+the oldest is sent; after a stop the queue waits, since starting the next
+message would undo the stop.
 Rows above the composer: `⋯ <text>`, one row each, at most three, then
 `+N more`; the open one is highlighted.
 

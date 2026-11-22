@@ -94,11 +94,15 @@ The system SHALL provide exactly `/help`, `/new`, `/goal`, `/copy`, `/sessions`,
 
 ### Requirement: Messages wait in a queue
 
-The system SHALL add the draft to a session queue on Enter while a turn runs in queue mode, SHALL draw queued messages dim above the composer, SHALL send the oldest when a turn ends unless a queued message is open, SHALL NOT restart the running turn's meter for a queued message, and SHALL list, pop, delete, and clear queued messages with `/queue`.
+The system SHALL add the draft to a session queue on Enter while a turn runs in queue mode, SHALL draw queued messages dim above the composer, SHALL send the oldest when a turn ends unless a queued message is open or the user stopped the turn, SHALL NOT restart the running turn's meter for a queued message, and SHALL list, pop, delete, and clear queued messages with `/queue`.
 
 #### Scenario: Queue during a turn
 - **WHEN** a turn is running in queue mode and the user sends `also add tests`
 - **THEN** it shows above the composer, not in the transcript, and is sent when the turn ends
+
+#### Scenario: A stopped turn
+- **WHEN** the user stops a turn with Esc while a message is queued
+- **THEN** the message stays queued and no turn starts
 
 #### Scenario: Pop
 - **WHEN** the user runs `/queue pop 1`
