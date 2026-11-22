@@ -538,17 +538,24 @@ impl Palette {
         if kind == COMMENT {
             attrs.push_str("\x1b[3m");
         }
+        // A syntax colour too faint on this tint gives way to the text colour;
+        // the bold or italic stays.
+        use crate::theme::{contrast, from_256};
         if self.truecolor {
-            let [r, g, b] = tint_by(band, fg, if changed { 2 } else { 1 });
-            let [x, y, z] = match colour {
-                Some(slot) => self.theme.rgb(slot),
-                None if changed => strong_text(fg),
-                None => fg,
+            let bg = tint_by(band, fg, if changed { 2 } else { 1 });
+            let [x, y, z] = match colour.map(|slot| self.theme.rgb(slot)) {
+                Some(c) if contrast(c, bg) >= 4.5 => c,
+                _ if changed => strong_text(fg),
+                _ => fg,
             };
+            let [r, g, b] = bg;
             format!("\x1b[48;2;{r};{g};{b}m\x1b[38;2;{x};{y};{z}m{attrs}{text}\x1b[0m")
         } else {
             let (bg, f) = if changed { tint_256_strong(band, fg) } else { tint_256(band, fg) };
-            let f = colour.map_or(f, |slot| to_256(self.theme.rgb(slot)));
+            let f = match colour.map(|slot| to_256(self.theme.rgb(slot))) {
+                Some(c) if contrast(from_256(c), from_256(bg)) >= 4.5 => c,
+                _ => f,
+            };
             format!("\x1b[48;5;{bg}m\x1b[38;5;{f}m{attrs}{text}\x1b[0m")
         }
     }
@@ -7198,12 +7205,38 @@ mod tests {
         use crate::theme::Slot::*;
         assert!(out.contains(&format!("{}\x1b[1mlet", on(Text))), "keyword: {out:?}");
         assert!(out.contains(&format!("{}\"hi\"", on(Success))), "string: {out:?}");
-        assert!(out.contains(&format!("{}\x1b[3m// note", on(Muted))), "comment: {out:?}");
+        // The muted colour is under 4.5:1 on the green band, so a comment
+        // keeps only its italic.
+        assert!(out.contains(&format!("{}\x1b[3m// note", on(Text))), "comment: {out:?}");
         // Plain text for an unknown extension.
         let mut b = colour_app();
         b.push_diffs(vec![r#"+let x = "hi";"#.into()], "txt");
         let plain = b.frame(60, 8);
         assert!(!plain.contains("\x1b[1mlet") && plain.contains(&format!("{}+let x = \"hi\";", on(Text))), "{plain:?}");
+    }
+
+    #[test]
+    fn a_faint_syntax_colour_falls_back_to_the_text_colour() {
+        use crate::theme::{by_name, contrast, tint, Slot};
+        let line = vec![r#"+let x = "hi";"#.to_string()];
+        let string_fg = |name: &str| {
+            let mut a = colour_app();
+            a.palette = a.palette.with_theme(by_name(name).unwrap());
+            a.push_diffs(line.clone(), "rs");
+            let out = a.frame(60, 8);
+            let t = a.palette.theme;
+            let bg = tint(t.rgb(Slot::Success), t.rgb(Slot::Text));
+            let at = out.find("\"hi\"").expect("string run");
+            let before = &out[..at];
+            let fg = &before[before.rfind("\x1b[38;2;").unwrap() + 7..];
+            let rgb: Vec<u8> = fg.trim_end_matches('m').split(';').map(|v| v.parse().unwrap()).collect();
+            ([rgb[0], rgb[1], rgb[2]], t.rgb(Slot::Success), t.rgb(Slot::Text), bg)
+        };
+        let (fg, success, text, bg) = string_fg("solarized-light");
+        assert!(contrast(success, bg) < 4.5, "solarized-light is expected to be faint here");
+        assert_eq!(fg, text, "solarized-light kept a faint string colour");
+        let (fg, success, _, _) = string_fg("default");
+        assert_eq!(fg, success, "default lost its string colour");
     }
 
     #[test]

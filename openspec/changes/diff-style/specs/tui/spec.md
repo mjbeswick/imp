@@ -30,7 +30,7 @@ The system SHALL style diff rows by the file's extension for Rust, shell, Python
 
 #### Scenario: Rust
 - **WHEN** an edit to `main.rs` adds `let x = "hi"; // note`
-- **THEN** `let` is bold, `"hi"` is in the success colour, and `// note` is dim and italic
+- **THEN** `let` is bold, `"hi"` is in the success colour, and `// note` is italic, in the muted colour where that reaches 4.5:1 on the tint
 
 #### Scenario: Unknown extension
 - **WHEN** an edit to `notes.txt` adds a line
