@@ -6,6 +6,7 @@ mod http;
 mod images;
 mod init;
 mod jobs;
+mod linediff;
 mod perm;
 mod pricing;
 mod prompt;

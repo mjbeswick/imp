@@ -18,9 +18,11 @@ first `edit` or `write` touched it, `Missing` when it did not exist, or
 
 ## Diff
 
-A line diff by longest common subsequence over each file's old and new lines,
-grouped into hunks with three lines of context. ponytail: O(n·m) per file,
-bounded by the 1 MB cap; a Myers diff if large files make it slow.
+`linediff::hunks`: the common start and end are trimmed, and the middle is
+diffed by longest common subsequence, grouped into hunks with three lines of
+context and `⋯` between them. ponytail: O(n·m) on the middle; past four
+million cells it is shown as all removed then all added. A Myers diff if
+that bites.
 
 ## Display
 
