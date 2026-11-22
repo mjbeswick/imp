@@ -686,6 +686,7 @@ impl Session {
         let mut messages = self.history.clone();
         messages.push(Message::system(
             "Write the user's most likely next message, 2 to 8 words, in their voice. \
+             End a question with a question mark. \
              Reply with only that message, or with nothing if there is no clear next step.",
         ));
         let (text, usage) = self.complete_once(&messages, 24).ok()?;
@@ -1496,7 +1497,19 @@ fn clean_suggestion(text: &str) -> Option<String> {
     let t = text.trim();
     let t = ['"', '\'', '`', '“'].iter().fold(t, |t, q| t.strip_prefix(*q).unwrap_or(t));
     let t = ['"', '\'', '`', '”'].iter().fold(t, |t, q| t.strip_suffix(*q).unwrap_or(t)).trim();
-    (!t.is_empty() && !t.contains('\n') && t.chars().count() <= 60).then(|| t.to_string())
+    if t.is_empty() || t.contains('\n') || t.chars().count() > 60 {
+        return None;
+    }
+    // ponytail: a question-word check; questions that open otherwise rely on the prompt.
+    const ASKS: &[&str] = &[
+        "what", "why", "how", "where", "when", "which", "who", "can", "could", "should", "would", "will",
+        "is", "are", "do", "does", "did", "shall",
+    ];
+    let first = t.split_whitespace().next().unwrap_or("").to_lowercase();
+    if ASKS.contains(&first.as_str()) && !t.ends_with('?') {
+        return Some(format!("{}?", t.trim_end_matches('.')));
+    }
+    Some(t.to_string())
 }
 
 /// Index to keep from: the fourth-newest user message. `None` if too short.
@@ -2413,6 +2426,10 @@ mod tests {
         assert_eq!(clean_suggestion(""), None);
         assert_eq!(clean_suggestion("a\nb"), None);
         assert_eq!(clean_suggestion(&"x".repeat(61)), None);
+        assert_eq!(clean_suggestion("should I commit this").as_deref(), Some("should I commit this?"));
+        assert_eq!(clean_suggestion("Should I commit this.").as_deref(), Some("Should I commit this?"));
+        assert_eq!(clean_suggestion("what next?").as_deref(), Some("what next?"));
+        assert_eq!(clean_suggestion("run the tests").as_deref(), Some("run the tests"));
     }
 
     #[test]
