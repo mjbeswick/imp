@@ -3148,7 +3148,11 @@ impl App {
             return;
         }
         if let Some(s) = self.status.suggestion.take() {
-            if matches!(key, Key::Right) && self.input.is_empty() && self.pending.is_none() {
+            // Right or Enter takes it into the draft; Enter never sends it.
+            if matches!(key, Key::Right | Key::Enter)
+                && self.input.is_empty()
+                && self.pending.is_none()
+            {
                 self.cursor = s.len();
                 self.input = s;
                 self.dirty = true;
@@ -3896,6 +3900,7 @@ impl App {
         }
         let kept = if text.trim().is_empty() {
             self.queued.remove(i);
+            self.push(Role::Info, format!("queue: deleted {}", i + 1));
             None
         } else {
             self.queued[i] = text;
@@ -3951,8 +3956,10 @@ impl App {
     /// Delete the open message and open the one that follows, or close.
     fn delete_queued(&mut self, tx: &Sender<Cmd>) {
         let Some(i) = self.queue_at else { return };
-        if i < self.queued.len() {
+        let gone = i < self.queued.len();
+        if gone {
             self.queued.remove(i);
+            self.push(Role::Info, format!("queue: deleted {}", i + 1));
         }
         self.hold.store(false, Ordering::SeqCst);
         self.input.clear();
@@ -5225,8 +5232,16 @@ impl App {
         let busy = self.status.streaming && self.pending.is_none();
         let tool = self.tool.as_ref().is_some_and(|row| row.running);
         (busy && !tool).then(|| {
-            let text = format!("{} thinking · {}", spinner_frame(self.spinner), span(since.elapsed()));
-            (Role::Thinking, Line::Text(text))
+            use crate::render::{Span, Style};
+            let glyph = spinner_frame(self.spinner);
+            let rest = format!(" thinking · {}", span(since.elapsed()));
+            (
+                Role::Thinking,
+                Line::Spans(vec![
+                    Span::styled(glyph, Style::default()),
+                    Span::styled(rest, Style { italic: true, ..Style::default() }),
+                ]),
+            )
         })
     }
 
@@ -5478,13 +5493,15 @@ impl App {
             // While a turn runs the rule says what Enter will do.
             let label = match (self.queue_at, asking || !self.status.streaming) {
                 (Some(i), _) => {
-                    let key = if self.status.streaming { "^Q steer now" } else { "^Q send now" };
+                    let verb = if self.status.streaming { "steer" } else { "send" };
                     format!(
-                        "editing queued {}/{} · {key} · ^X delete",
+                        "editing {}/{} · Enter save · ^Q {verb} · ^X del",
                         i + 1,
                         self.queued.len()
                     )
                 }
+                (None, true) if self.status.suggestion.is_some() => "→ accept".into(),
+                (None, true) if !self.queued.is_empty() => "↑ edit queue".into(),
                 (None, true) => String::new(),
                 (None, false) if self.queue_mode => "queue · ^Q steer".into(),
                 (None, false) => "steer · ^Q queue".into(),
@@ -6383,11 +6400,19 @@ fn fit_path(path: &str, room: usize) -> Option<String> {
     let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
     let last = *parts.last()?;
     if parts.len() > 1 {
-        let parents: Vec<String> = parts[..parts.len() - 1]
+        // The two folders nearest the session stay whole; earlier ones give way.
+        let keep = parts.len().saturating_sub(2);
+        let parents: Vec<String> = parts[..keep]
             .iter()
             .map(|p| p.chars().take(if p.starts_with('.') { 2 } else { 1 }).collect())
             .collect();
-        for short in [format!("{lead}{}/{last}", parents.join("/")), format!("…/{last}")] {
+        let kept = parts[keep..].join("/");
+        let short = if parents.is_empty() {
+            format!("{lead}{kept}")
+        } else {
+            format!("{lead}{}/{kept}", parents.join("/"))
+        };
+        for short in [short, format!("…/{last}")] {
             if width(&short) <= room {
                 return Some(short);
             }
@@ -7454,7 +7479,7 @@ mod tests {
         assert_eq!((a.queue_at, a.input.as_str()), (Some(1), "second"));
         assert!(a.hold.load(Ordering::SeqCst), "the turn is not held");
         let shown = strip(&a.frame(70, 14));
-        assert!(shown.contains("editing queued 2/2 · ^Q steer now · ^X delete"), "{shown:?}");
+        assert!(shown.contains("editing 2/2 · Enter save · ^Q steer · ^X del"), "{shown:?}");
         assert!(a.status_line(120).contains("paused · editing queue"));
         a.handle_key(Key::Up, &tx);
         assert_eq!((a.queue_at, a.input.as_str()), (Some(0), "first"));
@@ -7541,7 +7566,7 @@ mod tests {
         a.queued = vec!["only".into()];
         a.handle_key(Key::Up, &tx);
         let out = strip(&a.frame(70, 14));
-        assert!(out.contains("^Q send now"), "{out:?}");
+        assert!(out.contains("^Q send"), "{out:?}");
         a.handle_key(Key::Ctrl('q'), &tx);
         assert!(a.queued.is_empty());
         assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "only"));
@@ -7615,6 +7640,54 @@ mod tests {
         a.handle_key(Key::Enter, &tx);
         assert_eq!(a.queued, vec!["one"], "the queue changed");
         assert_eq!(a.queue_at, None);
+    }
+
+    #[test]
+    fn the_edit_rule_fits_and_names_every_key() {
+        let (mut a, _cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.queued = vec!["only".into()];
+        a.handle_key(Key::Up, &tx);
+        let running = strip(&a.frame(54, 14));
+        assert!(running.contains("editing 1/1 · Enter save · ^Q steer · ^X del"), "{running:?}");
+        a.status.streaming = false;
+        let idle = strip(&a.frame(54, 14));
+        assert!(idle.contains("editing 1/1 · Enter save · ^Q send · ^X del"), "{idle:?}");
+    }
+
+    #[test]
+    fn an_idle_queue_points_at_up() {
+        let mut a = app();
+        a.queued = vec!["waiting".into()];
+        let out = strip(&a.frame(54, 12));
+        assert!(out.contains("↑ edit queue"), "{out:?}");
+        // While a turn runs the rule still says what Enter does.
+        a.status.streaming = true;
+        let out = strip(&a.frame(54, 12));
+        assert!(!out.contains("↑ edit queue") && out.contains("^Q queue"), "{out:?}");
+    }
+
+    #[test]
+    fn deleting_a_queued_message_is_reported() {
+        let (mut a, _cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.queued = vec!["first".into(), "second".into()];
+        a.handle_key(Key::Up, &tx);
+        a.handle_key(Key::Up, &tx);
+        a.handle_key(Key::Ctrl('x'), &tx);
+        assert!(
+            a.entries.iter().any(|e| e.text == "queue: deleted 1"),
+            "no deletion line"
+        );
+        a.input.clear();
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.queued.is_empty());
+        assert!(
+            a.entries.iter().filter(|e| e.text == "queue: deleted 1").count() >= 2,
+            "emptying did not report"
+        );
     }
 
     #[test]
@@ -8918,7 +8991,7 @@ mod tests {
             line
         };
         assert!(at(&a, 100).ends_with("~/Projects/imp/src/providers"));
-        assert!(at(&a, 54).ends_with("  ~/P/i/s/providers"));
+        assert!(at(&a, 54).ends_with("  ~/P/i/src/providers"));
         assert!(at(&a, 40).ends_with("  …oviders"));
         assert_eq!(at(&a, 38), left, "6 columns left: left out");
     }
@@ -9507,6 +9580,24 @@ mod tests {
     }
 
     #[test]
+    fn the_spinner_glyph_stays_upright() {
+        let mut a = colour_app();
+        let (tx, _rx) = channel();
+        a.input = "go".into();
+        a.cursor = 2;
+        a.handle_key(Key::Enter, &tx);
+        let out = a.frame(80, 12);
+        let glyph = spinner_frame(a.spinner).to_string();
+        let line = out
+            .lines()
+            .find(|l| l.contains("thinking ·"))
+            .expect("the thinking row");
+        let at = line.find(&glyph).expect("the spinner");
+        let italic = line.find("\x1b[3m").expect("no italic on the row");
+        assert!(italic > at, "the spinner is italic: {line:?}");
+    }
+
+    #[test]
     fn question_picker_renders_choices() {
         let mut a = app();
         let (tx, _rx) = channel();
@@ -9605,7 +9696,10 @@ mod tests {
 
         let mut a = app();
         a.apply(Ev::Suggest("x".into()));
+        let out = strip(&a.frame(60, 10));
+        assert!(out.contains("→ accept"), "no rule hint: {out:?}");
         a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.input, "x", "Enter did not fill the draft");
         assert!(_rx.try_recv().is_err(), "Enter sent the suggestion");
 
         let mut a = app();
@@ -11070,7 +11164,7 @@ mod tests {
         let last = rows.last().unwrap();
         assert!(last.ends_with("12ms"), "the duration left the row end: {painted:?}");
         assert_eq!(last.chars().count(), 80, "{last:?}");
-        assert!(!painted.contains('…'), "the summary was cut: {painted:?}");
+        assert!(!rows.iter().any(|r| r.contains('…')), "the summary was cut: {painted:?}");
     }
 
     #[test]
@@ -11256,13 +11350,13 @@ mod tests {
     fn a_long_directory_shortens_in_steps() {
         let p = "~/Projects/imp/src/providers";
         assert_eq!(fit_path(p, 40).as_deref(), Some(p));
-        assert_eq!(fit_path(p, 20).as_deref(), Some("~/P/i/s/providers"));
+        assert_eq!(fit_path(p, 20).as_deref(), Some("~/P/i/src/providers"));
         assert_eq!(fit_path(p, 12).as_deref(), Some("…/providers"));
         assert_eq!(fit_path(p, 9).as_deref(), Some("providers"));
         assert_eq!(fit_path(p, 8).as_deref(), Some("…oviders"));
         assert_eq!(fit_path(p, 7), None, "below the floor it is left out");
-        assert_eq!(fit_path("~/.config/imp/agents", 16).as_deref(), Some("~/.c/i/agents"));
-        assert_eq!(fit_path("/private/tmp/claude/demo", 16).as_deref(), Some("/p/t/c/demo"));
+        assert_eq!(fit_path("~/.config/imp/agents", 16).as_deref(), Some("~/.c/imp/agents"));
+        assert_eq!(fit_path("/private/tmp/claude/demo", 16).as_deref(), Some("/p/t/claude/demo"));
         assert_eq!(fit_path("~/averyveryverylongname", 10).as_deref(), Some("…ylongname"));
     }
 

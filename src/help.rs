@@ -12,6 +12,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Shift+Tab", "next mode: normal, strict, yolo"),
     ("Right", "take the suggestion"),
     ("Up, Down", "queued messages, then history"),
+    ("Ctrl+X", "delete the open queued message"),
     ("Shift+arrows, Shift+Home, Shift+End", "select in the draft"),
     ("Delete", "delete forward"),
     ("Option+Left, Option+Right", "move by word; Alt+B, Alt+F too"),
@@ -429,7 +430,7 @@ mod tests {
         assert!(!text.contains("Ctrl+C") && !text.contains("\nKeys\n"), "{text}");
         assert!(text.trim_end().ends_with("Keys: ? or /keys"), "{text}");
         let keys: Vec<&str> = KEYS.iter().map(|(k, _)| *k).collect();
-        for k in ["Ctrl+Q", "Shift+Tab", "Ctrl+C", "PgUp, PgDn", "Shift+Enter, Alt+Enter, Ctrl+J"] {
+        for k in ["Ctrl+Q", "Shift+Tab", "Ctrl+C", "PgUp, PgDn", "Shift+Enter, Alt+Enter, Ctrl+J", "Ctrl+X"] {
             assert!(keys.contains(&k), "{k} is not on the card");
         }
     }
