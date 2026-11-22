@@ -28,7 +28,38 @@ on lines over 200 characters.
 
 `src/syntax.rs` maps an extension to a rule set: keywords, line-comment
 prefix, string quotes. One left-to-right scan per line yields spans. The
-diff detail carries the path, so `push_diff` knows the extension.
+path comes from the tool row's arguments, which hold it for `edit` and
+`write`, so `push_diff` knows the extension.
+
+Keywords:
+
+| Language | Extensions | Comment | Keywords |
+|---|---|---|---|
+| Rust | `rs` | `//` | `as break const continue crate else enum fn for if impl in let loop match mod move mut pub ref return self Self static struct trait type unsafe use where while` |
+| Shell | `sh bash zsh` | `#` | `if then else elif fi for while do done case esac in function return local export` |
+| Python | `py` | `#` | `and as class def elif else except False for from if import in is lambda None not or pass raise return True try while with yield` |
+| JS/TS | `js mjs ts tsx jsx` | `//` | `async await break case class const continue default else export extends for from function if import let new return switch this throw try typeof var while` |
+| TOML | `toml` | `#` | `true false` |
+| YAML | `yml yaml` | `#` | `true false null` |
+
+## Contrast
+
+A syntax colour is used only where it reaches 4.5:1 on its row's tint, in
+the active theme and colour depth; otherwise that token takes the text
+colour and keeps its bold or italic. The check runs on the RGB values, or on
+the 256-colour entries when that is the depth. A measurement before building
+found every light theme and most comments below 4.5:1, while the text colour
+passes everywhere.
+
+- **Fall back to the text colour (chosen).** No new colours to tune, and
+  light themes keep the weight and slant cues.
+- **Darker syntax colours for light themes.** Four themes times three slots
+  tuned by hand. Rejected.
+- **No syntax colour on light themes.** Throws away the dark themes' check
+  too. Rejected.
+
+The changed-word tint doubles the plain tint's strength: 44% of the colour
+on dark themes, 24% on light. A test keeps the text on it at 4.5:1.
 
 ## Size
 
