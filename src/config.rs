@@ -577,6 +577,60 @@ pub fn save_named(path: &Path, named: &[NamedProvider]) -> Result<(), String> {
     std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
+/// Stored provider keys: `NAME=value`, one per line, owner only.
+pub fn keys_path() -> PathBuf {
+    dirs_config().join("imp").join("keys")
+}
+
+/// A key file as pairs, skipping comments, blanks, and lines without a value.
+fn read_keys(path: &Path) -> Vec<(String, String)> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
+        .filter(|(name, value)| !name.is_empty() && !value.is_empty())
+        .collect()
+}
+
+/// The keys file, read when it exists.
+pub fn load_keys() -> Vec<(String, String)> {
+    read_keys(&keys_path())
+}
+
+/// Store one key, replacing its line, and keep the file to its owner.
+fn write_key(path: &Path, name: &str, value: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut lines: Vec<String> = std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let name = name.trim();
+    lines.retain(|line| match line.split_once('=') {
+        Some((key, _)) => key.trim() != name,
+        None => true,
+    });
+    lines.push(format!("{name}={}", value.trim()));
+    std::fs::write(path, format!("{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn save_key(name: &str, value: &str) -> Result<(), String> {
+    write_key(&keys_path(), name, value)
+}
+
 /// State and config directories without pulling in a crate.
 pub fn dirs_config() -> PathBuf {
     env_dir("XDG_CONFIG_HOME", ".config")
@@ -925,6 +979,45 @@ mod tests {
         assert!(err.contains("WORK_KEY"), "{err}");
         cfg.resolve_key_env(env(&[("WORK_KEY", "secret")])).unwrap();
         assert_eq!(cfg.api_key, "secret");
+    }
+
+    #[test]
+    fn keys_are_stored_owner_only_and_replaced() {
+        let dir = std::env::temp_dir().join(format!("imp-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("keys");
+        write_key(&path, "DEEPSEEK_API_KEY", "first").unwrap();
+        write_key(&path, "OTHER_KEY", "two").unwrap();
+        write_key(&path, "DEEPSEEK_API_KEY", "second").unwrap();
+        assert_eq!(
+            read_keys(&path),
+            vec![
+                ("OTHER_KEY".to_string(), "two".to_string()),
+                ("DEEPSEEK_API_KEY".to_string(), "second".to_string()),
+            ]
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "keys file mode {mode:o}");
+        }
+    }
+
+    #[test]
+    fn a_key_file_skips_comments_and_blanks() {
+        let dir = std::env::temp_dir().join(format!("imp-keys-parse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("keys");
+        std::fs::write(&path, "# a key\n\n A_KEY = v1 \nbroken\nB_KEY = a=b\n").unwrap();
+        assert_eq!(
+            read_keys(&path),
+            vec![
+                ("A_KEY".to_string(), "v1".to_string()),
+                ("B_KEY".to_string(), "a=b".to_string()),
+            ]
+        );
     }
 
     #[test]
