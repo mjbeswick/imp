@@ -9,6 +9,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Ctrl+L", "clear the screen"),
     ("Ctrl+E", "expand the last tool call"),
     ("Ctrl+V", "paste the last copy"),
+    ("Ctrl+G", "release the mouse to select text"),
     ("Ctrl+O", "next session waiting on you"),
     ("Ctrl+N, Ctrl+P", "next or previous live session"),
     ("?", "this list, from an empty composer"),

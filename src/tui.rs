@@ -1236,6 +1236,10 @@ pub struct App {
     clip: String,
     /// An OSC 52 sequence for the terminal clipboard, written after the next frame.
     osc52: Option<String>,
+    /// Ctrl+G handed the mouse to the terminal until the next key.
+    released: bool,
+    /// Mouse reporting to switch on or off with the next frame.
+    mouse_seq: Option<&'static str>,
     tool: Option<ToolRow>,
     /// The worker for the session in view; `None` in tests.
     worker: Option<Worker>,
@@ -1806,6 +1810,8 @@ impl App {
             armed: false,
             clip: String::new(),
             osc52: None,
+            released: false,
+            mouse_seq: None,
             tool: None,
             worker: None,
             touched: Instant::now(),
@@ -2393,6 +2399,19 @@ impl App {
 
     fn handle_key_inner(&mut self, key: Key, tx: &Sender<Cmd>) {
         // A click replays what it lands on; anywhere else it does nothing.
+        // Any key takes the mouse back, then does what it always does.
+        if std::mem::take(&mut self.released) {
+            self.mouse_seq = Some(MOUSE_ON);
+            self.dirty = true;
+        }
+        if matches!(key, Key::Ctrl('g')) {
+            if self.cfg.mouse {
+                self.released = true;
+                self.mouse_seq = Some(MOUSE_OFF);
+                self.dirty = true;
+            }
+            return;
+        }
         let armed = std::mem::take(&mut self.armed);
         if armed {
             self.dirty = true;
@@ -4103,6 +4122,9 @@ impl App {
         if let Some(seq) = self.osc52.take() {
             out.write_all(seq.as_bytes()).ok();
         }
+        if let Some(seq) = self.mouse_seq.take() {
+            out.write_all(seq.as_bytes()).ok();
+        }
         out.flush().ok();
         self.bell_pending = false;
         self.dirty = false;
@@ -4712,6 +4734,9 @@ impl App {
     }
 
     fn status_line(&self, cols: usize) -> String {
+        if self.released {
+            return fit(" mouse released · any key to take it back", cols);
+        }
         if self.input.starts_with('!') && !self.status.streaming {
             return fit(" shell · local · not sent to the model", cols);
         }
@@ -6373,6 +6398,26 @@ mod tests {
         a.run_command("copy code", &tx);
         assert_eq!(a.clip, "old", "the newest block is in an earlier reply");
         assert!(cmds.try_recv().is_err(), "a request was sent");
+    }
+
+    #[test]
+    fn ctrl_g_releases_the_mouse_until_the_next_key() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('g'), &tx);
+        assert!(a.released);
+        assert_eq!(a.mouse_seq, Some(MOUSE_OFF));
+        assert!(strip(&a.status_line(80)).contains("mouse released"));
+        a.mouse_seq = None;
+        a.handle_key(Key::Char('h'), &tx);
+        assert!(!a.released);
+        assert_eq!(a.mouse_seq, Some(MOUSE_ON));
+        assert_eq!(a.input, "h", "the key that took the mouse back was lost");
+
+        let mut b = app();
+        b.cfg.mouse = false;
+        b.handle_key(Key::Ctrl('g'), &tx);
+        assert!(!b.released && b.mouse_seq.is_none());
     }
 
     #[test]

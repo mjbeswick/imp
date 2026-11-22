@@ -14,7 +14,7 @@
 
 ## 3. Release
 
-- [ ] 3.1 Ctrl+G releases the mouse until the next key; tests for release, take-back, and `mouse=off`
+- [x] 3.1 Ctrl+G releases the mouse until the next key; tests for release, take-back, and `mouse=off`
 
 ## 4. Docs
 
