@@ -1062,6 +1062,9 @@ pub enum Ev {
     Question {
         q: String,
         opts: Vec<String>,
+        /// One per option; empty when it has none.
+        descs: Vec<String>,
+        multiple: bool,
         reply: Sender<Option<String>>,
     },
     Stop(String),
@@ -1160,12 +1163,19 @@ impl Hooks for WorkerHooks {
     }
 
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
+        let plain: Vec<(String, String)> = options.iter().map(|o| (o.clone(), String::new())).collect();
+        self.ask_choices(question, &plain, false)
+    }
+
+    fn ask_choices(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<String> {
         let (tx, rx) = channel();
         if self
             .tx
             .send(Ev::Question {
                 q: question.to_string(),
-                opts: options.to_vec(),
+                opts: options.iter().map(|(l, _)| l.clone()).collect(),
+                descs: options.iter().map(|(_, d)| d.clone()).collect(),
+                multiple,
                 reply: tx,
             })
             .is_err()
@@ -1606,6 +1616,11 @@ pub struct App {
     cursor: usize,
     /// Where a Shift move began; the selection runs from here to the caret.
     anchor: Option<usize>,
+    /// The open question's option descriptions, whether it takes several
+    /// picks, and which are marked.
+    ask_descs: Vec<String>,
+    ask_multiple: bool,
+    ask_marked: Vec<bool>,
     /// Enter during a turn queues rather than steers.
     queue_mode: bool,
     /// Messages waiting for the running turn to end, oldest first.
@@ -1711,6 +1726,11 @@ struct Pane {
     cursor: usize,
     /// Where a Shift move began; the selection runs from here to the caret.
     anchor: Option<usize>,
+    /// The open question's option descriptions, whether it takes several
+    /// picks, and which are marked.
+    ask_descs: Vec<String>,
+    ask_multiple: bool,
+    ask_marked: Vec<bool>,
     /// Enter during a turn queues rather than steers.
     queue_mode: bool,
     /// Messages waiting for the running turn to end, oldest first.
@@ -1753,6 +1773,9 @@ impl Pane {
             input: String::new(),
             cursor: 0,
             anchor: None,
+            ask_descs: Vec::new(),
+            ask_multiple: false,
+            ask_marked: Vec::new(),
             queue_mode: false,
             queued: Vec::new(),
             queue_at: None,
@@ -2302,6 +2325,9 @@ impl App {
             input: String::new(),
             cursor: 0,
             anchor: None,
+            ask_descs: Vec::new(),
+            ask_multiple: false,
+            ask_marked: Vec::new(),
             queue_mode: false,
             queued: Vec::new(),
             queue_at: None,
@@ -2377,6 +2403,9 @@ impl App {
         swap(&mut self.input, &mut p.input);
         swap(&mut self.cursor, &mut p.cursor);
         swap(&mut self.anchor, &mut p.anchor);
+        swap(&mut self.ask_descs, &mut p.ask_descs);
+        swap(&mut self.ask_multiple, &mut p.ask_multiple);
+        swap(&mut self.ask_marked, &mut p.ask_marked);
         swap(&mut self.queue_mode, &mut p.queue_mode);
         swap(&mut self.queued, &mut p.queued);
         swap(&mut self.queue_at, &mut p.queue_at);
@@ -2840,7 +2869,10 @@ impl App {
                 self.bell_pending = true;
                 self.dirty = true;
             }
-            Ev::Question { q, opts, reply } => {
+            Ev::Question { q, opts, descs, multiple, reply } => {
+                self.ask_marked = vec![false; opts.len()];
+                self.ask_descs = descs;
+                self.ask_multiple = multiple;
                 self.pending = Some(Pending::Question {
                     q,
                     opts,
@@ -8207,7 +8239,7 @@ mod tests {
         let mut a = app();
         let (tx, _cmds) = channel();
         let (reply, rx) = channel();
-        a.apply(Ev::Question { q: "which?".into(), opts: vec!["red".into(), "blue".into()], reply });
+        a.apply(Ev::Question { q: "which?".into(), opts: vec!["red".into(), "blue".into()], descs: Vec::new(), multiple: false, reply });
         a.frame(80, 16);
         click(&mut a, &tx, |t| matches!(t, Target::Key(Key::Char('2'))));
         assert_eq!(rx.try_recv().ok(), Some(Some("blue".to_string())));
@@ -10704,7 +10736,7 @@ mod tests {
         // A question stops the same way.
         let mut b = app();
         let (reply, answers) = channel();
-        b.apply(Ev::Question { q: "which?".into(), opts: vec!["a".into(), "b".into(), "c".into()], reply });
+        b.apply(Ev::Question { q: "which?".into(), opts: vec!["a".into(), "b".into(), "c".into()], descs: Vec::new(), multiple: false, reply });
         b.handle_key(Key::Esc, &tx);
         assert_eq!(answers.try_recv().ok(), Some(None));
         assert!(b.cancel.load(Ordering::Relaxed), "Esc on a question did not stop the turn");

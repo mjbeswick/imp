@@ -32,6 +32,14 @@ pub trait Hooks {
     }
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String>;
 
+    /// A question whose options carry descriptions, and may allow several
+    /// picks. Front-ends that cannot show them ask with the labels alone.
+    fn ask_choices(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<String> {
+        let _ = multiple;
+        let labels: Vec<String> = options.iter().map(|(l, _)| l.clone()).collect();
+        self.ask(question, &labels)
+    }
+
     /// Time the last confirmation kept the user, which is not the tool's cost.
     fn last_wait(&self) -> std::time::Duration {
         std::time::Duration::ZERO
@@ -79,6 +87,23 @@ pub enum Before {
     Text(String),
     /// Over 1 MB or not UTF-8: listed, not diffed.
     Untracked,
+}
+
+/// An `ask` call's options as label and description. A bare string is a
+/// label, so the older form still works.
+fn ask_options(args: &Value) -> Vec<(String, String)> {
+    let Some(list) = args.get("options").and_then(Value::as_array) else { return Vec::new() };
+    list.iter()
+        .filter_map(|v| match v {
+            Value::String(label) => Some((label.clone(), String::new())),
+            Value::Object(o) => {
+                let label = o.get("label")?.as_str()?.to_string();
+                let about = o.get("description").and_then(Value::as_str).unwrap_or("").to_string();
+                Some((label, about))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// One file's change for `/diff`.
@@ -182,7 +207,7 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"search","description":"Search the web; results are summaries with URLs. Read a page with fetch.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search"]},"query":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"memory","description":"Search stored notes, or save a new one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","save"]},"query":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
-        json!({"type":"function","function":{"name":"ask","description":"Ask the user a question. Offer options for a choice; omit them for free text. Use only when blocked on a decision you cannot make yourself.","parameters":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"},"description":"Two to six short choices."}},"required":["question"]}}}),
+        json!({"type":"function","function":{"name":"ask","description":"Ask the user a question. Use only when blocked on a decision you cannot make yourself. Offer two to six options for a choice, or none for free text; the user can always type their own answer instead. Put a recommended option first and end its label with (Recommended). Set multiple to let the user pick several; you receive the picked labels joined by \", \".","parameters":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","description":"Two to six choices.","items":{"type":"object","properties":{"label":{"type":"string","description":"One to five words."},"description":{"type":"string","description":"What choosing it means, in a short sentence."}},"required":["label"]}},"multiple":{"type":"boolean","description":"Let the user pick more than one."}},"required":["question"]}}}),
     ]
 }
 
@@ -1425,15 +1450,12 @@ impl Session {
             }
             "ask" => {
                 let q = args.get("question").and_then(Value::as_str).unwrap_or("");
-                let opts: Vec<String> = args
-                    .get("options")
-                    .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-                    .unwrap_or_default();
+                let opts = ask_options(args);
                 if opts.len() > 6 {
                     return (false, "refused: ask accepts at most six options".into());
                 }
-                match hooks.ask(q, &opts) {
+                let multiple = args.get("multiple").and_then(Value::as_bool).unwrap_or(false);
+                match hooks.ask_choices(q, &opts, multiple) {
                     Some(answer) if !answer.is_empty() => (true, answer),
                     _ => (false, "refused: the user did not answer".into()),
                 }
@@ -2691,6 +2713,31 @@ mod tests {
         git(&["add", "a.txt"]);
         assert!(s.git_changes("").unwrap().is_empty(), "staged changes showed without --staged");
         assert_eq!(s.git_changes("--staged").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ask_takes_labelled_options_and_bare_strings() {
+        let new = ask_options(&json!({"options": [{"label": "Rust", "description": "fast"}, {"label": "Go"}]}));
+        assert_eq!(new, vec![("Rust".to_string(), "fast".to_string()), ("Go".to_string(), String::new())]);
+        let old = ask_options(&json!({"options": ["yes", "no"]}));
+        assert_eq!(old, vec![("yes".to_string(), String::new()), ("no".to_string(), String::new())]);
+        // A front-end without descriptions gets the labels.
+        struct Labels(Vec<String>);
+        impl Hooks for Labels {
+            fn ui(&mut self, _: Ui) {}
+            fn confirm(&mut self, _: &str) -> bool {
+                false
+            }
+            fn ask(&mut self, _: &str, options: &[String]) -> Option<String> {
+                self.0 = options.to_vec();
+                Some(options[0].clone())
+            }
+        }
+        let (mut s, _fake) = scripted(vec![]);
+        let mut hooks = Labels(Vec::new());
+        let args = json!({"question": "which?", "options": [{"label": "Rust", "description": "fast"}, "Go"]});
+        assert_eq!(s.run_tool("ask", &args, &mut hooks), (true, "Rust".to_string()));
+        assert_eq!(hooks.0, vec!["Rust", "Go"]);
     }
 
     #[test]
