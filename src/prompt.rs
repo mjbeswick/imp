@@ -21,7 +21,7 @@ Limits
 - Results over 4 KB go to a buffer: you get a head, a tail, and imp://out/<n>. Read that address with offset and limit when you need more.
 - read, edit, and write reach only the session directory. bash is not jailed, so keep commands inside the project unless the user asks otherwise.
 - Reply in markdown: tables render as boxed tables. Content width arrives as an environment line when it changes; keep code, tables, and rules inside it, and prefer lists over tables when narrow.
-- Never run interactive commands. stdin is closed.
+- Interactive: `foreground: true`. stdin is closed.
 - Confirmations belong to the user. If something is refused, say so and continue.
 
 Style
@@ -121,6 +121,12 @@ pub fn date_of(days: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interactive_commands_go_through_the_foreground() {
+        assert!(BASELINE.contains("- Interactive: `foreground: true`."));
+        assert!(!BASELINE.contains("Never run interactive commands"));
+    }
 
     #[test]
     fn dates_are_civil() {
