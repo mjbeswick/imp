@@ -44,7 +44,9 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        print!("{}", help::usage(terminal_width()));
+        // Colour only on a terminal, and never with NO_COLOR.
+        let color = unsafe { isatty(1) } != 0 && std::env::var_os("NO_COLOR").is_none();
+        print!("{}", help::usage(terminal_width(), color));
         return Ok(());
     }
     if args.iter().any(|a| a == "-V" || a == "--version") {

@@ -77,46 +77,75 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 /// Widest left cell that still shares the description column.
 const LEFT_CAP: usize = 22;
 
+/// Fewest description columns before descriptions move under their cells.
+const MIN_TEXT: usize = 24;
+
 /// Named sections of `(left, description)` rows.
 type Sections<'a> = [(&'a str, Vec<(&'a str, &'a str)>)];
 
 /// Render sections with one description column for the whole output: two
 /// spaces after the longest left cell, which may be at most `LEFT_CAP` wide.
 /// A longer cell keeps its own row and its description starts on the next.
-fn table(out: &mut String, sections: &Sections, width: usize) {
+/// Long-only flags sit past the short-flag column, a `(default: X)` takes its
+/// own row, and examples put their description above the command. When
+/// fewer than `MIN_TEXT` columns are left, every description goes under its
+/// cell instead. `color` adds bold headings, accent cells, and dim notes.
+fn table(out: &mut String, sections: &Sections, width: usize, color: bool) {
+    let paint = |code: &str, text: &str| if color { format!("\x1b[{code}m{text}\x1b[0m") } else { text.to_string() };
+    let cell_of = |c: &str| if c.starts_with("--") { format!("    {c}") } else { c.to_string() };
     let left = sections
         .iter()
-        .flat_map(|(_, rows)| rows.iter().map(|(l, _)| l.chars().count()))
+        .filter(|(title, _)| *title != "EXAMPLES")
+        .flat_map(|(_, rows)| rows.iter().map(|(l, _)| cell_of(l).chars().count()))
         .filter(|&n| n <= LEFT_CAP)
         .max()
         .unwrap_or(0);
-    let col = 2 + left + 2;
+    let mut col = 2 + left + 2;
+    if width.saturating_sub(col) < MIN_TEXT {
+        col = 6;
+    }
+    let stacked = col == 6;
     let text = width.saturating_sub(col).max(20);
     for (i, (title, rows)) in sections.iter().enumerate() {
         if i > 0 || !out.is_empty() {
             out.push('\n');
         }
-        out.push_str(title);
+        out.push_str(&paint("1", title));
         out.push('\n');
         for (cell, desc) in rows {
-            let mut parts = wrap(desc, text).into_iter();
-            let len = cell.chars().count();
-            if len > left {
+            if *title == "EXAMPLES" {
+                for line in wrap(&format!("# {desc}"), width.saturating_sub(2)) {
+                    out.push_str(&format!("  {}\n", paint("2", &line)));
+                }
                 out.push_str(&format!("  {cell}\n"));
+                continue;
+            }
+            let (desc, default) = match desc.split_once(" (default: ") {
+                Some((d, rest)) => (d, Some(format!("(default: {rest}"))),
+                None => (*desc, None),
+            };
+            let cell = cell_of(cell);
+            let len = cell.chars().count();
+            let mut parts = wrap(desc, text).into_iter();
+            if stacked || len > left {
+                out.push_str(&format!("  {}\n", paint("36", &cell)));
             } else if let Some(first) = parts.next() {
-                out.push_str(&format!("  {cell}{}{first}\n", " ".repeat(col - 2 - len)));
+                out.push_str(&format!("  {}{}{first}\n", paint("36", &cell), " ".repeat(col - 2 - len)));
             }
             for rest in parts {
                 out.push_str(&format!("{}{rest}\n", " ".repeat(col)));
+            }
+            if let Some(default) = default {
+                out.push_str(&format!("{}{}\n", " ".repeat(col), paint("2", &default)));
             }
         }
     }
 }
 
 /// `--help`. Width comes from the terminal so long descriptions wrap.
-pub fn usage(width: usize) -> String {
-    let width = width.clamp(60, 110);
-    let mut out = String::from("imp — a small terminal agent for your model provider\n");
+pub fn usage(width: usize, color: bool) -> String {
+    let width = width.clamp(40, 110);
+    let mut out = String::from("imp · a small terminal agent\n");
     table(
         &mut out,
         &[
@@ -134,23 +163,23 @@ pub fn usage(width: usize) -> String {
                     ("-c, --continue", "continue the most recent session"),
                     ("-r, --resume [ID]", "resume a session; the newest without an id"),
                     ("-l, --list", "list sessions and exit"),
-                    ("--rename <ID> <TITLE>", "rename a session"),
-                    ("--delete <ID>", "move a session to trash"),
+                    ("--rename ID TITLE", "rename a session"),
+                    ("--delete ID", "move a session to trash"),
                 ],
             ),
             (
                 "RUNNING",
                 vec![
-                    ("--agent <NAME>", "agent profile to start with (default: default)"),
+                    ("--agent NAME", "agent profile to start with (default: default)"),
                     (
-                        "--provider <NAME>",
+                        "--provider NAME",
                         "deepseek, openai, anthropic, gemini, ollama, or custom (default: deepseek)",
                     ),
-                    ("--model <NAME>", "model to use (default: deepseek-flash)"),
-                    ("--max-steps <N>", "tool steps per turn (default: 24)"),
-                    ("--permissions <MODE>", "normal, strict, or yolo (default: normal)"),
-                    ("--skills-dir <PATH>", "extra skills directory"),
-                    ("-C, --cwd <PATH>", "session directory (default: launch directory)"),
+                    ("--model NAME", "model to use (default: deepseek-flash)"),
+                    ("--max-steps N", "tool steps per turn (default: 24)"),
+                    ("--permissions MODE", "normal, strict, or yolo (default: normal)"),
+                    ("--skills-dir PATH", "extra skills directory"),
+                    ("-C, --cwd PATH", "session directory (default: launch directory)"),
                     ("--cli", "line mode, even in a terminal"),
                 ],
             ),
@@ -192,6 +221,7 @@ pub fn usage(width: usize) -> String {
             ),
         ],
         width,
+        color,
     );
     out.push('\n');
     for line in wrap("In the chat, a line starting with `!` runs as a shell command.", width) {
@@ -214,7 +244,7 @@ pub fn commands(width: usize, chat: bool) -> String {
         sections.push((title, names.iter().map(|n| (*n, desc(n))).collect()));
     }
     let mut out = String::new();
-    table(&mut out, &sections, width);
+    table(&mut out, &sections, width, false);
     out.push('\n');
     let note = "Anything else goes to the model. Prefix a line with `!` to run it as a shell command.";
     out.push_str(&wrap(note, width).join("\n"));
@@ -254,7 +284,7 @@ mod tests {
 
     #[test]
     fn usage_lists_every_flag() {
-        let text = usage(100);
+        let text = usage(100, false);
         for flag in [
             "--continue",
             "--resume",
@@ -277,7 +307,7 @@ mod tests {
 
     #[test]
     fn usage_shows_defaults_and_examples() {
-        let text = usage(100);
+        let text = usage(100, false);
         assert!(text.contains("(default: normal)"));
         assert!(text.contains("(default: deepseek-flash)"));
         assert!(text.contains("EXAMPLES"));
@@ -288,7 +318,7 @@ mod tests {
 
     #[test]
     fn usage_names_every_provider_key() {
-        let text = usage(100);
+        let text = usage(100, false);
         for key in [
             "DEEPSEEK_API_KEY",
             "OPENAI_API_KEY",
@@ -303,7 +333,7 @@ mod tests {
 
     #[test]
     fn lines_fit_the_width() {
-        let text = usage(80);
+        let text = usage(80, false);
         for line in text.lines() {
             assert!(line.chars().count() <= 80, "too wide: {line:?}");
         }
@@ -312,14 +342,16 @@ mod tests {
     /// Column where a row's description starts, if it has one on that row.
     fn desc_col(line: &str) -> Option<usize> {
         let body = line.strip_prefix("  ")?;
-        let gap = body.find("  ")?;
+        // Long-only flags are indented; their cell starts past that indent.
+        let indent = body.len() - body.trim_start().len();
+        let gap = indent + body[indent..].find("  ")?;
         let rest = &body[gap..];
         Some(2 + gap + rest.len() - rest.trim_start().len())
     }
 
     #[test]
     fn usage_shares_one_column_and_fits_sixty() {
-        let text = usage(60);
+        let text = usage(60, false);
         let mut cols = std::collections::BTreeSet::new();
         for line in text.lines() {
             assert!(line.chars().count() <= 60, "too wide: {line:?}");
@@ -328,16 +360,45 @@ mod tests {
             }
         }
         assert_eq!(cols.len(), 1, "{cols:?}\n{text}");
-        assert!(text.contains("  --rename <ID> <TITLE>   rename"), "{text}");
+        // Long-only flags line up past the short-flag column.
+        assert!(text.contains("\n  -c, --continue    "), "{text}");
+        assert!(text.contains("\n      --rename ID TITLE "), "{text}");
     }
 
     #[test]
-    fn an_entry_over_the_cap_moves_its_description_down() {
-        let text = usage(80);
-        let at = text.find("  imp \"why is the build failing?\"\n").expect("own row");
+    fn defaults_take_their_own_row() {
+        let text = usage(54, false);
+        let at = text.find("--model NAME").unwrap();
         let next = text[at..].lines().nth(1).unwrap();
-        assert_eq!(next.trim(), "one request, then exit");
-        assert_eq!(next.len() - next.trim_start().len(), 26);
+        assert_eq!(next.trim(), "(default: deepseek-flash)", "{text}");
+        assert!(!text.lines().any(|l| l.trim_end().ends_with("(default:")), "{text}");
+    }
+
+    #[test]
+    fn fits_the_hackberry_and_narrower() {
+        for width in [54, 40] {
+            let text = usage(width, false);
+            for line in text.lines() {
+                assert!(line.chars().count() <= width, "too wide at {width}: {line:?}");
+            }
+        }
+        // At 40 there is no room for a column, so descriptions go under.
+        let text = usage(40, false);
+        let at = text.find("  -l, --list\n").expect("cell on its own row");
+        assert_eq!(text[at..].lines().nth(1).unwrap(), "      list sessions and exit");
+    }
+
+    #[test]
+    fn examples_put_the_description_first() {
+        let text = usage(80, false);
+        assert!(text.contains("  # one request, then exit\n  imp \"why is the build failing?\"\n"), "{text}");
+    }
+
+    #[test]
+    fn colour_only_when_asked() {
+        assert!(!usage(80, false).contains('\x1b'));
+        let painted = usage(80, true);
+        assert!(painted.contains("\x1b[1mUSAGE\x1b[0m"), "{painted}");
     }
 
     #[test]
