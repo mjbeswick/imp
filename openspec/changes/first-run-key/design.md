@@ -63,4 +63,6 @@ they are.
 
 ## Size
 
-Expected: under 3 KB.
+Measured at 16.6 KB over the previous build. The first estimate of under
+3 KB was wrong: the key row, the file handling, and their strings cost more
+than a picker does.

@@ -11,6 +11,6 @@
 
 ## 3. Onboarding
 
-- [ ] 3.1 Open the provider picker when a key is missing, apply a keyless profile at once, and quit on Esc; tests for the picker and the quit
-- [ ] 3.2 Mask the key row, accept characters and Backspace, and check the key on Enter; tests for the mask and the editing
-- [ ] 3.3 Save and apply on success, retry on a 4xx, save with a warning otherwise; tests for the three outcomes
+- [x] 3.1 Open the provider picker when a key is missing, apply a keyless profile at once, and quit on Esc; tests for the picker and the quit
+- [x] 3.2 Mask the key row, accept characters and Backspace, and check the key on Enter; tests for the mask and the editing
+- [x] 3.3 Save and apply on success, retry on a 4xx, save with a warning otherwise; tests for the three outcomes

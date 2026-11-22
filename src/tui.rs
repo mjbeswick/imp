@@ -1232,6 +1232,8 @@ pub struct App {
     targets: Vec<(usize, usize, usize, Target)>,
     /// `[a] always` was clicked once; a second click on it applies.
     armed: bool,
+    /// First run: a missing key is being entered, so Esc quits.
+    onboard: bool,
     /// The latest copy, pasted by Ctrl+V.
     clip: String,
     /// An OSC 52 sequence for the terminal clipboard, written after the next frame.
@@ -1346,6 +1348,14 @@ enum Pending {
         name: String,
         fields: Vec<(String, String)>,
         at: usize,
+    },
+    /// A first-run key: masked while typed, then checked before it is saved.
+    KeyEntry {
+        provider: String,
+        var: String,
+        value: String,
+        /// A check result or error, shown beside the field.
+        status: String,
     },
     ConfirmDelete {
         id: String,
@@ -1523,6 +1533,25 @@ fn picker_lines(picker: &Picker, matches: &[usize], visible: usize, inner: usize
         }
     }
     out
+}
+
+/// A first-run check's verdict.
+#[derive(Debug, PartialEq)]
+enum KeyOutcome {
+    /// Save the key; a warning means the check itself did not run.
+    Save(Option<String>),
+    /// The provider refused the key, so the row stays open.
+    Retry(String),
+}
+
+/// A refused key is a 4xx; anything else is the network, which must not lock
+/// anyone out of their own machine.
+fn first_run_outcome(result: Result<(), String>) -> KeyOutcome {
+    match result {
+        Ok(()) => KeyOutcome::Save(None),
+        Err(e) if e.contains("HTTP 4") => KeyOutcome::Retry(e),
+        Err(e) => KeyOutcome::Save(Some(format!("key saved; the check did not run ({e})"))),
+    }
 }
 
 /// Commands whose argument is typed rather than picked.
@@ -1844,6 +1873,7 @@ impl App {
             drawn: Vec::new(),
             targets: Vec::new(),
             armed: false,
+            onboard: false,
             clip: String::new(),
             osc52: None,
             released: false,
@@ -2536,6 +2566,7 @@ impl App {
                     | Some(Pending::Prompt { .. })
                     | Some(Pending::ProviderForm { .. })
                     | Some(Pending::RenameCurrent { .. })
+                    | Some(Pending::KeyEntry { .. })
             );
             if prompt || self.input.is_empty() {
                 self.quit = true;
@@ -3314,6 +3345,110 @@ impl App {
         Ok(())
     }
 
+    /// The variable a provider's key lives in, or none when it needs no key.
+    fn provider_key_var(&self, name: &str) -> Option<String> {
+        if let Ok(provider) = crate::providers::Provider::parse(name) {
+            return provider.profile().key_var.map(str::to_string);
+        }
+        self.cfg
+            .named
+            .iter()
+            .find(|n| n.name == name)
+            .map(|n| n.key_env.clone())
+            .filter(|var| !var.is_empty())
+    }
+
+    /// First run: ask for a provider and its key before the first turn.
+    fn begin_onboard(&mut self, var: String) {
+        self.onboard = true;
+        self.push(
+            Role::Info,
+            format!("no key for {} ({var}); choose a provider", self.cfg.active_name),
+        );
+        self.pending = Some(Pending::Pick(self.value_picker(
+            "provider",
+            self.provider_items(),
+            PickKind::Provider,
+        )));
+        self.dirty = true;
+    }
+
+    /// A chosen first-run provider: apply it, or ask for the key it needs.
+    fn choose_onboard_provider(&mut self, name: &str, tx: &Sender<Cmd>) {
+        if let Some(var) = self.provider_key_var(name) {
+            self.pending = Some(Pending::KeyEntry {
+                provider: name.to_string(),
+                var,
+                value: String::new(),
+                status: String::new(),
+            });
+            self.dirty = true;
+            return;
+        }
+        match self.set_provider(name, tx) {
+            Ok(()) => {
+                self.pending = None;
+                self.onboard = false;
+            }
+            Err(e) => self.push(Role::Error, e),
+        }
+        self.dirty = true;
+    }
+
+    /// Check a first-run key, then save it and apply its provider.
+    fn submit_key(&mut self, provider: String, var: String, value: String, tx: &Sender<Cmd>) {
+        let again = |status: String| Pending::KeyEntry {
+            provider: provider.clone(),
+            var: var.clone(),
+            value: value.clone(),
+            status,
+        };
+        let key = value.trim().to_string();
+        if key.is_empty() {
+            self.pending = Some(again("the key is empty".into()));
+            self.dirty = true;
+            return;
+        }
+        self.pending = Some(again("checking…".into()));
+        self.dirty = true;
+        self.render();
+        let warning = match first_run_outcome(self.check_key(&provider, &key)) {
+            KeyOutcome::Retry(why) => {
+                self.pending = Some(again(why));
+                self.dirty = true;
+                return;
+            }
+            KeyOutcome::Save(warning) => warning,
+        };
+        if let Err(e) = crate::config::save_key(&var, &key) {
+            self.pending = Some(again(e));
+            self.dirty = true;
+            return;
+        }
+        self.cfg.api_key = key;
+        self.pending = None;
+        self.onboard = false;
+        if let Err(e) = self.set_provider(&provider, tx) {
+            self.push(Role::Error, e);
+        }
+        if let Some(warning) = warning {
+            self.push(Role::Info, warning);
+        }
+        self.dirty = true;
+    }
+
+    /// One cheap request with the key, to catch a bad paste now.
+    fn check_key(&self, name: &str, key: &str) -> Result<(), String> {
+        if let Ok(provider) = crate::providers::Provider::parse(name) {
+            return crate::providers::list_models(provider, provider.profile().base_url, key).map(|_| ());
+        }
+        let Some(profile) = self.cfg.named.iter().find(|n| n.name == name) else {
+            return Err(format!("no provider {name:?}"));
+        };
+        let provider = crate::providers::Provider::parse(&profile.dialect)?;
+        crate::providers::list_models(provider, &profile.base, key).map(|_| ())
+    }
+
     /// Save a completed provider form, replacing any profile of that name.
     fn finish_provider_form(&mut self, name: String, fields: Vec<(String, String)>) {
         let value = |at: usize| fields.get(at).map(|(_, v)| v.trim().to_string()).unwrap_or_default();
@@ -3655,6 +3790,37 @@ impl App {
                 }
                 return;
             }
+            Pending::KeyEntry {
+                provider,
+                var,
+                mut value,
+                status,
+            } => {
+                match key {
+                    Key::Esc => {
+                        self.onboard = false;
+                        self.pending = None;
+                        self.push(Role::Info, "no key entered; nothing saved");
+                        self.quit = true;
+                        self.dirty = true;
+                    }
+                    Key::Enter => self.submit_key(provider, var, value, tx),
+                    Key::Char(c) if !c.is_control() => {
+                        value.push(c);
+                        self.pending = Some(Pending::KeyEntry { provider, var, value, status });
+                        self.dirty = true;
+                    }
+                    Key::Backspace => {
+                        value.pop();
+                        self.pending = Some(Pending::KeyEntry { provider, var, value, status });
+                        self.dirty = true;
+                    }
+                    _ => {
+                        self.pending = Some(Pending::KeyEntry { provider, var, value, status });
+                    }
+                }
+                return;
+            }
             Pending::Prompt {
                 label,
                 mut value,
@@ -3877,6 +4043,9 @@ impl App {
                                 self.preview_from = None;
                                 self.push(Role::Info, format!("theme: {}", choice.value));
                             }
+                            PickKind::Provider if self.onboard => {
+                                self.choose_onboard_provider(&choice.value, tx);
+                            }
                             PickKind::Provider => match self.set_provider(&choice.value, tx) {
                                 Ok(()) => {
                                     self.push(Role::Info, format!("provider: {}", choice.value))
@@ -3916,6 +4085,10 @@ impl App {
                         return;
                     }
                     Key::Esc => {
+                        if self.onboard {
+                            self.push(Role::Info, "no key entered; nothing saved");
+                            self.quit = true;
+                        }
                         self.dirty = true;
                         return;
                     }
@@ -4468,6 +4641,11 @@ impl App {
                         .cloned()
                         .unwrap_or_else(|| ("field".into(), String::new()));
                     format!("provider {name} · {label}: {value}{CARET}  (Enter next · Esc cancel)")
+                }
+                Pending::KeyEntry { provider, var, value, status } => {
+                    let stars = "*".repeat(value.chars().count());
+                    let note = if status.is_empty() { String::new() } else { format!("  {status}") };
+                    format!("{provider} key for {var}: {stars}{CARET}  (Enter save · Esc cancel){note}")
                 }
                 Pending::Question { .. } => return None,
             };
@@ -5482,6 +5660,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
     let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
     app.worker = Some(spawn_worker(session, sessions_dir));
     app.fresh = Some(fresh);
+    if let Some(var) = missing_key {
+        app.begin_onboard(var);
+    }
 
     // Key reader.
     let (key_tx, key_rx) = channel::<Vec<u8>>();
@@ -7845,6 +8026,78 @@ mod tests {
             .collect();
         assert_eq!(hits.len(), 2, "the second line has no target: {:?}", a.targets);
         assert_eq!(hits[1], hits[0] + 1, "{hits:?}");
+    }
+
+    #[test]
+    fn a_missing_key_opens_the_provider_picker() {
+        let mut a = app();
+        a.begin_onboard("DEEPSEEK_API_KEY".into());
+        assert!(a.onboard);
+        assert_eq!(open_picker(&a).kind, PickKind::Provider);
+        let frame = strip(&a.frame(80, 20));
+        assert!(frame.contains("no key for deepseek (DEEPSEEK_API_KEY)"), "{frame}");
+    }
+
+    #[test]
+    fn a_provider_without_a_key_starts_at_once() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.begin_onboard("DEEPSEEK_API_KEY".into());
+        a.choose_onboard_provider("ollama", &tx);
+        assert!(a.pending.is_none(), "a key row opened for Ollama");
+        assert!(!a.onboard);
+        assert_eq!(a.cfg.provider, crate::providers::Provider::Ollama);
+    }
+
+    #[test]
+    fn the_first_run_key_is_masked_and_editable() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.begin_onboard("DEEPSEEK_API_KEY".into());
+        a.choose_onboard_provider("deepseek", &tx);
+        assert!(matches!(a.pending, Some(Pending::KeyEntry { .. })), "no key row");
+        for c in "sk-ab".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        let row = |a: &mut App| {
+            strip(&a.frame(80, 20))
+                .lines()
+                .find(|l| l.contains("key for DEEPSEEK_API_KEY"))
+                .map(str::to_string)
+                .expect("the key row")
+        };
+        let shown = row(&mut a);
+        let stars = shown.matches('*').count();
+        assert_eq!(stars, 5, "{shown}");
+        assert!(!shown.contains("sk-ab"), "the key is drawn: {shown}");
+        a.handle_key(Key::Backspace, &tx);
+        assert_eq!(row(&mut a).matches('*').count(), 4, "Backspace did not remove");
+    }
+
+    #[test]
+    fn esc_leaves_the_first_run() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.begin_onboard("DEEPSEEK_API_KEY".into());
+        a.choose_onboard_provider("deepseek", &tx);
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.quit, "Esc kept the first run open");
+        assert!(a.pending.is_none());
+    }
+
+    #[test]
+    fn a_refused_key_retries_and_a_dead_network_saves() {
+        assert_eq!(first_run_outcome(Ok(())), KeyOutcome::Save(None));
+        assert_eq!(
+            first_run_outcome(Err("models: HTTP 401".into())),
+            KeyOutcome::Retry("models: HTTP 401".into())
+        );
+        match first_run_outcome(Err("models: connection refused".into())) {
+            KeyOutcome::Save(Some(warning)) => {
+                assert!(warning.contains("check did not run"), "{warning}")
+            }
+            other => panic!("offline did not save: {other:?}"),
+        }
     }
 
     #[test]
