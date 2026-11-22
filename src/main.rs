@@ -92,7 +92,14 @@ fn run() -> Result<(), String> {
             }
             "--agent" => agent_name = Some(next(&args, &mut i, "--agent")?),
             "-c" | "--continue" => continue_last = true,
-            "-r" | "--resume" => resume = Some(next(&args, &mut i, "--resume")?),
+            // With no id after it, or a flag next, -r resumes the newest session.
+            "-r" | "--resume" => match resume_id(&args, i) {
+                Some(id) => {
+                    resume = Some(id.clone());
+                    i += 1;
+                }
+                None => continue_last = true,
+            },
             "-l" | "--list" => list = true,
             "--rename" => {
                 let id = next(&args, &mut i, "--rename")?;
@@ -898,6 +905,11 @@ fn prompt_from(words: &[String]) -> Option<String> {
     }
 }
 
+/// The id after `-r` at `i`, or `None` when nothing or a flag follows.
+fn resume_id(args: &[String], i: usize) -> Option<&String> {
+    args.get(i + 1).filter(|a| !a.is_empty() && !a.starts_with('-'))
+}
+
 fn next(args: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
     *i += 1;
     args.get(*i)
@@ -937,6 +949,16 @@ mod tests {
             Some("find the biggest file")
         );
         assert_eq!(prompt_from(&[]), None);
+    }
+
+    #[test]
+    fn resume_takes_an_id_only_when_one_follows() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(resume_id(&args(&["-r"]), 0), None);
+        assert_eq!(resume_id(&args(&["-r", "--model", "x"]), 0), None);
+        assert_eq!(resume_id(&args(&["-r", "512705c23"]), 0).map(|s| s.as_str()), Some("512705c23"));
+        // Strict: a word is an id, so a typo fails instead of resuming the newest.
+        assert_eq!(resume_id(&args(&["-r", "fix", "it"]), 0).map(|s| s.as_str()), Some("fix"));
     }
 
     #[test]
