@@ -307,7 +307,7 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 
 ### Requirement: The status line reports tokens and cost
 
-The system SHALL show the model name, the served model when it differs, the estimated context tokens, and the cost of this process's messages, SHALL abbreviate 1,000 as K and 1,000,000 as M with one decimal, SHALL render cost with two decimals, SHALL NOT show the cache hit share, SHALL show the permission mode only when it is not `normal`, and SHALL omit a figure it cannot compute.
+The system SHALL show the model name, the served model when it differs, the estimated context tokens, and the cost of this process's messages, SHALL refresh both figures after every request, SHALL abbreviate 1,000 as K and 1,000,000 as M with one decimal, SHALL render cost with three decimals below $0.10 and two above, SHALL NOT show the cache hit share, SHALL show the permission mode only when it is not `normal`, and SHALL omit a figure it cannot compute.
 
 #### Scenario: Abbreviated tokens
 - **WHEN** the estimated context is 3,400 tokens
@@ -325,6 +325,10 @@ The system SHALL show the model name, the served model when it differs, the esti
 - **WHEN** the response reports the same string as the configured model, or no response has arrived
 - **THEN** the status line shows the configured name alone
 
+#### Scenario: Small cost
+- **WHEN** the messages sent in this process cost 0.0014
+- **THEN** the status line shows `$0.001`
+
 #### Scenario: Two-decimal cost
 - **WHEN** the messages sent in this process cost 0.4246
 - **THEN** the status line shows `$0.42`
@@ -332,6 +336,10 @@ The system SHALL show the model name, the served model when it differs, the esti
 #### Scenario: Cost accumulates
 - **WHEN** a second response costs 0.0531
 - **THEN** the status line shows the sum, `$0.48`, not the last response alone
+
+#### Scenario: Mid-turn tokens
+- **WHEN** a request finishes and the context is 7,700 tokens
+- **THEN** the status line shows `7.7K tok` before the turn ends
 
 #### Scenario: Removed signals
 - **WHEN** any frame is drawn
