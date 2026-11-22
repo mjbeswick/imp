@@ -1005,6 +1005,7 @@ pub enum Cmd {
         model: String,
         key_env: String,
     },
+    RevokeAllow { shape: String, always: bool },
     SetRoot(std::path::PathBuf),
     Compact,
     /// Work across turns until the goal is met.
@@ -1045,6 +1046,8 @@ pub enum Ev {
     Info(String),
     Error(String),
     Models(Vec<String>),
+    /// A command shape the user allowed, for this session or for good.
+    Allow { shape: String, always: bool },
     Usage {
         /// The context estimate, when this event carries one.
         tokens: Option<u64>,
@@ -1085,6 +1088,13 @@ struct WorkerHooks {
 }
 
 impl Hooks for WorkerHooks {
+    fn allowed(&mut self, shape: &str, always: bool) {
+        let _ = self.tx.send(Ev::Allow {
+            shape: shape.to_string(),
+            always,
+        });
+    }
+
     fn ui(&mut self, event: Ui) {
         let ev = match event {
             Ui::Content(t) => Ev::Token(t),
@@ -1684,6 +1694,8 @@ pub struct App {
     targets: Vec<(usize, usize, usize, Target)>,
     /// `[a] always` was clicked once; a second click on it applies.
     armed: bool,
+    /// Command shapes allowed here, with whether each is saved for good.
+    allows: Vec<(String, bool)>,
     /// First run: a missing key is being entered, so Esc quits.
     onboard: bool,
     /// The latest copy, pasted by Ctrl+V.
@@ -1766,11 +1778,13 @@ struct Pane {
     touched: Instant,
     replied: bool,
     since: Instant,
+    allows: Vec<(String, bool)>,
 }
 
 impl Pane {
     fn new(session: &Session, worker: Option<Worker>) -> Self {
         let (session_steer, session_hold) = (session.steer.clone(), session.hold.clone());
+        let allows = session.cfg.always_allows().into_iter().map(|s| (s, true)).collect();
         Self {
             cfg: session.cfg.clone(),
             cancel: session.cancel.clone(),
@@ -1804,6 +1818,7 @@ impl Pane {
             touched: Instant::now(),
             replied: false,
             since: Instant::now(),
+            allows,
         }
     }
 
@@ -2177,7 +2192,7 @@ impl Picker {
             PickKind::Keys => return "? or Esc close".into(),
             _ => vec!["Enter choose".into(), "Esc close".into()],
         };
-        if let Some(item) = self.items.first() {
+        if let Some(item) = self.selected().or_else(|| self.items.first()) {
             for (key, label) in &item.actions {
                 parts.push(format!("{key} {label}"));
             }
@@ -2311,6 +2326,7 @@ impl App {
         let palette = Palette::detect(&cfg);
         let provider = cfg.provider;
         let verbosity = cfg.verbosity;
+        let allows = cfg.always_allows().into_iter().map(|s| (s, true)).collect();
         SPIN.store(cfg.spinner, Ordering::Relaxed);
         let history = load_history();
         let agents = crate::store::load_agents(&cfg, &root)
@@ -2379,6 +2395,7 @@ impl App {
             drawn: Vec::new(),
             targets: Vec::new(),
             armed: false,
+            allows,
             onboard: false,
             clip: String::new(),
             // Tests never read the real clipboard.
@@ -2434,6 +2451,7 @@ impl App {
         swap(&mut self.touched, &mut p.touched);
         swap(&mut self.replied, &mut p.replied);
         swap(&mut self.since, &mut p.since);
+        swap(&mut self.allows, &mut p.allows);
     }
 
     /// Bring the pane at `index` into view and park the current one.
@@ -2818,6 +2836,12 @@ impl App {
                 }
             }
             Ev::Info(t) => self.push(Role::Info, t),
+            Ev::Allow { shape, always } => {
+                if !self.allows.iter().any(|(s, _)| s == &shape) {
+                    self.allows.push((shape, always));
+                }
+                self.dirty = true;
+            }
             Ev::Diff(files, git) => self.show_diff(files, git),
             Ev::Error(t) => self.push(Role::Error, t),
             Ev::Root(path) => {
@@ -3475,6 +3499,12 @@ impl App {
             desc: mark_current(name == current, about),
             actions: Vec::new(),
         })
+        .chain(self.allows.iter().map(|(shape, always)| PickItem {
+            label: shape.clone(),
+            value: format!("allow:{shape}"),
+            desc: if *always { "always" } else { "session" }.into(),
+            actions: vec![('d', "revoke")],
+        }))
         .collect()
     }
 
@@ -4755,6 +4785,26 @@ impl App {
                                     });
                                 }
                             }
+                            Some("revoke") => {
+                                if let Some(choice) = picker.selected() {
+                                    let value = choice.value.clone();
+                                    let shape = value.trim_start_matches("allow:").to_string();
+                                    let always = self
+                                        .allows
+                                        .iter()
+                                        .any(|(s, a)| s == &shape && *a);
+                                    self.allows.retain(|(s, _)| s != &shape);
+                                    let _ = tx.send(Cmd::RevokeAllow {
+                                        shape: shape.clone(),
+                                        always,
+                                    });
+                                    picker.items.retain(|i| i.value != value);
+                                    picker.index = picker.index.min(picker.items.len().saturating_sub(1));
+                                    picker.offset = picker.offset.min(picker.index);
+                                    self.push(Role::Info, format!("revoked {shape}"));
+                                    self.pending = Some(Pending::Pick(picker));
+                                }
+                            }
                             Some("delete") => {
                                 if let Some(choice) = picker.selected() {
                                     let id = choice.value.clone();
@@ -4844,6 +4894,12 @@ impl App {
                             PickKind::Session => self.resume(choice.value, tx),
                             PickKind::Model => {
                                 self.set_model(&choice.value, tx);
+                            }
+                            PickKind::Mode if choice.value.starts_with("allow:") => {
+                                // An allow row is not a mode; choosing it does nothing.
+                                self.pending = Some(Pending::Pick(picker));
+                                self.dirty = true;
+                                return;
                             }
                             PickKind::Mode => self.set_mode(&choice.value, tx),
                             PickKind::Keys => {}
@@ -6743,6 +6799,11 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                 }
                 Ok(Cmd::SetPermissions(mode)) => {
                     worker_session.set_permissions(mode);
+                }
+                Ok(Cmd::RevokeAllow { shape, always }) => {
+                    if let Err(e) = worker_session.revoke_allow(&shape, always) {
+                        let _ = ev_tx.send(Ev::Error(e));
+                    }
                 }
                 Ok(Cmd::Reload) => {
                     match worker_session.reload() {
@@ -10192,6 +10253,78 @@ mod tests {
             }
             other => panic!("offline did not save: {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_mode_picker_lists_allows_below_the_modes() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.allows = vec![("npm test".into(), false), ("cargo test".into(), true)];
+        a.run_command("mode", &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.items.len(), 5, "modes and allows");
+        assert_eq!(picker.items[3].label, "npm test");
+        assert_eq!(picker.items[3].desc, "session");
+        assert_eq!(picker.items[4].desc, "always");
+        assert_eq!(picker.items[3].value, "allow:npm test");
+    }
+
+    #[test]
+    fn the_mode_picker_with_no_allows_shows_only_the_modes() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.run_command("mode", &tx);
+        assert_eq!(open_picker(&a).items.len(), 3);
+    }
+
+    #[test]
+    fn the_mode_footer_offers_revoke_on_an_allow_row() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.allows = vec![("npm test".into(), false)];
+        a.run_command("mode", &tx);
+        if let Some(Pending::Pick(p)) = &mut a.pending {
+            p.index = 3;
+        }
+        let frame = strip(&a.frame(100, 30));
+        assert!(frame.contains("d revoke"), "no revoke hint: {frame:?}");
+    }
+
+    #[test]
+    fn d_revokes_the_highlighted_allow() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.allows = vec![("npm test".into(), false), ("cargo test".into(), true)];
+        a.run_command("mode", &tx);
+        if let Some(Pending::Pick(p)) = &mut a.pending {
+            p.index = 3;
+        }
+        a.handle_key(Key::Char('d'), &tx);
+        assert_eq!(a.allows, vec![("cargo test".to_string(), true)]);
+        match rx.try_recv() {
+            Ok(Cmd::RevokeAllow { shape, always }) => {
+                assert_eq!(shape, "npm test");
+                assert!(!always, "a session allow was revoked as always");
+            }
+            _ => panic!("no revoke command"),
+        }
+        let picker = open_picker(&a);
+        assert_eq!(picker.items.len(), 4, "the row stayed in the list");
+        assert!(picker.items.iter().all(|i| i.label != "npm test"));
+    }
+
+    #[test]
+    fn choosing_an_allow_row_changes_nothing() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.allows = vec![("npm test".into(), false)];
+        a.run_command("mode", &tx);
+        if let Some(Pending::Pick(p)) = &mut a.pending {
+            p.index = 3;
+        }
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(a.pending, Some(Pending::Pick(_))), "the picker closed");
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Normal);
     }
 
     #[test]

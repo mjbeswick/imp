@@ -327,6 +327,34 @@ impl Config {
         }
     }
 
+    /// Every shape allowed in every session, in file order.
+    pub fn always_allows(&self) -> Vec<String> {
+        self.allow.lock().map(|a| a.clone()).unwrap_or_default()
+    }
+
+    /// Forget a shape allowed in every session, and drop its `allow` line.
+    /// Every other byte of the file is left alone.
+    pub fn revoke_always(&self, shape: &str) -> Result<(), String> {
+        if let Ok(mut a) = self.allow.lock() {
+            a.retain(|s| s != shape);
+        }
+        let Some(path) = &self.file else { return Ok(()) };
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let mut kept = String::new();
+        for line in text.split_inclusive('\n') {
+            let body = line.trim_end_matches('\n');
+            let is_allow = body
+                .trim_start()
+                .strip_prefix("allow")
+                .and_then(|rest| rest.trim_start().strip_prefix('='))
+                .is_some_and(|value| value.trim() == shape);
+            if !is_allow {
+                kept.push_str(line);
+            }
+        }
+        std::fs::write(path, kept).map_err(|e| e.to_string())
+    }
+
     /// Allow a shape in every session, and append it to the config file.
     pub fn allow_always(&self, shape: &str) -> Result<(), String> {
         self.allows(shape);
@@ -1031,6 +1059,28 @@ mod tests {
                 ("B_KEY".to_string(), "a=b".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn revoking_an_allow_keeps_the_rest_of_the_config() {
+        let dir = std::env::temp_dir().join(format!("imp-allow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config");
+        std::fs::write(
+            &path,
+            "allow = npm test\nmodel = deepseek-flash\nallow = cargo test\n# allow = keep me\n",
+        )
+        .unwrap();
+        let cfg = Config::load(&path).unwrap();
+        assert!(cfg.allowed("npm test"));
+        cfg.revoke_always("npm test").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "model = deepseek-flash\nallow = cargo test\n# allow = keep me\n"
+        );
+        assert!(!cfg.allowed("npm test"), "the revoked allow is still live");
+        assert!(cfg.allowed("cargo test"), "another allow was dropped");
     }
 
     #[test]

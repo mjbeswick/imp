@@ -30,6 +30,9 @@ pub trait Hooks {
     fn confirm_always(&mut self, what: &str) -> Answer {
         if self.confirm(what) { Answer::Yes } else { Answer::No }
     }
+
+    /// A command shape the user allowed, for this session or for good.
+    fn allowed(&mut self, _shape: &str, _always: bool) {}
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String>;
 
     /// A question whose options carry descriptions, and may allow several
@@ -988,6 +991,16 @@ impl Session {
         Ok(())
     }
 
+    /// Forget one shape allowed in this session, and its config line when it
+    /// was saved for every session.
+    pub fn revoke_allow(&mut self, shape: &str, always: bool) -> Result<(), String> {
+        self.always.remove(shape);
+        if always {
+            self.cfg.revoke_always(shape)?;
+        }
+        Ok(())
+    }
+
     /// Apply an exact mode, including the path jail.
     pub fn set_permissions(&mut self, mode: Permissions) {
         self.cfg.set_permissions(mode);
@@ -1234,11 +1247,15 @@ impl Session {
                                     return (false, "refused: the user declined to run this command".into())
                                 }
                                 (Answer::Session, Some(k)) => {
-                                    self.always.insert(k);
+                                    self.always.insert(k.clone());
+                                    hooks.allowed(&k, false);
                                 }
                                 (Answer::Always, Some(k)) => {
-                                    if let Err(e) = self.cfg.allow_always(&k) {
-                                        hooks.ui(Ui::Error(format!("allow {k} not saved: {e}")));
+                                    match self.cfg.allow_always(&k) {
+                                        Ok(()) => hooks.allowed(&k, true),
+                                        Err(e) => {
+                                            hooks.ui(Ui::Error(format!("allow {k} not saved: {e}")))
+                                        }
                                     }
                                 }
                                 _ => {}
@@ -3469,6 +3486,22 @@ mod tests {
         run(&mut strict, &mut h, "touch imp-always-x");
         run(&mut strict, &mut h, "touch imp-always-x");
         assert_eq!((h.offered, h.plain), (0, 2), "strict offered always");
+    }
+
+    #[test]
+    fn a_revoked_allow_asks_again() {
+        let (mut s, _fake) = scripted(vec![]);
+        s.cfg.set_permissions(Permissions::Normal);
+        let mut h = AlwaysHooks::default();
+        let run = |s: &mut Session, h: &mut AlwaysHooks, cmd: &str| {
+            s.run_tool("bash", &json!({"command": cmd}), h);
+        };
+        let shape = crate::perm::shape("touch imp-revoked-x").expect("a simple shape");
+        run(&mut s, &mut h, "touch imp-revoked-x");
+        assert_eq!(h.offered, 1);
+        s.revoke_allow(&shape, false).unwrap();
+        run(&mut s, &mut h, "touch imp-revoked-x");
+        assert_eq!(h.offered, 2, "a revoked allow did not ask again");
     }
 
     #[test]
