@@ -7,5 +7,5 @@
 ## 2. Retry
 
 - [x] 2.1 `Cmd::Retry` cuts the history after the last user message and reruns; agent test
-- [ ] 2.2 `/retry` and Ctrl+R drop the old rows and send; refused mid-turn or with no message; tests
+- [x] 2.2 `/retry` and Ctrl+R drop the old rows and send; refused mid-turn or with no message; tests
 - [ ] 2.3 Keys card and palette list Ctrl+R; command count is twenty-six

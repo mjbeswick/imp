@@ -2704,6 +2704,23 @@ impl App {
     }
 
     /// Empty the transcript, and the tool rows that point into it.
+    /// Drop the rows after the last user message and send it again.
+    fn retry(&mut self, tx: &Sender<Cmd>) {
+        if self.status.streaming {
+            return self.push(Role::Info, "a turn is running");
+        }
+        let Some(i) = self.entries.iter().rposition(|e| e.role == Role::User) else {
+            return self.push(Role::Info, "nothing to retry");
+        };
+        self.entries.truncate(i + 1);
+        self.tool = None;
+        self.done.retain(|r| r.index <= i);
+        self.follow_tail();
+        self.status.streaming = true;
+        self.begin_task();
+        let _ = tx.send(Cmd::Retry);
+    }
+
     fn clear_entries(&mut self) {
         self.entries.clear();
         self.tool = None;
@@ -3304,6 +3321,7 @@ impl App {
                 self.show((self.at + 1) % n);
             }
             Key::Ctrl('t') => self.run_command("think", tx),
+            Key::Ctrl('r') => self.retry(tx),
             Key::Ctrl('e') => {
                 self.toggle_tool();
                 self.dirty = true;
@@ -4644,6 +4662,7 @@ impl App {
                 let _ = tx.send(Cmd::Compact);
                 self.push(Role::Info, "compacting…");
             }
+            "retry" => self.retry(tx),
             "think" => {
                 self.cfg.thinking = !self.cfg.thinking;
                 let _ = tx.send(Cmd::SetThinking(self.cfg.thinking));
@@ -8681,6 +8700,32 @@ mod tests {
         assert_ne!(a.queue_mode, mode, "Ctrl+Q did not replay");
         a.palette_action("next-session", &tx);
         assert_eq!(a.entries.last().unwrap().text, "one session");
+    }
+
+    #[test]
+    fn retry_drops_the_reply_and_sends_again() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.handle_key(Key::Ctrl('r'), &tx);
+        assert_eq!(a.entries.last().unwrap().text, "nothing to retry");
+        a.entries.clear();
+        a.push(Role::User, "first");
+        a.push(Role::Assistant, "one");
+        a.push(Role::User, "second");
+        a.apply(Ev::ToolStart { name: "bash".into(), summary: "run `ls`".into(), args: "{}".into() });
+        a.apply(Ev::ToolEnd { ok: true, preview: "exit 0".into(), output: String::new(), detail: String::new(), ms: 1 });
+        a.push(Role::Assistant, "a bad answer");
+        a.status.streaming = true;
+        a.run_command("retry", &tx);
+        assert_eq!(a.entries.last().unwrap().text, "a turn is running");
+        assert!(rx.try_recv().is_err(), "retried mid-turn");
+        a.status.streaming = false;
+        a.handle_key(Key::Ctrl('r'), &tx);
+        let texts: Vec<&str> = a.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, vec!["first", "one", "second"], "the old reply stayed");
+        assert!(a.done.is_empty() && a.tool.is_none(), "a tool row of the old reply stayed");
+        assert!(a.status.streaming, "the retry did not start a turn");
+        assert!(matches!(rx.try_recv(), Ok(Cmd::Retry)));
     }
 
     #[test]
