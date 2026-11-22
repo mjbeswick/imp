@@ -43,4 +43,4 @@ paths.
 
 ## Size
 
-Expected: 1 to 2 KB.
+Expected: 1 to 2 KB. Measured: about 3.1 KB of code sections (`__text` +2932, `__cstring` +94, `__const` +48). The file grew 32 bytes because arm64 segments pad to 16 KiB.
