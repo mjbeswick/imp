@@ -1912,6 +1912,7 @@ enum PickKind {
     Provider,
     Mode,
     Keys,
+    Palette,
 }
 
 #[derive(Clone)]
@@ -2079,6 +2080,20 @@ fn first_run_outcome(result: Result<(), String>) -> KeyOutcome {
         Err(e) => KeyOutcome::Save(Some(format!("key saved; the check did not run ({e})"))),
     }
 }
+
+/// Actions the palette lists with the shortcut that also runs them.
+const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
+    ("next session", "Ctrl+N", "next-session"),
+    ("keys card", "?", "keys"),
+    ("stop the turn", "Esc", "stop"),
+    ("expand tools", "Ctrl+E", "expand"),
+    ("thinking on or off", "Ctrl+T", "thinking"),
+    ("clear the view", "Ctrl+L", "clear"),
+    ("scroll up", "PgUp", "page-up"),
+    ("scroll down", "PgDn", "page-down"),
+    ("release the mouse", "Ctrl+G", "release"),
+    ("quit", "Ctrl+D", "quit"),
+];
 
 /// Commands whose argument is typed rather than picked.
 const FREE_TEXT: &[&str] = &["queue", "rename", "diff"];
@@ -3279,10 +3294,17 @@ impl App {
             }
             Key::Ctrl('c') => self.quit = true,
             Key::Ctrl('d') => self.quit = true,
-            Key::Ctrl('n') | Key::Ctrl('p') if self.panes.len() > 1 => {
+            Key::Ctrl('p') => {
+                self.pending = Some(Pending::Pick(Picker::new(
+                    "palette",
+                    self.palette_items(),
+                    PickKind::Palette,
+                )));
+                self.dirty = true;
+            }
+            Key::Ctrl('n') if self.panes.len() > 1 => {
                 let n = self.panes.len();
-                let step = if matches!(key, Key::Ctrl('n')) { 1 } else { n - 1 };
-                self.show((self.at + step) % n);
+                self.show((self.at + 1) % n);
             }
             Key::Ctrl('e') => {
                 self.toggle_tool();
@@ -3533,6 +3555,51 @@ impl App {
                 actions: Vec::new(),
             })
             .collect()
+    }
+
+    /// Commands and key actions in one list, each with its shortcut.
+    fn palette_items(&self) -> Vec<PickItem> {
+        let mut items: Vec<PickItem> = COMMANDS
+            .iter()
+            .map(|(name, desc)| PickItem {
+                label: name.to_string(),
+                value: format!("cmd:{}", name.trim_start_matches('/')),
+                desc: desc.to_string(),
+                actions: Vec::new(),
+            })
+            .collect();
+        for (label, key, action) in PALETTE_ACTIONS {
+            items.push(PickItem {
+                label: label.to_string(),
+                value: format!("key:{action}"),
+                desc: key.to_string(),
+                actions: Vec::new(),
+            });
+        }
+        items
+    }
+
+    /// Run the key an action row names, as if it were pressed.
+    fn palette_action(&mut self, action: &str, tx: &Sender<Cmd>) {
+        match action {
+            "next-session" => {
+                let n = self.panes.len();
+                if n > 1 {
+                    self.show((self.at + 1) % n);
+                }
+            }
+            "keys" => self.open_keys(),
+            "stop" => self.handle_key_inner(Key::Esc, tx),
+            "expand" => self.handle_key_inner(Key::Ctrl('e'), tx),
+            "thinking" => self.handle_key_inner(Key::Ctrl('t'), tx),
+            "clear" => self.handle_key_inner(Key::Ctrl('l'), tx),
+            "page-up" => self.handle_key_inner(Key::PageUp, tx),
+            "page-down" => self.handle_key_inner(Key::PageDown, tx),
+            "release" => self.handle_key_inner(Key::Ctrl('g'), tx),
+            "quit" => self.handle_key_inner(Key::Ctrl('d'), tx),
+            _ => {}
+        }
+        self.dirty = true;
     }
 
     fn mode_items(&self) -> Vec<PickItem> {
@@ -5091,6 +5158,17 @@ impl App {
                             PickKind::Session => self.resume(choice.value, tx),
                             PickKind::Model => {
                                 self.set_model(&choice.value, tx);
+                            }
+                            PickKind::Palette => {
+                                let value = choice.value.clone();
+                                self.pending = None;
+                                if let Some(cmd) = value.strip_prefix("cmd:") {
+                                    self.run_command(cmd, tx);
+                                } else if let Some(action) = value.strip_prefix("key:") {
+                                    self.palette_action(action, tx);
+                                }
+                                self.dirty = true;
+                                return;
                             }
                             PickKind::Mode if choice.value == "add-rule" => {
                                 self.pending = Some(Pending::AllowRule { value: String::new() });
@@ -8500,6 +8578,58 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_p_opens_the_palette_with_commands_and_keys() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('p'), &tx);
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Palette);
+        assert_eq!(picker.title, "palette");
+        let values: Vec<&str> = picker.items.iter().map(|i| i.value.as_str()).collect();
+        assert!(values.contains(&"cmd:new"), "no command rows");
+        assert!(values.contains(&"key:expand"), "no key rows");
+        let expand = picker.items.iter().find(|i| i.value == "key:expand").unwrap();
+        assert_eq!(expand.desc, "Ctrl+E", "the shortcut is not shown");
+        assert!(strip(&a.frame(90, 20)).contains("palette"), "the picker title is not drawn");
+    }
+
+    #[test]
+    fn the_palette_runs_a_command() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('p'), &tx);
+        for c in "keys".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        if let Some(Pending::Pick(p)) = &mut a.pending {
+            p.index = 0;
+        }
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(open_picker(&a).kind, PickKind::Keys, "the command did not run");
+    }
+
+    #[test]
+    fn the_palette_replays_a_key() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.push(Role::User, "something to clear");
+        a.handle_key(Key::Ctrl('p'), &tx);
+        for c in "clear".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert!(
+            open_picker(&a).items.iter().any(|i| i.value == "key:clear"),
+            "the clear row"
+        );
+        if let Some(Pending::Pick(p)) = &mut a.pending {
+            p.index = 0;
+        }
+        a.handle_key(Key::Enter, &tx);
+        assert!(a.entries.is_empty(), "the key did not replay");
+        assert!(a.pending.is_none());
+    }
+
+    #[test]
     fn ctrl_n_and_p_switch_sessions_and_keep_drafts() {
         let mut a = multi_app("switch");
         let (tx, _rx) = channel();
@@ -8516,7 +8646,9 @@ mod tests {
         assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
         assert!(a.status_line(80).starts_with("1/2 fix the parser · "), "{}", a.status_line(80));
         a.handle_key(Key::Ctrl('p'), &tx);
-        assert_eq!((a.at, a.input.as_str()), (1, "draft two"));
+        let picker = open_picker(&a);
+        assert_eq!(picker.kind, PickKind::Palette, "Ctrl+P left the palette");
+        assert_eq!((a.at, a.input.as_str()), (0, "draft one"), "Ctrl+P switched session");
     }
 
     /// Three live sessions: 0 waits for approval, 1 has replied, 2 is in view.
