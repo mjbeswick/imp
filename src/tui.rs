@@ -526,6 +526,41 @@ enum Target {
 const COPY: char = '⧉';
 
 /// Text without colour codes or control bytes, so columns match the screen.
+/// Rows as terminal bytes inside one synchronised update. With `before`,
+/// rows equal to it are skipped and the rest are placed by cursor moves;
+/// without it every row is written from the top.
+///
+/// A row is written first and then erased to its end, so it is never blank
+/// on screen. A row that fills the width is not erased: with wrap off, the
+/// cursor rests on its last cell and the erase would take that cell.
+fn paint_rows(screen: &[String], before: Option<&[String]>, cols: usize, tail: &str) -> String {
+    let mut out = String::from("\x1b[?2026h\x1b[?25l\x1b[?7l");
+    let last = screen.len().saturating_sub(1);
+    if before.is_none() {
+        out.push_str("\x1b[H");
+    }
+    for (i, row) in screen.iter().enumerate() {
+        match before {
+            Some(b) if b.get(i) == Some(row) => continue,
+            Some(_) => out.push_str(&format!("\x1b[{};1H", i + 1)),
+            // A full frame clears from the status row down, leftovers of a resize included.
+            None if i == last => out.push_str("\x1b[J"),
+            None => {}
+        }
+        out.push_str(row);
+        if unpaint(row).chars().count() < cols {
+            out.push_str("\x1b[K");
+        }
+        if before.is_none() && i < last {
+            out.push_str("\r\n");
+        }
+    }
+    out.push_str("\x1b[?7h");
+    out.push_str(tail);
+    out.push_str("\x1b[?2026l");
+    out
+}
+
 fn unpaint(s: &str) -> String {
     let mut out = String::new();
     let mut it = s.chars();
@@ -1181,6 +1216,11 @@ pub struct App {
     agents: Vec<(String, String)>,
     sessions_dir: std::path::PathBuf,
     last_redraw: Instant,
+    /// The rows last written, the size they were written at, and whether an
+    /// overlay was drawn over them.
+    shown: Vec<String>,
+    shown_size: (usize, usize),
+    shown_overlay: bool,
     last_size: (usize, usize),
     dirty: bool,
     quit: bool,
@@ -1754,6 +1794,9 @@ impl App {
             agents,
             sessions_dir,
             last_redraw: Instant::now() - Duration::from_secs(1),
+            shown: Vec::new(),
+            shown_size: (0, 0),
+            shown_overlay: false,
             last_size: (0, 0),
             dirty: true,
             quit: false,
@@ -4054,7 +4097,7 @@ impl App {
         if rows < 5 || cols < 20 {
             return;
         }
-        let screen = self.frame(cols, rows);
+        let screen = self.frame_changes(cols, rows);
         let mut out = std::io::stdout();
         out.write_all(screen.as_bytes()).ok();
         if let Some(seq) = self.osc52.take() {
@@ -4066,8 +4109,8 @@ impl App {
         self.last_redraw = Instant::now();
     }
 
-    /// One frame as bytes. No terminal access, so it can be tested.
-    pub fn frame(&mut self, cols: usize, rows: usize) -> String {
+    /// The frame's rows, top to bottom, and what draws over them.
+    fn layout(&mut self, cols: usize, rows: usize) -> (Vec<String>, String) {
         let composer = self.composer(cols, rows.saturating_sub(1).max(1));
         // A rule sets the composer apart, unless the screen is too short.
         let rule = usize::from(rows >= 8);
@@ -4152,35 +4195,34 @@ impl App {
         self.targets.clear();
         let lead = body_rows.saturating_sub(visible.len());
 
-        let mut screen = String::from("\x1b[?25l\x1b[?7l\x1b[H");
+        let mut screen: Vec<String> = Vec::with_capacity(rows);
         for _ in 0..body_rows.saturating_sub(visible.len()) {
-            screen.push_str("\x1b[2K\r\n");
+            screen.push(String::new());
         }
         for (n, (role, line)) in visible.into_iter().enumerate() {
-            screen.push_str("\x1b[2K");
+            let mut row = String::new();
             match line {
-                Line::Text(text) => screen.push_str(&self.marked(*role, &fit(text, cols))),
+                Line::Text(text) => row.push_str(&self.marked(*role, &fit(text, cols))),
                 Line::Spans(spans) => {
-                    screen.push_str(&self.paint_spans(*role, spans));
+                    row.push_str(&self.paint_spans(*role, spans));
                     if let Some(target) = labels[n].clone() {
                         let used: usize = spans.iter().map(|s| s.text.chars().count()).sum();
-                        screen.push_str(&" ".repeat(cols.saturating_sub(used + 1)));
-                        screen.push_str(&self.palette.paint(Role::Thinking, &COPY.to_string()));
+                        row.push_str(&" ".repeat(cols.saturating_sub(used + 1)));
+                        row.push_str(&self.palette.paint(Role::Thinking, &COPY.to_string()));
                         self.targets.push((lead + n + 1, cols.saturating_sub(1), cols, target));
                     }
                 }
                 Line::Timed(text, time) => {
-                    screen.push_str(&self.marked(*role, text));
+                    row.push_str(&self.marked(*role, text));
                     let gap = cols.saturating_sub(text.chars().count() + time.chars().count());
-                    screen.push_str(&" ".repeat(gap));
-                    screen.push_str(&self.palette.paint(Role::Thinking, time));
+                    row.push_str(&" ".repeat(gap));
+                    row.push_str(&self.palette.paint(Role::Thinking, time));
                 }
             }
-            screen.push_str("\r\n");
+            screen.push(row);
         }
 
         if rule == 1 {
-            screen.push_str("\x1b[2K");
             // The rule takes the accent while a question waits below it.
             let asking = self.pending.is_some() && !matches!(self.pending, Some(Pending::Pick(_)));
             let tone = if asking {
@@ -4190,35 +4232,55 @@ impl App {
             } else {
                 Role::Border
             };
-            screen.push_str(&self.palette.paint(tone, &"─".repeat(cols)));
-            screen.push_str("\r\n");
+            screen.push(self.palette.paint(tone, &"─".repeat(cols)));
         }
         let first = body_rows + rule + 1;
         for (i, row) in composer.iter().enumerate() {
-            screen.push_str("\x1b[2K");
-            screen.push_str(row);
-            screen.push_str("\r\n");
+            screen.push(row.clone());
             if matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. })) {
                 self.targets.extend(chip_targets(first + i, &unpaint(row)));
             }
         }
+        screen.push(self.palette.paint(Role::Thinking, &self.status_line(cols)));
 
-        screen.push_str("\x1b[2K\x1b[J");
-        screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
-        screen.push_str("\x1b[?7h");
-
+        let mut tail = String::new();
         if let Some((overlay, cursor_x, cursor_y, targets)) = self.overlay(cols, rows) {
             self.targets.extend(targets);
-            screen.push_str("\x1b[?7l");
-            screen.push_str(&overlay);
+            tail.push_str("\x1b[?7l");
+            tail.push_str(&overlay);
             if matches!(self.pending, Some(Pending::Pick(_))) {
                 // Only an open filter takes the cursor.
-                screen.push_str(&format!("\x1b[{cursor_y};{cursor_x}H\x1b[?25h"));
+                tail.push_str(&format!("\x1b[{cursor_y};{cursor_x}H\x1b[?25h"));
             }
-            screen.push_str("\x1b[?7h");
+            tail.push_str("\x1b[?7h");
         }
+        (screen, tail)
+    }
 
-        screen
+    /// One frame as bytes, every row written. No terminal access, so it can
+    /// be tested.
+    #[cfg(test)]
+    pub fn frame(&mut self, cols: usize, rows: usize) -> String {
+        let (screen, tail) = self.layout(cols, rows);
+        self.shown.clear();
+        let out = paint_rows(&screen, None, cols, &tail);
+        self.shown = screen;
+        self.shown_size = (cols, rows);
+        self.shown_overlay = !tail.is_empty();
+        out
+    }
+
+    /// One frame as bytes, writing only rows that differ from the last one.
+    /// ponytail: an overlay or a resize repaints every row, since the overlay
+    /// draws over rows with cursor moves; compose it into the rows if pickers flicker.
+    fn frame_changes(&mut self, cols: usize, rows: usize) -> String {
+        let (screen, tail) = self.layout(cols, rows);
+        let full = self.shown_size != (cols, rows) || self.shown_overlay || !tail.is_empty();
+        let out = paint_rows(&screen, (!full).then_some(&self.shown[..]), cols, &tail);
+        self.shown = screen;
+        self.shown_size = (cols, rows);
+        self.shown_overlay = !tail.is_empty();
+        out
     }
 
     /// A tool row: the leading `✓` bold in the success colour, `✗` in the
@@ -6722,7 +6784,7 @@ mod tests {
     fn frame_clears_below_the_status_row_before_drawing_it() {
         let mut a = app();
         let out = a.frame(40, 10);
-        let row = &out[out.rfind("\x1b[2K").expect("status row")..];
+        let row = &out[out.rfind("\r\n").expect("status row")..];
         let erase = row.find("\x1b[J").expect("nothing clears below the status");
         let text = row.find('·').expect("no status text");
         assert!(
@@ -6731,11 +6793,41 @@ mod tests {
         );
     }
     #[test]
+    fn rows_are_written_then_erased_never_blanked_first() {
+        let mut a = app();
+        a.push(Role::Info, "hi");
+        let out = a.frame(40, 10);
+        assert!(!out.contains("\x1b[2K"), "a row is blanked before its text: {out:?}");
+        assert!(out.contains("hi\x1b[K") || out.contains("hi\x1b[0m\x1b[K"), "{out:?}");
+        // A full-width row is not erased: the erase would take its last cell.
+        assert!(!out.contains(&format!("{}\x1b[K", "─".repeat(40))), "{out:?}");
+        assert!(out.starts_with("\x1b[?2026h") && out.ends_with("\x1b[?2026l"), "{out:?}");
+    }
+
+    #[test]
+    fn a_countdown_tick_writes_one_row() {
+        let mut a = app();
+        let (tx, _rx) = channel();
+        a.push(Role::Assistant, "hello there");
+        a.pending = Some(Pending::Confirm { what: "run `ls`".into(), reply: tx, always: false });
+        a.pending_since = Some(Instant::now());
+        a.frame_changes(60, 12);
+        a.pending_since = Some(Instant::now() - Duration::from_secs(2));
+        let tick = a.frame_changes(60, 12);
+        assert_eq!(tick.matches(";1H").count(), 1, "{tick:?}");
+        assert!(!tick.contains("hello there"), "an unchanged row was written: {tick:?}");
+        let same = a.frame_changes(60, 12);
+        assert_eq!(same.matches(";1H").count(), 0, "{same:?}");
+        let resized = a.frame_changes(61, 12);
+        assert!(resized.contains("hello there") && resized.contains("\x1b[H"), "{resized:?}");
+    }
+
+    #[test]
     fn composer_draws_one_row_per_line() {
         let mut a = app();
         a.input = "line one\nline two".into();
         a.cursor = a.input.len();
-        let out = a.frame(60, 12);
+        let out = a.frame(60, 12).replace("\x1b[K", "");
         assert!(out.contains("> line one\r\n"), "{out:?}");
         assert!(out.contains("  line two"), "{out:?}");
         assert!(!out.contains('\u{0}'), "caret marker leaked into the frame");
@@ -6825,7 +6917,7 @@ mod tests {
             mode: AskMode::Choose,
             typed: String::new(),
         });
-        let out = a.frame(100, 12);
+        let out = a.frame(100, 12).replace("\x1b[K", "");
         assert!(out.contains("which database?\r\n"), "{out}");
         assert!(out.contains("▌ [2] postgres"), "{out}");
         assert!(out.contains("[1] sqlite"), "{out}");
@@ -8764,9 +8856,9 @@ mod tests {
         let (tx, _cmds) = channel();
         a.frame(60, 8);
         a.handle_key(Key::PageUp, &tx);
-        let before = a.frame(60, 8);
+        let before = a.frame(60, 8).replace("\x1b[K", "");
         a.push(Role::User, "brand new line");
-        let after = a.frame(60, 8);
+        let after = a.frame(60, 8).replace("\x1b[K", "");
         assert!(!after.contains("brand new line"), "view jumped to the tail");
         // Turns are spaced now, so probe whichever row the page showed.
         let probe = (0..40)
