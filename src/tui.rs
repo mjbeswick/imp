@@ -1277,6 +1277,9 @@ fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
             text.push_str("\n  ");
             text.push_str(&row.output.lines().take(20).collect::<Vec<_>>().join("\n  "));
         }
+    } else if row.finish == Finish::Declined {
+        // The model reads why; the user knows, so one word is enough.
+        text.push_str("\ndeclined");
     } else if row.finish == Finish::Exited {
         // Errors come last, so the tail says more than the head.
         let mut lines = row.output.lines();
@@ -4237,10 +4240,8 @@ impl App {
                         return;
                     }
                 };
-                // The tool row carries the result, so approval needs no row of its own.
-                if answer == Answer::No {
-                    self.push(Role::Info, format!("declined: {what}"));
-                }
+                // The tool row carries the result, a decline included, so
+                // the answer needs no row of its own.
                 let _ = reply.send(answer);
                 self.dirty = true;
             }
@@ -9062,6 +9063,24 @@ mod tests {
         a.handle_key(Key::Ctrl('e'), &tx);
         let out = strip(&a.frame(60, 10));
         assert!(out.contains("    $ python3 calc.py") && !out.contains("{\""), "{out:?}");
+    }
+
+    #[test]
+    fn a_decline_shows_once_on_its_row() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let (reply, answers) = channel();
+        a.apply(Ev::ToolStart { name: "bash".into(), summary: "Delete README.md".into(), args: "{}".into() });
+        a.apply(Ev::Confirm { what: "run `rm README.md`".into(), reply, always: false });
+        a.handle_key(Key::Char('n'), &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::No));
+        let out = "refused: the user declined to run this command";
+        a.apply(Ev::ToolEnd { ok: false, preview: out.into(), output: out.into(), detail: String::new(), ms: 1 });
+        let screen = strip(&a.frame(60, 10));
+        assert_eq!(screen.matches("declined").count(), 1, "{screen:?}");
+        assert!(screen.contains("✗ Delete README.md") && screen.contains("  declined"), "{screen:?}");
+        assert!(!screen.contains("refused:"), "{screen:?}");
+        assert_eq!(a.entries.len(), 1);
     }
 
     #[test]

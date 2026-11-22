@@ -14,5 +14,5 @@
 
 ## 3. Declines
 
-- [ ] 3.1 A decline shows once, as `declined` on its row; test
+- [x] 3.1 A decline shows once, as `declined` on its row; test
 - [ ] 3.2 No suggestion after a declined turn; test
