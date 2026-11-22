@@ -2,7 +2,7 @@
 
 ### Requirement: Queued messages are edited in place
 
-The system SHALL walk from an empty draft through queued messages, newest first, then history on ↑, and back on ↓, SHALL open one in the composer with the rule reading `editing n/m · Enter save · ^Q steer · ^X del` and saying `send` instead of `steer` when no turn runs, SHALL save it in place on Enter or on leaving it, SHALL remove it when saved empty, SHALL send it now on `Ctrl+Q`, SHALL delete it on `Ctrl+X` and leave the next entry open, SHALL report each deletion as `queue: deleted n`, and SHALL show `↑ edit queue` in the rule while messages wait and no turn runs.
+The system SHALL walk from an empty draft through queued messages, newest first, then history on ↑, and back on ↓, SHALL open one with the rule reading `editing n/m · Enter save · ^Q steer|send · ^X del`, SHALL save it in place on Enter or on leaving it, SHALL remove it when saved empty, SHALL send it on `Ctrl+Q`, SHALL delete it on `Ctrl+X` and leave the next entry open, SHALL report `queue: deleted n`, and SHALL show `↑ edit queue` while messages wait and no turn runs.
 
 #### Scenario: Edit the next message
 - **WHEN** two messages are queued and the user presses ↑ twice on an empty draft
@@ -98,7 +98,7 @@ The system SHALL draw the session directory at the right end of the status line,
 
 ### Requirement: Interface rows carry emphasis
 
-The system SHALL set thinking rows and the other muted asides, such as the task summary and the welcome hint, in italic, SHALL leave the activity spinner glyph upright while the rest of its row is italic, SHALL paint picker descriptions muted on rows that are not highlighted, SHALL paint the picker title bold, SHALL paint the status line's unseen and waiting counts in the accent colour, and SHALL show `/help` section titles bold with keys and commands in the accent colour, flush left and whole at every width.
+The system SHALL set thinking rows and other muted asides in italic, SHALL leave the activity spinner glyph upright while the rest of its row is italic, SHALL paint picker descriptions muted on rows that are not highlighted, SHALL paint the picker title bold, SHALL paint the status line's unseen and waiting counts in the accent colour, and SHALL show `/help` section titles bold and its keys and commands in the accent colour, flush left and whole.
 
 #### Scenario: Thinking
 - **WHEN** a thinking row is shown in a colour terminal
