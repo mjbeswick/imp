@@ -60,8 +60,9 @@ already says it.
 ## Declines
 
 The TUI stops pushing the `declined: …` info row. `TaskTotals` gains
-`declined`, set by the same check that sets the goal's flag, and the worker
-skips `suggest` when it is set.
+`declined`, set by the same check that sets the goal's flag.
+`Session::wants_suggestion` reads it with the `suggest` setting, and the
+worker asks it before calling `suggest`.
 
 ## Size
 

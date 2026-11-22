@@ -5584,7 +5584,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     let _ = ev_tx.send(Ev::Done(result.err()));
                     // After Done, so the chat never waits for it.
                     let cancelled = worker_session.cancel.load(Ordering::Relaxed);
-                    if ok && !cancelled && worker_session.cfg.suggest {
+                    if ok && !cancelled && worker_session.wants_suggestion() {
                         if let Some((text, (hit, miss, output))) = worker_session.suggest() {
                             let _ = ev_tx.send(Ev::Usage { tokens: None, hit, miss, output, model: None });
                             let _ = ev_tx.send(Ev::Suggest(text));

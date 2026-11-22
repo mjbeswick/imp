@@ -78,6 +78,8 @@ pub struct TaskTotals {
     pub hit: u64,
     pub miss: u64,
     pub out: u64,
+    /// The user declined a confirmation during the task.
+    pub declined: bool,
 }
 
 /// Lines of output `show` puts on screen.
@@ -682,6 +684,12 @@ impl Session {
 
     /// The user's likely next message, from the history as it stands, and the
     /// request's usage. `None` when the reply is not a usable suggestion.
+    /// Whether a suggestion should follow the turn just ended. A suggestion
+    /// after a decline asks why, or offers the declined step again.
+    pub fn wants_suggestion(&self) -> bool {
+        self.cfg.suggest && !self.task.declined
+    }
+
     pub fn suggest(&self) -> Option<(String, (u64, u64, u64))> {
         let mut messages = self.history.clone();
         messages.push(Message::system(
@@ -946,6 +954,7 @@ impl Session {
         // Every decline reads "refused: the user declined …".
         if out.starts_with("refused: the user declined") {
             self.declined = true;
+            self.task.declined = true;
         }
         out
     }
@@ -2438,7 +2447,9 @@ mod tests {
             Script::Ok(text_reply("Shall I run the tests?")),
             Script::Ok(text_reply("yes, run them")),
         ]);
+        s.cfg.suggest = true;
         s.turn("fix it", &mut Null).unwrap();
+        assert!(s.wants_suggestion(), "a plain turn should be followed by a suggestion");
         let before = s.history.len();
         let (text, _) = s.suggest().unwrap();
         assert_eq!(text, "yes, run them");
@@ -2796,8 +2807,10 @@ mod tests {
         s.memory = crate::store::Memory {
             dirs: vec![memory_dir.clone()],
         };
+        s.cfg.suggest = true;
         s.turn("save it", &mut Null).unwrap();
         assert!(!memory_dir.exists() || std::fs::read_dir(&memory_dir).unwrap().count() == 0);
+        assert!(!s.wants_suggestion(), "a suggestion would follow a decline");
     }
 
     #[test]
