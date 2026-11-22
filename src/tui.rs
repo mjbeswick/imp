@@ -1438,7 +1438,6 @@ pub struct App {
     /// The provider's models, catalog first and then whatever it reported.
     available_models: Vec<String>,
     /// Messages parked for this session, never persisted.
-    stash: Vec<String>,
     bell_pending: bool,
     status: Status,
     verbosity: Verbosity,
@@ -1529,7 +1528,6 @@ struct Pane {
     max_top: usize,
     unseen: usize,
     pending: Option<Pending>,
-    stash: Vec<String>,
     bell_pending: bool,
     status: Status,
     tool: Option<ToolRow>,
@@ -1564,7 +1562,6 @@ impl Pane {
             max_top: 0,
             unseen: 0,
             pending: None,
-            stash: Vec::new(),
             bell_pending: false,
             status: Status::default(),
             tool: None,
@@ -1819,7 +1816,7 @@ fn first_run_outcome(result: Result<(), String>) -> KeyOutcome {
 }
 
 /// Commands whose argument is typed rather than picked.
-const FREE_TEXT: &[&str] = &["stash", "rename"];
+const FREE_TEXT: &[&str] = &["queue", "rename"];
 
 /// Rows the picker shows at once. Paging moves by the same amount.
 const PICK_ROWS: usize = 8;
@@ -2119,7 +2116,6 @@ impl App {
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
             available_models: crate::providers::catalog(provider),
-            stash: Vec::new(),
             bell_pending: false,
             status: Status {
                 tokens: 0,
@@ -2187,7 +2183,6 @@ impl App {
         swap(&mut self.max_top, &mut p.max_top);
         swap(&mut self.unseen, &mut p.unseen);
         swap(&mut self.pending, &mut p.pending);
-        swap(&mut self.stash, &mut p.stash);
         swap(&mut self.bell_pending, &mut p.bell_pending);
         swap(&mut self.status, &mut p.status);
         swap(&mut self.tool, &mut p.tool);
@@ -3512,13 +3507,13 @@ impl App {
     }
 
     /// Add, list, pop, or delete parked messages.
-    fn stash_command(&mut self, rest: &str) {
+    fn queue_command(&mut self, rest: &str) {
         if rest.is_empty() {
-            if self.stash.is_empty() {
-                self.push(Role::Info, "stash is empty");
+            if self.queued.is_empty() {
+                self.push(Role::Info, "queue is empty");
             } else {
                 let lines: Vec<String> = self
-                    .stash
+                    .queued
                     .iter()
                     .enumerate()
                     .map(|(i, text)| format!("{}. {text}", i + 1))
@@ -3527,14 +3522,21 @@ impl App {
             }
             return;
         }
+        if rest == "clear" {
+            self.queued.clear();
+            self.queue_at = None;
+            self.hold.store(false, Ordering::SeqCst);
+            self.push(Role::Info, "queue: cleared");
+            return;
+        }
         if rest == "pop all" {
-            if self.stash.is_empty() {
-                self.push(Role::Info, "stash is empty");
+            if self.queued.is_empty() {
+                self.push(Role::Info, "queue is empty");
                 return;
             }
-            let all = std::mem::take(&mut self.stash).join("\n\n");
-            self.load_stash(&all);
-            self.push(Role::Info, "stash: loaded all");
+            let all = std::mem::take(&mut self.queued).join("\n\n");
+            self.load_queued(&all);
+            self.push(Role::Info, "queue: loaded all");
             return;
         }
         if let Some(n) = rest.strip_prefix("pop").map(str::trim) {
@@ -3544,50 +3546,50 @@ impl App {
                 match n.parse::<usize>() {
                     Ok(n) if n >= 1 => n,
                     _ => {
-                        self.push(Role::Error, format!("stash: no entry {n:?}"));
+                        self.push(Role::Error, format!("queue: no entry {n:?}"));
                         return;
                     }
                 }
             };
-            if index > self.stash.len() {
-                self.push(Role::Error, self.stash_range());
+            if index > self.queued.len() {
+                self.push(Role::Error, self.queue_range());
                 return;
             }
-            let text = self.stash.remove(index - 1);
-            self.load_stash(&text);
-            self.push(Role::Info, format!("stash: popped {index}"));
+            let text = self.queued.remove(index - 1);
+            self.load_queued(&text);
+            self.push(Role::Info, format!("queue: popped {index}"));
             return;
         }
         if let Some(n) = rest.strip_prefix("delete").map(str::trim) {
             let index = match n.parse::<usize>() {
                 Ok(n) if n >= 1 => n,
                 _ => {
-                    self.push(Role::Error, format!("stash: no entry {n:?}"));
+                    self.push(Role::Error, format!("queue: no entry {n:?}"));
                     return;
                 }
             };
-            if index > self.stash.len() {
-                self.push(Role::Error, self.stash_range());
+            if index > self.queued.len() {
+                self.push(Role::Error, self.queue_range());
                 return;
             }
-            self.stash.remove(index - 1);
-            self.push(Role::Info, format!("stash: deleted {index}"));
+            self.queued.remove(index - 1);
+            self.push(Role::Info, format!("queue: deleted {index}"));
             return;
         }
-        self.stash.push(rest.to_string());
-        self.push(Role::Info, format!("stash: added ({})", self.stash.len()));
+        self.queued.push(rest.to_string());
+        self.push(Role::Info, format!("queue: added ({})", self.queued.len()));
     }
 
-    fn stash_range(&self) -> String {
-        if self.stash.is_empty() {
-            "stash is empty".into()
+    fn queue_range(&self) -> String {
+        if self.queued.is_empty() {
+            "queue is empty".into()
         } else {
-            format!("stash: pick 1 to {}", self.stash.len())
+            format!("queue: pick 1 to {}", self.queued.len())
         }
     }
 
-    /// Put stashed text in the composer, after any draft already there.
-    fn load_stash(&mut self, text: &str) {
+    /// Put queued text in the composer, after any draft already there.
+    fn load_queued(&mut self, text: &str) {
         if self.input.trim().is_empty() {
             self.input = text.to_string();
         } else {
@@ -4106,9 +4108,9 @@ impl App {
                     self.push(Role::Info, format!("renamed to {rest:?}"));
                 }
             }
-            other if other == "stash" || other.starts_with("stash ") => {
-                let rest = other.strip_prefix("stash").unwrap_or("").trim();
-                self.stash_command(rest);
+            other if other == "queue" || other.starts_with("queue ") => {
+                let rest = other.strip_prefix("queue").unwrap_or("").trim();
+                self.queue_command(rest);
             }
             other if other == "provider" || other.starts_with("provider ") => {
                 let rest = other.strip_prefix("provider").unwrap_or("").trim();
@@ -8715,32 +8717,35 @@ mod tests {
     }
 
     #[test]
-    fn stash_adds_lists_pops_deletes_and_pops_all() {
+    fn queue_adds_lists_pops_deletes_clears_and_pops_all() {
         let mut a = app();
         let (tx, _rx) = channel();
-        a.run_command("stash check the tests", &tx);
-        a.run_command("stash write the docs", &tx);
-        a.run_command("stash", &tx);
+        a.run_command("queue check the tests", &tx);
+        a.run_command("queue write the docs", &tx);
+        a.run_command("queue", &tx);
         let listed = &a.entries.last().unwrap().text;
         assert!(listed.contains("1. check the tests"), "{listed}");
         assert!(listed.contains("2. write the docs"), "{listed}");
 
-        a.run_command("stash pop 1", &tx);
+        a.run_command("queue pop 1", &tx);
         assert_eq!(a.input, "check the tests");
-        assert_eq!(a.stash.len(), 1);
+        assert_eq!(a.queued.len(), 1);
 
-        a.run_command("stash delete 1", &tx);
-        assert!(a.stash.is_empty());
+        a.run_command("queue delete 1", &tx);
+        assert!(a.queued.is_empty());
         assert_eq!(a.input, "check the tests", "delete touched the composer");
 
-        a.run_command("stash first", &tx);
-        a.run_command("stash second", &tx);
-        a.run_command("stash pop all", &tx);
+        a.run_command("queue first", &tx);
+        a.run_command("queue second", &tx);
+        a.run_command("queue pop all", &tx);
         assert_eq!(a.input, "check the tests\n\nfirst\n\nsecond");
-        assert!(a.stash.is_empty());
+        assert!(a.queued.is_empty());
 
-        a.run_command("stash pop 9", &tx);
+        a.run_command("queue pop 9", &tx);
         assert_eq!(a.entries.last().unwrap().role, Role::Error);
+        a.run_command("queue one", &tx);
+        a.run_command("queue clear", &tx);
+        assert!(a.queued.is_empty());
     }
 
     #[test]

@@ -601,11 +601,11 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         println!("model: {name}");
                     }
                 }
-                other if other == "stash" || other.starts_with("stash ") => {
-                    let rest = other.strip_prefix("stash").unwrap_or("").trim();
+                other if other == "queue" || other.starts_with("queue ") => {
+                    let rest = other.strip_prefix("queue").unwrap_or("").trim();
                     if rest.is_empty() {
                         if stash.is_empty() {
-                            println!("stash is empty");
+                            println!("queue is empty");
                         } else {
                             for (i, text) in stash.iter().enumerate() {
                                 println!("{}. {text}", i + 1);
@@ -619,19 +619,19 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                         if index >= 1 && index <= stash.len() {
                             println!("{}", stash.remove(index - 1));
                         } else {
-                            println!("stash: no entry {index}");
+                            println!("queue: no entry {index}");
                         }
                     } else if let Some(n) = rest.strip_prefix("delete").map(str::trim) {
                         let index = n.parse::<usize>().unwrap_or(0);
                         if index >= 1 && index <= stash.len() {
                             stash.remove(index - 1);
-                            println!("stash: deleted {index}");
+                            println!("queue: deleted {index}");
                         } else {
-                            println!("stash: no entry {index}");
+                            println!("queue: no entry {index}");
                         }
                     } else {
                         stash.push(rest.to_string());
-                        println!("stash: added ({})", stash.len());
+                        println!("queue: added ({})", stash.len());
                     }
                 }
                 "provider" => {

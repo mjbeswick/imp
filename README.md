@@ -99,7 +99,7 @@ one 16 MB output buffer budget.
 /cd        browse or change cwd  /image     browse or attach an image
 /fork      copy the session      /theme     set the colour theme
 /shell     open a shell          /model     set or pick the session model
-/provider  manage providers      /stash     park a message for this session
+/provider  manage providers      /queue     messages waiting to send
 /rename    rename this session   /quit      leave
 /next      next session waiting on you
 ```
@@ -113,7 +113,7 @@ cancel with Esc. A space hands the line back to the composer, so
 `/provider add work` types straight through.
 
 Tab in the command list completes the highlighted command: a value command
-opens its picker, `/stash` and `/rename` get a space for their text, and any
+opens its picker, `/queue` and `/rename` get a space for their text, and any
 other command waits for Enter.
 
 Command rows show the command on the left and its description on the right.
@@ -139,9 +139,13 @@ Bare `/provider` picks from built-in and custom profiles. `add <name>`, `edit <n
 `# >>> providers` block in the config file; comments and other keys survive,
 and the active profile cannot be deleted.
 
-`/stash <text>` parks a message, bare `/stash` lists them, `pop [n]` loads one
-into the composer, `delete n` removes one, and `pop all` loads every entry.
-Stashes belong to the session and never reach the model until you send them.
+While a turn runs, Enter steers it or queues the message; Ctrl+Q switches
+between the two, and the rule above the composer says which. Queued messages
+wait above the composer and go out as turns end. ↑ on an empty draft opens
+them for editing, which holds the turn; saving one empty removes it.
+`/queue <text>` adds one, bare `/queue` lists them, `pop [n]` loads one into
+the composer, `delete n` removes one, `clear` empties the queue, and
+`pop all` loads every entry. The queue belongs to the session.
 `/rename <title>` retitles the current session.
 
 A line starting with `!` runs as a shell command, unchecked by the model, with
