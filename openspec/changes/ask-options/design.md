@@ -29,7 +29,7 @@ joined by `, `, in option order. A typed answer returns the text.
 
 ## Size
 
-Expected: about 1.5 KB.
+Expected: about 1.5 KB. Measured: `__text` +2716, `__cstring` +46.
 
 ## Fixes found on the way
 
