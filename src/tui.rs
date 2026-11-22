@@ -1443,6 +1443,8 @@ pub struct App {
     verbosity: Verbosity,
     root: std::path::PathBuf,
     agent: String,
+    /// The agent Tab chose during a turn, applied when it ends.
+    agent_next: Option<String>,
     /// Agent profiles as name and description.
     agents: Vec<(String, String)>,
     sessions_dir: std::path::PathBuf,
@@ -1534,6 +1536,8 @@ struct Pane {
     done: Vec<ToolRow>,
     root: std::path::PathBuf,
     agent: String,
+    /// The agent Tab chose during a turn, applied when it ends.
+    agent_next: Option<String>,
     worker: Option<Worker>,
     touched: Instant,
     replied: bool,
@@ -1568,6 +1572,7 @@ impl Pane {
             done: Vec::new(),
             root: session.tools.root.clone(),
             agent: session.agent.name.clone(),
+            agent_next: None,
             worker,
             touched: Instant::now(),
             replied: false,
@@ -2129,6 +2134,7 @@ impl App {
             verbosity,
             root,
             agent,
+            agent_next: None,
             agents,
             sessions_dir,
             last_redraw: Instant::now() - Duration::from_secs(1),
@@ -2189,6 +2195,7 @@ impl App {
         swap(&mut self.done, &mut p.done);
         swap(&mut self.root, &mut p.root);
         swap(&mut self.agent, &mut p.agent);
+        swap(&mut self.agent_next, &mut p.agent_next);
         swap(&mut self.worker, &mut p.worker);
         swap(&mut self.touched, &mut p.touched);
         swap(&mut self.replied, &mut p.replied);
@@ -2643,6 +2650,9 @@ impl App {
                 self.dirty = true;
             }
             Ev::Done(err) => {
+                if let Some(next) = self.agent_next.take() {
+                    self.agent = next;
+                }
                 self.status.streaming = false;
                 self.status.quiet_since = None;
                 if let Some(start) = self.status.task_start.take() {
@@ -2864,7 +2874,7 @@ impl App {
             return;
         }
         if let Some(s) = self.status.suggestion.take() {
-            if matches!(key, Key::Tab | Key::Right) && self.input.is_empty() && self.pending.is_none() {
+            if matches!(key, Key::Right) && self.input.is_empty() && self.pending.is_none() {
                 self.cursor = s.len();
                 self.input = s;
                 self.dirty = true;
@@ -3034,6 +3044,7 @@ impl App {
                     self.dirty = true;
                 }
             }
+            Key::Tab if self.input.is_empty() => self.cycle_agent(tx),
             Key::Tab => self.sync_menu(),
             Key::BackTab => {
                 // Shift+Tab steps through the modes; it applies at once.
@@ -3449,6 +3460,26 @@ impl App {
             return;
         }
         self.start_turn(text, tx);
+    }
+
+    /// Tab: the next agent profile. The worker applies it when free, so a
+    /// running turn finishes with the agent it started with.
+    fn cycle_agent(&mut self, tx: &Sender<Cmd>) {
+        if self.agents.len() < 2 {
+            return;
+        }
+        let current = self.agent_next.as_deref().unwrap_or(&self.agent);
+        let at = self.agents.iter().position(|(n, _)| n == current).unwrap_or(0);
+        let next = self.agents[(at + 1) % self.agents.len()].0.clone();
+        let _ = tx.send(Cmd::SetAgent(next.clone()));
+        if self.status.streaming {
+            self.push(Role::Info, format!("agent: {next} after this turn"));
+            self.agent_next = Some(next);
+        } else {
+            self.push(Role::Info, format!("agent: {next}"));
+            self.agent = next;
+        }
+        self.dirty = true;
     }
 
     /// Open queued message `i` in the composer and hold the running turn.
@@ -6860,6 +6891,38 @@ mod tests {
     }
 
     #[test]
+    fn tab_cycles_agents_on_an_empty_draft() {
+        let (tx, cmds) = channel();
+        let mut a = app();
+        a.agents = vec![("build".into(), String::new()), ("review".into(), String::new())];
+        a.agent = "build".into();
+        a.handle_key(Key::Tab, &tx);
+        assert_eq!(a.agent, "review");
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::SetAgent(n)) if n == "review"));
+        // Text in the draft: nothing changes.
+        a.input = "fix".into();
+        a.cursor = 3;
+        a.handle_key(Key::Tab, &tx);
+        assert_eq!(a.agent, "review");
+        assert!(cmds.try_recv().is_err());
+        // Mid-turn: the choice waits for the turn's end.
+        a.input.clear();
+        a.cursor = 0;
+        a.status.streaming = true;
+        a.handle_key(Key::Tab, &tx);
+        assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("review", Some("build")));
+        assert!(a.entries.last().unwrap().text.ends_with("after this turn"));
+        a.apply(Ev::Done(None));
+        assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("build", None));
+        // One agent: Tab does nothing.
+        let mut b = app();
+        b.agents = vec![("build".into(), String::new())];
+        b.agent = "build".into();
+        b.handle_key(Key::Tab, &tx);
+        assert!(b.entries.is_empty());
+    }
+
+    #[test]
     fn delete_removes_forward() {
         let (tx, _cmds) = channel();
         let mut a = app();
@@ -8416,14 +8479,14 @@ mod tests {
     }
 
     #[test]
-    fn a_suggestion_is_taken_with_tab_and_dropped_by_typing() {
+    fn a_suggestion_is_taken_with_right_and_dropped_by_typing() {
         let mut a = app();
         let (tx, _rx) = channel();
         a.apply(Ev::Suggest("run the tests".into()));
         let shown = strip(&a.frame(60, 10));
         assert!(shown.contains(">  run the tests"), "not drawn");
         assert!(!shown.contains("run the tests  Tab"), "the key hint is back: {shown:?}");
-        a.handle_key(Key::Tab, &tx);
+        a.handle_key(Key::Right, &tx);
         assert_eq!(a.input, "run the tests");
         assert_eq!(a.cursor, a.input.len());
 
