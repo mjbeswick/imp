@@ -108,7 +108,9 @@ one 16 MB output buffer budget.
 
 Tab on an empty draft switches agent and Shift+Tab steps the mode through
 normal, strict, and yolo. Ctrl+C clears a draft or stops a turn; idle, a
-second Ctrl+C within two seconds quits.
+second Ctrl+C within two seconds quits. In the draft, Option or Alt with ←/→ moves by
+word, Option+Backspace or Ctrl+W deletes one, Shift with the arrows selects,
+and Ctrl+A, Ctrl+U, and Ctrl+K act on the row.
 
 `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` are
 value commands. Bare, each opens a centred picker on the current entry, marked

@@ -3132,6 +3132,24 @@ impl App {
                 self.cursor = word_edge(&self.input, self.cursor, m == Move::Right);
                 self.dirty = true;
             }
+            Key::Ctrl('a') | Key::Ctrl('u') | Key::Ctrl('k') => {
+                // The caret's row of the draft, not the whole draft.
+                let start = self.input[..self.cursor].rfind('\n').map_or(0, |i| i + 1);
+                let end = self.input[self.cursor..].find('\n').map_or(self.input.len(), |i| self.cursor + i);
+                match key {
+                    Key::Ctrl('a') => self.cursor = start,
+                    Key::Ctrl('u') => {
+                        self.input.replace_range(start..self.cursor, "");
+                        self.cursor = start;
+                        self.sync_menu();
+                    }
+                    _ => {
+                        self.input.replace_range(self.cursor..end, "");
+                        self.sync_menu();
+                    }
+                }
+                self.dirty = true;
+            }
             Key::DeleteWord(_) | Key::Ctrl('w') => {
                 let forward = matches!(key, Key::DeleteWord(true));
                 let edge = word_edge(&self.input, self.cursor, forward);
@@ -7438,6 +7456,21 @@ mod tests {
         let mut a = draft("café crème", "café crème".len());
         a.handle_key(Key::DeleteWord(false), &tx);
         assert_eq!(a.input, "café ");
+    }
+
+    #[test]
+    fn line_keys_act_on_the_caret_row() {
+        let (tx, _cmds) = channel();
+        let mut a = app();
+        a.input = "first\nsecond".into();
+        a.cursor = "first\nsec".len();
+        a.handle_key(Key::Ctrl('k'), &tx);
+        assert_eq!(a.input, "first\nsec");
+        a.handle_key(Key::Ctrl('a'), &tx);
+        assert_eq!(a.cursor, "first\n".len());
+        a.cursor = a.input.len();
+        a.handle_key(Key::Ctrl('u'), &tx);
+        assert_eq!((a.input.as_str(), a.cursor), ("first\n", 6));
     }
 
     #[test]
