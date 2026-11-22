@@ -3676,7 +3676,7 @@ impl App {
             self.push(Role::Context, format!("… {cut} more lines"));
         }
         if !git {
-            self.push(Role::Thinking, "changes made by shell commands are not tracked; /diff git shows everything");
+            self.push(Role::Context, "changes made by shell commands are not tracked; /diff git shows everything");
         }
         self.follow_tail();
     }
