@@ -4584,6 +4584,8 @@ impl App {
                 Role::Link
             } else if span.style.dim {
                 Role::Thinking
+            } else if matches!(span.style.heading, 1 | 2) || span.style.marker {
+                Role::Info
             } else {
                 role
             };
@@ -4593,6 +4595,9 @@ impl App {
             }
             if span.style.italic {
                 codes.push("3");
+            }
+            if span.style.heading == 1 || span.link.is_some() {
+                codes.push("4");
             }
             let painted = if span.style.code {
                 self.palette.code(&span.text)
@@ -6998,6 +7003,23 @@ mod tests {
         a.palette = a.palette.with_theme(crate::theme::by_name("mono").unwrap());
         a.push(Role::Assistant, "and `sh`");
         assert!(a.frame(60, 12).contains("\x1b[7msh\x1b[0m"));
+    }
+
+    #[test]
+    fn markdown_structure_is_styled() {
+        let mut a = colour_app();
+        a.cfg.links = crate::config::Links::Always;
+        a.push(Role::Assistant, "# Big one\n## Mid\n### Low\n- item\n> said\n[docs](https://example.com)");
+        let out = a.frame(60, 20);
+        let accent = |t: &str| a.palette.paint(Role::Info, t);
+        assert!(out.contains(&format!("\x1b[1;4m{}", accent("Big"))), "h1: {out:?}");
+        // The space inside the heading keeps its underline.
+        assert!(out.contains(&format!("\x1b[1;4m{}", accent(" "))), "gap: {out:?}");
+        assert!(out.contains(&format!("\x1b[1m{}", accent("Mid"))), "h2: {out:?}");
+        assert!(out.contains(&format!("\x1b[1m{}", a.palette.paint(Role::Assistant, "Low"))), "h3: {out:?}");
+        assert!(out.contains(&accent("• ")), "marker: {out:?}");
+        assert!(out.contains(&format!("\x1b[3m{}", a.palette.paint(Role::Thinking, "said"))), "quote: {out:?}");
+        assert!(out.contains(&format!("\x1b[4m{}", a.palette.paint(Role::Link, "docs"))), "link: {out:?}");
     }
 
     #[test]

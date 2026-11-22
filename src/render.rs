@@ -199,6 +199,10 @@ pub struct Style {
     pub border: bool,
     /// Text that carries its own colour codes, already laid out.
     pub raw: bool,
+    /// A heading's level, 1 to 3; 0 for body text.
+    pub heading: u8,
+    /// A list item's bullet or number.
+    pub marker: bool,
 }
 
 /// A run of text with one style and at most one link.
@@ -285,9 +289,11 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
         let (prefix, rest, style) = block(line);
         let indent = prefix.chars().count();
         let body = inline(rest, style, links);
+        // Only list markers lead a plain row.
+        let lead_style = if style == Style::default() { Style { marker: true, ..style } } else { style };
         if body.iter().all(|s| s.text.trim().is_empty()) {
             if indent > 0 {
-                rows.push(vec![Span::styled(prefix, style)]);
+                rows.push(vec![Span::styled(prefix, lead_style)]);
             } else if line.trim().is_empty() {
                 rows.push(Vec::new());
             }
@@ -297,7 +303,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
         for (i, mut row) in wrap(&body, room).into_iter().enumerate() {
             if indent > 0 {
                 let lead = if i == 0 {
-                    Span::styled(prefix.clone(), style)
+                    Span::styled(prefix.clone(), lead_style)
                 } else {
                     Span::plain(" ".repeat(indent))
                 };
@@ -519,20 +525,17 @@ fn block(line: &str) -> (String, &str, Style) {
     if line.trim() == "---" || line.trim() == "***" {
         return ("─".repeat(8), "", dim);
     }
-    if let Some(rest) = line.strip_prefix("# ") {
-        return (String::new(), rest, Style { bold: true, ..Style::default() });
+    for (heading, mark) in [(1, "# "), (2, "## "), (3, "### ")] {
+        if let Some(rest) = line.strip_prefix(mark) {
+            return (String::new(), rest, Style { bold: true, heading, ..Style::default() });
+        }
     }
-    if let Some(rest) = line.strip_prefix("## ") {
-        return (String::new(), rest, Style { bold: true, ..Style::default() });
-    }
-    if let Some(rest) = line.strip_prefix("### ") {
-        return (String::new(), rest, Style { bold: true, ..Style::default() });
-    }
+    let quote = Style { italic: true, ..dim };
     if let Some(rest) = line.strip_prefix("> ") {
-        return ("│ ".into(), rest, dim);
+        return ("│ ".into(), rest, quote);
     }
     if line == ">" {
-        return ("│".into(), "", dim);
+        return ("│".into(), "", quote);
     }
     if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
         return ("• ".into(), rest, Style::default());
@@ -735,7 +738,13 @@ pub fn wrap(spans: &[Span], width: usize) -> Vec<Vec<Span>> {
                 continue;
             }
             if used > 0 && !joined {
-                row.push(Span::plain(" "));
+                // A space inside one run keeps its style, so an underline is unbroken.
+                let inside = k > 0 && row.last().is_some_and(|l| l.style == span.style && l.link == span.link);
+                row.push(if inside {
+                    Span { text: " ".into(), style: span.style, link: span.link.clone() }
+                } else {
+                    Span::plain(" ")
+                });
                 used += 1;
             }
             row.push(Span {
