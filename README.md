@@ -25,10 +25,13 @@ commented config and one example agent and skill, and overwrites nothing.
 
 Needs libcurl at runtime: present on macOS and on any Linux with curl installed.
 
-`scripts/deploy.sh host…` builds and installs on other machines over SSH:
-it copies the source to `~/projects/imp`, builds with the device's own Rust,
-keeps the previous binary as `imp.prev`, and links the libcurl runtime when
-the dev package is missing.
+`scripts/deploy.sh host…` builds on this machine with `cargo-zigbuild` and
+installs over SSH: it asks each device for its architecture and glibc, links
+against the device's own libcurl, copies the binary to `~/.local/bin/imp`, and
+keeps the previous one as `imp.prev`. A Pi Zero 2 W takes 18 s this way.
+`--native` copies the source and builds on the device instead: 3½ minutes on
+the same Pi. Cross builds need `zig`, `cargo install cargo-zigbuild`, and
+`rustup target add aarch64-unknown-linux-gnu`.
 
 ### Keeping it running
 
