@@ -17,6 +17,17 @@ with no picker open moves to the next agent profile, by `/agent`'s path; while
 a turn runs the choice is kept and applied when it ends, and the status line
 shows `→ <agent>` until then.
 
+## Ctrl+C
+
+Today Ctrl+C quits whenever a prompt is open or the draft is empty, even
+mid-turn, against the spec's "Interrupt a prompt". The new order: an open
+prompt is declined and the turn stopped; a running turn is stopped; a
+non-empty draft is cleared; otherwise the first press writes `Ctrl+C again
+to quit` and a second within two seconds quits. Esc keeps stopping turns.
+
+The keyboard requirement is modified from `message-queue`'s text; archive
+after it.
+
 ## Status line
 
 `<agent> · <mode> · <model> · …`, with the agent left out when it is the

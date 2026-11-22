@@ -13,6 +13,10 @@ keys live inside `/help`, mixed with the commands.
   when the turn ends. With text in the draft, or one agent, Tab does nothing;
   in the command list it still completes.
 - → alone accepts a suggestion; Tab no longer does.
+- Ctrl+C stops instead of quitting: it declines an open prompt and stops
+  the turn, stops a running turn, or clears the draft. Idle with an empty
+  draft, it asks for a second Ctrl+C within two seconds. Ctrl+D still quits
+  at once.
 - The status line names the agent and the mode, and each switch writes one
   transcript line.
 - `/keys` opens the keys card that `?` opens; `/help` drops its keys section
