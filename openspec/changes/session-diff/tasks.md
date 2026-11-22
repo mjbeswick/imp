@@ -8,4 +8,4 @@
 
 ## 2. Git
 
-- [ ] 2.1 `/diff git [args]` in the session directory, styled per file from its `+++` header; tests with a scratch repo
+- [x] 2.1 `/diff git [args]` in the session directory, styled per file from its `+++` header; tests with a scratch repo

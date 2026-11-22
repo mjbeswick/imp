@@ -95,6 +95,42 @@ pub struct FileDiff {
     pub untracked: bool,
 }
 
+/// `git diff` output as one `FileDiff` per file: each `+++ b/<path>` names
+/// the file, hunks are parted by `⋯`, and a binary file is listed only.
+pub fn parse_git_diff(text: &str) -> Vec<FileDiff> {
+    let mut files: Vec<FileDiff> = Vec::new();
+    let mut in_hunk = false;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            let name = rest.rsplit_once(" b/").map_or(rest, |(_, b)| b).to_string();
+            let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+            files.push(FileDiff { name, ext, adds: 0, dels: 0, rows: Vec::new(), untracked: false });
+            in_hunk = false;
+            continue;
+        }
+        let Some(f) = files.last_mut() else { continue };
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            f.name = path.to_string();
+            f.ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        } else if line.starts_with("Binary files ") {
+            f.untracked = true;
+        } else if line.starts_with("@@") {
+            if in_hunk {
+                f.rows.push("⋯".into());
+            }
+            in_hunk = true;
+        } else if in_hunk && (line.starts_with('+') || line.starts_with('-') || line.starts_with(' ')) {
+            match line.as_bytes()[0] {
+                b'+' => f.adds += 1,
+                b'-' => f.dels += 1,
+                _ => {}
+            }
+            f.rows.push(line.to_string());
+        }
+    }
+    files
+}
+
 /// What one task has used so far: steps and tokens over all its requests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TaskTotals {
@@ -427,6 +463,23 @@ impl Session {
             }
         }
         out
+    }
+
+    /// `git diff --no-color <args>` in the session directory, by file. The
+    /// arguments are split on spaces and passed to git, not to a shell.
+    // ponytail: no time limit; git diff on a working tree returns at once.
+    pub fn git_changes(&self, args: &str) -> Result<Vec<FileDiff>, String> {
+        let out = std::process::Command::new("git")
+            .args(["diff", "--no-color"])
+            .args(args.split_whitespace())
+            .current_dir(&self.tools.root)
+            .output()
+            .map_err(|e| format!("git: {e}"))?;
+        if !out.status.success() {
+            let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            return Err(if why.is_empty() { "git diff failed".into() } else { why });
+        }
+        Ok(parse_git_diff(&String::from_utf8_lossy(&out.stdout)))
     }
 
     /// Keep a file as it was before imp first changed it this session, for
@@ -2607,6 +2660,37 @@ mod tests {
         assert_eq!((changes[0].adds, changes[0].dels, changes[0].ext.as_str()), (1, 1, "py"));
         assert!(changes[0].rows.contains(&"-    return a - b".to_string()) && changes[0].rows.contains(&"+    return a * b".to_string()));
         assert_eq!((changes[1].adds, changes[1].dels), (2, 0));
+    }
+
+    #[test]
+    fn git_diff_output_is_split_by_file() {
+        let text = "diff --git a/src/main.rs b/src/main.rs\nindex 1..2 100644\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,3 @@\n fn main() {\n-    let x = 1;\n+    let x = 2;\n@@ -9 +9 @@\n-a\n+b\ndiff --git a/notes.txt b/notes.txt\nnew file mode 100644\n--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1 @@\n+hello\ndiff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n";
+        let files = parse_git_diff(text);
+        let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["src/main.rs", "notes.txt", "logo.png"]);
+        assert_eq!((files[0].ext.as_str(), files[0].adds, files[0].dels), ("rs", 2, 2));
+        assert_eq!(files[0].rows, vec![" fn main() {", "-    let x = 1;", "+    let x = 2;", "⋯", "-a", "+b"]);
+        assert_eq!((files[1].adds, files[1].rows.len()), (1, 1));
+        assert!(files[2].untracked);
+    }
+
+    #[test]
+    fn git_changes_run_in_the_session_directory() {
+        let (s, _fake) = scripted(vec![]);
+        let root = s.tools.root.clone();
+        let git = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(&root).output().unwrap();
+        if !git(&["init", "-q"]).status.success() {
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+        std::fs::write(root.join("a.txt"), "two\n").unwrap();
+        let files = s.git_changes("").unwrap();
+        assert_eq!((files.len(), files[0].name.as_str(), files[0].adds, files[0].dels), (1, "a.txt", 1, 1));
+        git(&["add", "a.txt"]);
+        assert!(s.git_changes("").unwrap().is_empty(), "staged changes showed without --staged");
+        assert_eq!(s.git_changes("--staged").unwrap().len(), 1);
     }
 
     #[test]

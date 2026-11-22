@@ -27,8 +27,10 @@ that bites.
 ## Display
 
 The rows go through the diff painter from `diff-style`. `/diff git` runs
-`git diff --no-color <args>` with the session root as its directory, through
-the same timeout as other local commands, and shows its output as diff rows.
+`git diff --no-color <args>` with the session root as its directory, its
+arguments split on spaces and given to git, not a shell, and shows its output
+as diff rows, one file per `diff --git` header. ponytail: no time limit; git
+diff on a working tree returns at once.
 
 ## Syntax
 

@@ -1042,8 +1042,8 @@ pub enum Ev {
     Done(Option<String>),
     /// The user's likely next message, drawn greyed out in an empty input.
     Suggest(String),
-    /// Changed files for `/diff`.
-    Diff(Vec<crate::agent::FileDiff>),
+    /// Changed files for `/diff`; true for `/diff git`.
+    Diff(Vec<crate::agent::FileDiff>, bool),
     /// A goal round begins.
     GoalRound { text: String, round: u32, rounds: u32 },
     /// The goal ended, and why.
@@ -2758,7 +2758,7 @@ impl App {
                 }
             }
             Ev::Info(t) => self.push(Role::Info, t),
-            Ev::Diff(files) => self.show_diff(files),
+            Ev::Diff(files, git) => self.show_diff(files, git),
             Ev::Error(t) => self.push(Role::Error, t),
             Ev::Root(path) => {
                 self.root = path;
@@ -3644,9 +3644,10 @@ impl App {
 
     /// `/diff`: a summary row per file, then each file's diff in its
     /// syntax, at most 200 rows in all, then what is not tracked.
-    fn show_diff(&mut self, files: Vec<crate::agent::FileDiff>) {
+    fn show_diff(&mut self, files: Vec<crate::agent::FileDiff>, git: bool) {
         if files.is_empty() {
-            self.push(Role::Info, "imp has changed no file this session; /diff git shows the repository");
+            let none = if git { "git diff shows no changes" } else { "imp has changed no file this session; /diff git shows the repository" };
+            self.push(Role::Info, none);
             return;
         }
         let wide = files.iter().map(|f| f.name.chars().count()).max().unwrap_or(0);
@@ -3674,7 +3675,9 @@ impl App {
         if cut > 0 {
             self.push(Role::Context, format!("… {cut} more lines"));
         }
-        self.push(Role::Thinking, "changes made by shell commands are not tracked; /diff git shows everything");
+        if !git {
+            self.push(Role::Thinking, "changes made by shell commands are not tracked; /diff git shows everything");
+        }
         self.follow_tail();
     }
 
@@ -6375,8 +6378,15 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         }
                     }
                 }
-                Ok(Cmd::Diff(_args)) => {
-                    let _ = ev_tx.send(Ev::Diff(worker_session.session_changes()));
+                Ok(Cmd::Diff(args)) => {
+                    let ev = match args.strip_prefix("git") {
+                        Some(rest) if rest.is_empty() || rest.starts_with(' ') => match worker_session.git_changes(rest) {
+                            Ok(files) => Ev::Diff(files, true),
+                            Err(why) => Ev::Error(why),
+                        },
+                        _ => Ev::Diff(worker_session.session_changes(), false),
+                    };
+                    let _ = ev_tx.send(ev);
                 }
                 Ok(Cmd::Detach) => {
                     if let Some(image) = worker_session.attachments.pop() {
@@ -7295,7 +7305,7 @@ mod tests {
         assert!(matches!(cmds.try_recv(), Ok(Cmd::Diff(args)) if args.is_empty()));
         a.run_command("diff git --staged", &tx);
         assert!(matches!(cmds.try_recv(), Ok(Cmd::Diff(args)) if args == "git --staged"));
-        a.apply(Ev::Diff(Vec::new()));
+        a.apply(Ev::Diff(Vec::new(), false));
         assert!(a.entries.last().unwrap().text.contains("changed no file"));
         let f = |name: &str, ext: &str, rows: Vec<String>, adds: usize, dels: usize| FileDiff {
             name: name.into(), ext: ext.into(), adds, dels, rows, untracked: false,
@@ -7306,7 +7316,7 @@ mod tests {
             f("calc.py", "py", vec!["-    return a - b".into(), "+    return a * b".into()], 1, 1),
             f("long.txt", "txt", many, 250, 0),
             FileDiff { name: "big.bin".into(), ext: "bin".into(), adds: 0, dels: 0, rows: Vec::new(), untracked: true },
-        ]));
+        ], false));
         let summary = &b.entries[0].text;
         assert!(summary.contains("calc.py   +1 −1") && summary.contains("long.txt  +250 −0"), "{summary}");
         assert!(summary.contains("big.bin   not diffed"), "{summary}");
