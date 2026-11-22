@@ -1054,9 +1054,11 @@ fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Ro
         lines.push((Role::User, Line::Text(String::new())));
     }
     if let Some(shown) = entry.text.strip_prefix(RAW) {
-        for row in crate::render::raw_rows(shown, cols.saturating_sub(2)) {
+        // Info text lays itself out, as `/help` does, so it stays flush left.
+        let indent = if entry.role == Role::Info { "" } else { "  " };
+        for row in crate::render::raw_rows(shown, cols.saturating_sub(indent.len())) {
             let mut row = row;
-            row.insert(0, crate::render::Span::styled("  ", crate::render::Style::default()));
+            row.insert(0, crate::render::Span::styled(indent, crate::render::Style::default()));
             lines.push((entry.role, Line::Spans(row)));
         }
         return lines;
@@ -7105,6 +7107,21 @@ mod tests {
         let mut b = app();
         b.run_command("help", &tx);
         assert!(!b.frame(80, 60).contains("\x1b[1m"));
+        // At Hackberry widths every help row arrives whole and flush left.
+        for cols in [40, 54] {
+            let mut c = colour_app();
+            c.cols.store(cols as u16, Ordering::Relaxed);
+            c.run_command("help", &tx);
+            let want = crate::help::commands((cols - 2).max(40), true, false);
+            let rows: Vec<String> = entry_lines(&c.entries[0], cols, false, false)
+                .into_iter()
+                .map(|(_, l)| match l {
+                    Line::Spans(s) => unpaint(&s.iter().map(|s| s.text.as_str()).collect::<String>()),
+                    _ => panic!("help is not raw"),
+                })
+                .collect();
+            assert_eq!(rows.join("\n"), want.trim_end_matches('\n'), "at {cols}");
+        }
     }
 
     #[test]

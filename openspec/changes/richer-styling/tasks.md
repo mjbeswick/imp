@@ -14,3 +14,4 @@
 
 - [x] 3.1 Italic thinking, muted picker descriptions, bold picker title, accent status counts; tests
 - [x] 3.2 `/help` with bold titles and accent cells; test
+- [x] 3.3 Keep raw `/help` flush left and uncut at 40 and 54 columns; test

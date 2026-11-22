@@ -56,11 +56,11 @@ The system SHALL paint `#` headings bold, underlined, and in the accent colour, 
 
 #### Scenario: Rule
 - **WHEN** a reply has `---` at 54 columns
-- **THEN** the row is 54 `─` in the border colour
+- **THEN** the row is `─` across the whole reply column in the border colour
 
 ### Requirement: Interface rows carry emphasis
 
-The system SHALL set thinking rows and the other muted asides, such as the task summary and the welcome hint, in italic, SHALL paint picker descriptions muted on rows that are not highlighted, SHALL paint the picker title bold, SHALL paint the status line's unseen and waiting counts in the accent colour, and SHALL show `/help` section titles bold with keys and commands in the accent colour.
+The system SHALL set thinking rows and the other muted asides, such as the task summary and the welcome hint, in italic, SHALL paint picker descriptions muted on rows that are not highlighted, SHALL paint the picker title bold, SHALL paint the status line's unseen and waiting counts in the accent colour, and SHALL show `/help` section titles bold with keys and commands in the accent colour, flush left and whole at every width.
 
 #### Scenario: Thinking
 - **WHEN** a thinking row is shown in a colour terminal
@@ -77,3 +77,7 @@ The system SHALL set thinking rows and the other muted asides, such as the task 
 #### Scenario: Help headings
 - **WHEN** the user runs `/help` in a colour terminal
 - **THEN** each section title is bold and each key and command is accent
+
+#### Scenario: Help at Hackberry width
+- **WHEN** the user runs `/help` at 40 or 54 columns
+- **THEN** every row matches the plain help text, flush left and uncut
