@@ -55,7 +55,11 @@ Expanded arguments: a shell call shows `$ <command>`. Other tools show one
 `key: value` line per argument, strings unquoted, nested values as compact
 JSON, each wrapped at the indent. `path` leads; the rest follow in key
 order, as `serde_json` keeps no other. `description` is left out: the row
-already says it.
+already says it. Like the output, the argument lines stop at 20 with a
+count of the rest, so a `write` row is not the whole file.
+
+The exit tail reads the capped output the model saw. The cap keeps a head
+and a tail, so the last lines are the command's real last lines.
 
 ## Declines
 

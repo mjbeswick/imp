@@ -12,6 +12,7 @@
 - [x] 2.2 A click toggles one row; test
 - [x] 2.3 `$ command` and `key: value` lines instead of JSON; tests for bash and `edit`
 - [x] 2.4 A picker over the tool rows takes the click, not the row beneath; test
+- [x] 2.5 Cap expanded arguments at 20 lines, as output is; test with a 50-line `write`
 
 ## 3. Declines
 

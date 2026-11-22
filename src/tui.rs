@@ -1269,9 +1269,15 @@ fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
     };
     let mut text = format!("{mark} {}{result}{TIME}{}", row.summary, duration(row.ms));
     if row.expanded || level == Verbosity::High {
-        for line in readable_args(&row.args) {
+        // Capped like the output, so a `write` row is not the whole file.
+        let args = readable_args(&row.args).join("\n");
+        let total = args.lines().count();
+        for line in args.lines().take(20) {
             text.push_str("\n  ");
-            text.push_str(&line);
+            text.push_str(line);
+        }
+        if total > 20 {
+            text.push_str(&format!("\n  … +{} lines", total - 20));
         }
         if !row.output.is_empty() {
             text.push_str("\n  ");
@@ -9065,6 +9071,14 @@ mod tests {
         a.handle_key(Key::Ctrl('e'), &tx);
         let out = strip(&a.frame(60, 10));
         assert!(out.contains("    $ python3 calc.py") && !out.contains("{\""), "{out:?}");
+        // A long argument is cut like long output.
+        let body: String = (1..=50).map(|i| format!("line {i}\n")).collect();
+        let args = serde_json::json!({"path": "big.txt", "content": body}).to_string();
+        a.apply(Ev::ToolStart { name: "write".into(), summary: "write big.txt".into(), args });
+        a.apply(Ev::ToolEnd { ok: true, preview: String::new(), output: "wrote".into(), detail: String::new(), ms: 1 });
+        a.handle_key(Key::Ctrl('e'), &tx);
+        let text = &a.entries.last().unwrap().text;
+        assert!(text.contains("line 19") && !text.contains("line 20\n") && text.contains("… +31 lines"), "{text}");
     }
 
     #[test]
