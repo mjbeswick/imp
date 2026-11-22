@@ -20,4 +20,4 @@ The selection keys reuse `composer-select`'s anchor.
 
 ## Size
 
-Expected: about 1 KB.
+Expected: about 1 KB. Measured: `__text` +1104, `__cstring` +0.
