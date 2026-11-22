@@ -132,7 +132,7 @@ pub fn usage(width: usize) -> String {
                 "SESSIONS",
                 vec![
                     ("-c, --continue", "continue the most recent session"),
-                    ("-r, --resume <ID>", "resume a session by id"),
+                    ("-r, --resume [ID]", "resume a session; the newest without an id"),
                     ("-l, --list", "list sessions and exit"),
                     ("--rename <ID> <TITLE>", "rename a session"),
                     ("--delete <ID>", "move a session to trash"),
@@ -282,6 +282,7 @@ mod tests {
         assert!(text.contains("(default: deepseek-flash)"));
         assert!(text.contains("EXAMPLES"));
         assert!(text.contains("imp -c"));
+        assert!(text.contains("-r, --resume [ID]"));
         assert!(!text.contains("mote"));
     }
 
