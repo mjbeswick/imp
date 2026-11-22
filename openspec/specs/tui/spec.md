@@ -5,7 +5,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ## Requirements
 
-### Requirement: The interface is keyboard only
+### Requirement: The interface is keyboard first
 
 The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand the last tool output, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
 
@@ -455,7 +455,7 @@ The system SHALL print help in named sections, SHALL show defaults as `(default:
 
 #### Scenario: Same commands everywhere
 - **WHEN** help is printed in the chat, line mode, or with `--help`
-- **THEN** the same twenty commands and the same flags are named in each
+- **THEN** the same twenty-three commands and the same flags are named in each
 
 #### Scenario: Keys per front-end
 - **WHEN** the user runs `/help` in line mode
@@ -849,13 +849,13 @@ After a successful `edit` or `write`, the system SHALL draw the changed lines un
 - **WHEN** an edit is refused because a match failed
 - **THEN** no diff is drawn and the existing error preview is shown
 
-### Requirement: Twenty-one slash commands, no more
+### Requirement: Twenty-three slash commands, no more
 
-The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
+The system SHALL provide exactly `/help`, `/new`, `/goal`, `/copy`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/stash`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all twenty-one commands appear with a one-line description
+- **THEN** all twenty-three commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -871,7 +871,7 @@ The system SHALL provide exactly `/help`, `/new`, `/sessions`, `/agent`, `/reloa
 
 ### Requirement: A shell can be opened from the prompt
 
-The system SHALL suspend the full-screen interface, restore cooked input, and run `$SHELL` for `/shell`, SHALL restore the interface and redraw when it exits, and SHALL run `$SHELL` directly in line mode.
+The system SHALL suspend the full-screen interface, restore cooked input, and run `$SHELL` in the session directory for `/shell`, SHALL restore the interface and redraw when it exits, and SHALL run `$SHELL` directly in line mode.
 
 #### Scenario: Chat shell
 - **WHEN** the user runs `/shell` in chat
@@ -884,6 +884,10 @@ The system SHALL suspend the full-screen interface, restore cooked input, and ru
 #### Scenario: No shell variable
 - **WHEN** `$SHELL` is unset
 - **THEN** `/bin/sh` is used
+
+#### Scenario: Session directory
+- **WHEN** the user has run `/cd src` and then runs `/shell`
+- **THEN** the shell starts in `src`, and exiting it returns to the chat with `shell closed`
 
 ### Requirement: The session model can be chosen
 
@@ -1237,7 +1241,7 @@ The system SHALL report a successful session root change with one line that name
 
 ### Requirement: The mouse wheel scrolls the transcript
 
-The system SHALL, when `mouse` is on, ask the terminal for SGR mouse reports while the chat is open, SHALL scroll the transcript three rows per wheel step, SHALL resume following when scrolled to the end, SHALL move a picker's highlight one row per step, SHALL ignore clicks, and SHALL stop mouse reports on exit, on a crash, and while a shell or attached command has the terminal.
+The system SHALL, when `mouse` is on, ask the terminal for SGR mouse reports while the chat is open, SHALL scroll the transcript three rows per wheel step, SHALL resume following when scrolled to the end, SHALL move a picker's highlight one row per step, SHALL hand clicks to the click requirements, and SHALL stop mouse reports on exit, on a crash, and while a shell or attached command has the terminal.
 
 #### Scenario: Scroll up
 - **WHEN** the transcript is longer than the screen and the user scrolls the wheel up
@@ -1381,7 +1385,7 @@ The system SHALL render a closed fenced block whose language has a `render.<lang
 
 ### Requirement: Suggestions are accepted with one key
 
-The system SHALL draw a suggestion greyed out in an empty input, SHALL fill the input with it on Tab or Right, SHALL drop it as soon as the user types, sends, or a turn starts, and SHALL NOT send it on Enter alone.
+The system SHALL draw a suggestion greyed out in an empty input with no key hint after it, SHALL fill the input with it on Tab or Right, SHALL drop it as soon as the user types, sends, or a turn starts, and SHALL NOT send it on Enter alone.
 
 #### Scenario: Accept
 - **WHEN** the input is empty, `run the tests` is suggested, and the user presses Tab then Enter
@@ -1394,6 +1398,10 @@ The system SHALL draw a suggestion greyed out in an empty input, SHALL fill the 
 #### Scenario: Late arrival
 - **WHEN** a suggestion arrives after the user has started typing
 - **THEN** it is not shown
+
+#### Scenario: No hint
+- **WHEN** `run the tests` is suggested
+- **THEN** the input row shows `run the tests` and no `Tab` after it
 
 ### Requirement: The active step is always visible
 
@@ -1472,3 +1480,115 @@ The system SHALL put `(default: X)` on its own row, SHALL indent long-only flags
 #### Scenario: Descriptions under cells
 - **WHEN** the width is 40 columns
 - **THEN** `-l, --list` is on its own row and `list sessions and exit` is on the next, indented six
+
+### Requirement: Clicks act like the key they show
+
+The system SHALL, when `mouse` is on, treat a left click on a picker row, a confirm chip, a question option, or a picker footer hint as the key that item shows, and SHALL ignore clicks anywhere else.
+
+#### Scenario: Picker row
+- **WHEN** the session picker is open and the user clicks its third row
+- **THEN** that session opens, as if it were highlighted and Enter pressed
+
+#### Scenario: Confirm chip
+- **WHEN** a command confirmation is open and the user clicks `[y] yes`
+- **THEN** the command runs, as if `y` were pressed
+
+#### Scenario: Question option
+- **WHEN** an `ask` question is open and the user clicks `[2]`
+- **THEN** option two is the answer
+
+#### Scenario: Footer hint
+- **WHEN** a picker is open and the user clicks `Esc close`
+- **THEN** the picker closes
+
+#### Scenario: Elsewhere
+- **WHEN** the user clicks a transcript row with no copy label
+- **THEN** nothing changes
+
+#### Scenario: Mouse off
+- **WHEN** `mouse=off`
+- **THEN** no click is reported and the keys still work
+
+### Requirement: Always takes two clicks
+
+The system SHALL treat a first click on `[a] always` as a request to confirm, marking that chip, and SHALL apply `always` only on a second click on the same chip; any other click or key clears the mark.
+
+#### Scenario: One click
+- **WHEN** the user clicks `[a] always` once
+- **THEN** the chip is marked and the command has not run
+
+#### Scenario: Two clicks
+- **WHEN** the user clicks `[a] always` twice
+- **THEN** the command runs and is allowed from then on
+
+#### Scenario: Key still works
+- **WHEN** the user presses `a`
+- **THEN** `always` applies at once, as before
+
+### Requirement: Replies and code blocks carry a copy label
+
+The system SHALL, when `mouse` is on, draw a dim `⧉` at the right edge of the first row of each assistant reply and each fenced code block, and SHALL copy that reply's markdown source or that block's code when it is clicked.
+
+#### Scenario: Copy a code block
+- **WHEN** the user clicks the `⧉` beside a fenced block
+- **THEN** the block's code, without its fences, is copied
+
+#### Scenario: Copy a reply
+- **WHEN** the user clicks the `⧉` on a reply's first row
+- **THEN** the reply's markdown source is copied
+
+#### Scenario: Fits the screen
+- **WHEN** a label is drawn at 40 columns
+- **THEN** no row is wider than 40 columns
+
+#### Scenario: Mouse off
+- **WHEN** `mouse=off`
+- **THEN** no label is drawn
+
+### Requirement: Text can be copied with /copy
+
+The system SHALL copy the last assistant reply for `/copy` and the last fenced code block for `/copy code`, SHALL report what was copied, and SHALL report when there is nothing to copy.
+
+#### Scenario: Last reply
+- **WHEN** the user runs `/copy` after a 120-character reply
+- **THEN** that reply is copied and an info row reads `copied 120 characters`
+
+#### Scenario: Last code block
+- **WHEN** the user runs `/copy code`
+- **THEN** the code of the newest fenced block is copied
+
+#### Scenario: Nothing yet
+- **WHEN** the user runs `/copy` before any reply
+- **THEN** an info row reads `nothing to copy` and nothing is sent to the model
+
+### Requirement: A copy reaches imp and the terminal clipboard
+
+The system SHALL keep the latest copied text in a buffer for the chat, SHALL paste it into the composer on Ctrl+V, and SHALL also send it to the terminal clipboard as an OSC 52 sequence.
+
+#### Scenario: Paste
+- **WHEN** the user copies a block and presses Ctrl+V
+- **THEN** the block's text is inserted at the caret, newlines kept
+
+#### Scenario: Terminal clipboard
+- **WHEN** a copy is made over SSH from a terminal that accepts OSC 52
+- **THEN** the text is on that machine's clipboard
+
+#### Scenario: Empty buffer
+- **WHEN** nothing has been copied and the user presses Ctrl+V
+- **THEN** the composer is unchanged
+
+### Requirement: The mouse can be released for terminal selection
+
+The system SHALL, on Ctrl+G with `mouse` on, stop mouse reports and show `mouse released · any key to take it back` in the status line, and SHALL resume mouse reports on the next key, which is then handled as usual.
+
+#### Scenario: Release
+- **WHEN** the user presses Ctrl+G
+- **THEN** mouse reporting is off and the status line says so
+
+#### Scenario: Take it back
+- **WHEN** the mouse is released and the user types `h`
+- **THEN** mouse reporting resumes and `h` reaches the composer
+
+#### Scenario: Mouse off
+- **WHEN** `mouse=off` and the user presses Ctrl+G
+- **THEN** nothing changes
