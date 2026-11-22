@@ -27,3 +27,11 @@ The system SHALL remove the character after the caret on Delete or Shift+Delete 
 #### Scenario: Forward delete
 - **WHEN** the draft is `cat` with the caret after `c` and the user presses Delete
 - **THEN** the draft is `ct` and the caret stays after `c`
+
+### Requirement: Home and End work under terminal multiplexers
+
+The system SHALL read Home and End whether the terminal sends `CSI H` and `CSI F` or `CSI 1~`, `CSI 7~`, `CSI 4~`, and `CSI 8~`, with or without Shift.
+
+#### Scenario: Under tmux
+- **WHEN** imp runs inside tmux and the user presses Home
+- **THEN** the caret moves to the start of the draft

@@ -782,6 +782,11 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
                     b"5" => Key::PageUp,
                     b"6" => Key::PageDown,
                     b"3" | b"3;2" => Key::Delete,
+                    // tmux, screen, and rxvt send Home and End this way.
+                    b"1" | b"7" => Key::Home,
+                    b"4" | b"8" => Key::End,
+                    b"1;2" | b"7;2" => Key::Select(Move::Home),
+                    b"4;2" | b"8;2" => Key::Select(Move::End),
                     _ => Key::Unknown,
                 },
                 b'u' => disambiguated(params),
@@ -6327,7 +6332,11 @@ mod tests {
 
     #[test]
     fn shift_moves_and_delete_decode() {
-        let cases: [(&[u8], Key); 9] = [
+        let cases: [(&[u8], Key); 13] = [
+            (b"\x1b[1~", Key::Home),
+            (b"\x1b[4~", Key::End),
+            (b"\x1b[7~", Key::Home),
+            (b"\x1b[8~", Key::End),
             (b"\x1b[1;2A", Key::Select(Move::Up)),
             (b"\x1b[1;2B", Key::Select(Move::Down)),
             (b"\x1b[1;2C", Key::Select(Move::Right)),

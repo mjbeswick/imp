@@ -14,7 +14,9 @@
 
 The decoder reads `CSI 1;2` with `A B C D H F` as the Shift forms of
 Up, Down, Right, Left, Home, and End, and `CSI 3~` or `CSI 3;2~` as Delete.
-Other modifiers keep their plain meaning, as today.
+Other modifiers keep their plain meaning, as today. Home and End also come
+as `CSI 1~ 7~` and `CSI 4~ 8~` from tmux, screen, and rxvt, which imp did not
+read before; a live run under tmux showed Home doing nothing.
 
 Shift+↑/↓ move between rows of the draft only; they never recall history.
 

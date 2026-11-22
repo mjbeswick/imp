@@ -3,6 +3,7 @@
 ## 1. Keys
 
 - [x] 1.1 Decode Shift+arrows, Shift+Home/End, Delete, and Shift+Delete; tests for each sequence and for Ctrl+arrow staying plain
+- [x] 1.2 Decode Home and End as tmux, screen, and rxvt send them (`CSI 1~ 4~ 7~ 8~`); test
 
 ## 2. Selection
 
