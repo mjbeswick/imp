@@ -66,4 +66,4 @@ worker asks it before calling `suggest`.
 
 ## Size
 
-Expected: 1.5 to 2.5 KB.
+Expected: 1.5 to 2.5 KB. Measured: about 3.9 KB of code sections (`__text` +3780, `__const` +68 and +80, `__cstring` +17).
