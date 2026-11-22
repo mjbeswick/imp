@@ -2,15 +2,18 @@
 
 ## Finishes
 
-`Ui::ToolEnd` gains `code: Option<i32>`, set when a command ran to an exit
-code. One shared function turns `ok`, `code`, and the output into a finish:
+`Finish::of(ok, output)` in `tui.rs` turns a result into a finish. Every
+command result already starts `exit N`, so it reads the code there. Line
+mode calls the same function.
 
 | Finish   | When                                          | Mark | Colour |
 |----------|-----------------------------------------------|------|--------|
 | Done     | `ok`                                          | `✓`  | success mark, tool row |
-| Exited   | not `ok`, `code` is `Some(n)` with `n != 0`   | `!`  | accent |
-| Declined | output starts `refused: the user declined`    | `✗`  | muted |
+| Exited   | not `ok`, output starts `exit N` with `N > 0`  | `!`  | accent, tool row |
+| Declined | output starts `refused: the user declined`    | `✗`  | muted, `Role::Context` row |
 | Failed   | anything else: refused, error, timeout        | `✗`  | error |
+
+A timeout reports `exit -1`, so it stays Failed.
 
 Approaches:
 
@@ -19,8 +22,9 @@ Approaches:
   column wide, and draws on kmscon.
 - **`✓` with a muted `exit 1`.** Hides failing tests. Rejected.
 - **Keep `✗` and only fix the preview.** Leaves the false alarm. Rejected.
-- **Parse `exit N` from the output in each front-end.** Two parsers for one
-  fact the agent already has. Rejected in favour of `code`.
+- **A `code` field on `ToolEnd`.** The fact is already in the output's first
+  line, and a field would touch every event constructor. Rejected; one
+  shared reader instead.
 
 ## Previews
 

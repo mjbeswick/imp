@@ -2,7 +2,7 @@
 
 ## 1. Finishes
 
-- [ ] 1.1 `code` on `ToolEnd` and the shared finish; `!`, muted and red `✗` in the TUI; tests for each finish
+- [x] 1.1 The shared finish; `!`, muted and red `✗` in the TUI; tests for each finish
 - [ ] 1.2 Exited rows show the last three output lines, line breaks kept; tests for a short and a long tail at 54 columns
 - [ ] 1.3 Line mode prints the same four finishes; test
 

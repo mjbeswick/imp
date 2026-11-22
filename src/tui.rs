@@ -1162,7 +1162,7 @@ struct ToolRow {
     detail: String,
     detail_start: Option<usize>,
     detail_count: usize,
-    ok: bool,
+    finish: Finish,
     ms: u128,
     running: bool,
     expanded: bool,
@@ -1183,12 +1183,56 @@ fn echoes(summary: &str, preview: &str) -> bool {
     matches!((summary.split_once(' '), preview.split_once(' ')), (Some((_, a)), Some((_, b))) if a == b)
 }
 
+/// How a tool step ended, shared by both front-ends.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Finish {
+    Done,
+    /// A command ran and exited non-zero: a result, not a breakage.
+    Exited,
+    Declined,
+    Failed,
+}
+
+impl Finish {
+    /// Every command result starts `exit N`, so one reading serves both
+    /// front-ends; every decline starts `refused: the user declined`.
+    pub(crate) fn of(ok: bool, output: &str) -> Self {
+        let code = output.lines().next().and_then(|l| l.strip_prefix("exit ")?.trim().parse::<i32>().ok());
+        if ok {
+            Self::Done
+        } else if output.starts_with("refused: the user declined") {
+            Self::Declined
+        } else if code.is_some_and(|n| n > 0) {
+            Self::Exited
+        } else {
+            Self::Failed
+        }
+    }
+
+    pub(crate) fn mark(self) -> &'static str {
+        match self {
+            Self::Done => "✓",
+            Self::Exited => "!",
+            Self::Declined | Self::Failed => "✗",
+        }
+    }
+
+    pub(crate) fn role(self) -> Role {
+        match self {
+            Self::Done | Self::Exited => Role::Tool,
+            Self::Declined => Role::Context,
+            Self::Failed => Role::Error,
+        }
+    }
+}
+
 fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
-    let mark = if row.ok { "✓" } else { "✗" };
+    let mark = row.finish.mark();
+    let ok = row.finish == Finish::Done;
     // At medium a success says what came back, on the same line.
     let result = match level {
         // `edit x (1 change)` → `edited x (1 change)` says it twice.
-        Verbosity::Medium if row.ok && !row.preview.is_empty() && !row.expanded && !echoes(&row.summary, &row.preview) => {
+        Verbosity::Medium if ok && !row.preview.is_empty() && !row.expanded && !echoes(&row.summary, &row.preview) => {
             format!(" → {}", row.preview)
         }
         _ => String::new(),
@@ -1201,7 +1245,7 @@ fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
             text.push_str("\n  ");
             text.push_str(&row.output.lines().take(20).collect::<Vec<_>>().join("\n  "));
         }
-    } else if !row.preview.is_empty() && !row.ok {
+    } else if !row.preview.is_empty() && !ok {
         text.push('\n');
         text.push_str(&row.preview);
     }
@@ -2256,7 +2300,7 @@ impl App {
                     detail: String::new(),
                     detail_start: None,
                     detail_count: 0,
-                    ok: true,
+                    finish: Finish::Done,
                     ms: 0,
                     running: true,
                     expanded: false,
@@ -2275,10 +2319,11 @@ impl App {
                 ms,
             } => {
                 self.status.quiet_since = Some(Instant::now());
-                let role = if ok { Role::Tool } else { Role::Error };
+                let finish = Finish::of(ok, &output);
+                let role = finish.role();
                 match self.tool.take() {
                     Some(mut row) => {
-                        row.ok = ok;
+                        row.finish = finish;
                         row.ms = ms;
                         row.running = false;
                         row.output = output;
@@ -2302,7 +2347,7 @@ impl App {
                     }
                     None => self.push(
                         role,
-                        format!("{} {preview}{TIME}{}", if ok { "✓" } else { "✗" }, duration(ms)),
+                        format!("{} {preview}{TIME}{}", finish.mark(), duration(ms)),
                     ),
                 }
             }
@@ -4513,15 +4558,26 @@ impl App {
         out
     }
 
-    /// A tool row: the leading `✓` bold in the success colour, `✗` in the
-    /// error colour, and the rest in the row's own role.
+    /// A tool row: the leading `✓` bold in the success colour, `!` in the
+    /// accent, `✗` in the error colour or muted when declined, and the rest
+    /// in the row's own role.
     fn marked(&self, role: Role, text: &str) -> String {
-        let found = text.find(['✓', '✗']);
-        let Some(at) = found.filter(|_| self.palette.on && matches!(role, Role::Tool | Role::Error)) else {
+        // `!` and a declined `✗` count only at the start of a row.
+        let found = text
+            .find(['✓', '✗'])
+            .filter(|_| matches!(role, Role::Tool | Role::Error))
+            .or_else(|| (role == Role::Tool && text.starts_with("! ")).then_some(0))
+            .or_else(|| (role == Role::Context && text.starts_with("✗ ")).then_some(0));
+        let Some(at) = found.filter(|_| self.palette.on) else {
             return self.palette.paint(role, text);
         };
         let mark = text[at..].chars().next().unwrap_or('✓');
-        let tone = if mark == '✓' { Role::Success } else { Role::Error };
+        let tone = match (mark, role) {
+            ('✓', _) => Role::Success,
+            ('!', _) => Role::Info,
+            (_, Role::Context) => Role::Context,
+            _ => Role::Error,
+        };
         let rest = &text[at + mark.len_utf8()..];
         let head = if at == 0 { String::new() } else { self.palette.paint(role, &text[..at]) };
         // `paint` ends in a full reset, which also ends the bold.
@@ -8859,10 +8915,34 @@ mod tests {
             ms: 7,
         });
         assert_eq!(a.entries.len(), 1, "the finish added a second row");
-        assert_eq!(a.entries[0].role, Role::Error);
-        assert!(a.entries[0].text.contains("✗"), "{}", a.entries[0].text);
+        // A command that ran and exited 1 is a result, not a breakage.
+        assert_eq!(a.entries[0].role, Role::Tool);
+        assert!(a.entries[0].text.starts_with("! "), "{}", a.entries[0].text);
         assert!(a.entries[0].text.contains("run `false`"));
         assert!(a.entries[0].text.contains("ms"));
+    }
+
+    #[test]
+    fn each_finish_has_its_mark_and_colour() {
+        assert_eq!(Finish::of(true, "exit 0\nhi"), Finish::Done);
+        assert_eq!(Finish::of(false, "exit 1\nno tests"), Finish::Exited);
+        assert_eq!(Finish::of(false, "exit -1\ntimed out after 30s"), Finish::Failed);
+        assert_eq!(Finish::of(false, "refused: outside the session"), Finish::Failed);
+        assert_eq!(Finish::of(false, "refused: the user declined to run this command"), Finish::Declined);
+        let mut a = colour_app();
+        for (ok, output, mark, tone) in [
+            (false, "exit 1", "!", Role::Info),
+            (false, "refused: the user declined to run this command", "✗", Role::Context),
+            (false, "refused: outside the session", "✗", Role::Error),
+            (true, "exit 0", "✓", Role::Success),
+        ] {
+            a.entries.clear();
+            a.apply(Ev::ToolStart { name: "bash".into(), summary: "run `x`".into(), args: "{}".into() });
+            a.apply(Ev::ToolEnd { ok, preview: String::new(), output: output.into(), detail: String::new(), ms: 1 });
+            let out = a.frame(60, 10);
+            let want = format!("\x1b[1m{}", a.palette.paint(tone, mark));
+            assert!(out.contains(&want), "{output}: {out:?}");
+        }
     }
 
     fn picker() -> App {
