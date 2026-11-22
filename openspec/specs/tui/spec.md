@@ -551,7 +551,7 @@ The system SHALL open the picker overlay when the input begins with `/`, SHALL s
 
 ### Requirement: The interface uses colour with meaning
 
-The system SHALL colour by role rather than by text, SHALL paint inline code bold in the code colour and keep fenced blocks and quotes muted, SHALL detect truecolor, 256-colour, and no-colour terminals, and SHALL honour `NO_COLOR` and a `color=auto|always|never` setting.
+The system SHALL colour by role rather than by text, SHALL paint inline code in the text colour on a tint of the code colour and not bold, SHALL keep fenced blocks and quotes muted, SHALL detect truecolor, 256-colour, and no-colour terminals, SHALL honour `NO_COLOR` and a `color=auto|always|never` setting, and SHALL keep bold, italic, underline, and reverse under the `mono` theme while emitting no colour.
 
 #### Scenario: Truecolor terminal
 - **WHEN** `COLORTERM` advertises truecolor
@@ -571,11 +571,19 @@ The system SHALL colour by role rather than by text, SHALL paint inline code bol
 
 #### Scenario: Inline code is not dim
 - **WHEN** a reply contains `` `bash` `` inside a sentence
-- **THEN** that span is bold in the code colour, not the muted grey
+- **THEN** that span is in the text colour on a tint of the code colour, not bold and not the muted grey
 
 #### Scenario: Fenced code stays dim
 - **WHEN** a reply contains a fenced block
 - **THEN** its lines are dim and not bold
+
+#### Scenario: Mono keeps emphasis
+- **WHEN** the theme is `mono` and a reply has bold text and inline code
+- **THEN** the bold text is bold, the code is reversed, and no colour sequence is emitted
+
+#### Scenario: Mono picker
+- **WHEN** a picker is open under `mono`
+- **THEN** the highlighted row is reversed
 
 ### Requirement: Shell commands run from the input line
 
@@ -1848,3 +1856,47 @@ The system SHALL read Home and End whether the terminal sends `CSI H` and `CSI F
 #### Scenario: Under tmux
 - **WHEN** imp runs inside tmux and the user presses Home
 - **THEN** the caret moves to the start of the draft
+
+### Requirement: Markdown structure is styled
+
+The system SHALL paint `#` headings bold, underlined, and in the accent colour, `##` bold and accent, and `###` bold, SHALL underline links, SHALL lead each fenced code line with `│ ` in the border colour, SHALL paint list markers in the accent colour, SHALL set quote text in italic as well as dim, and SHALL draw a horizontal rule across the full width in the border colour.
+
+#### Scenario: Heading levels
+- **WHEN** a reply has `# A`, `## B`, and `### C`
+- **THEN** `A` is bold, underlined, and accent, `B` is bold and accent, and `C` is bold only
+
+#### Scenario: Link
+- **WHEN** a reply has `[docs](https://example.com)`
+- **THEN** `docs` is underlined in the link colour
+
+#### Scenario: Fence gutter
+- **WHEN** a reply has a fenced block
+- **THEN** every body row starts with `│ ` in the border colour and no row is wider than the column
+
+#### Scenario: Rule
+- **WHEN** a reply has `---` at 54 columns
+- **THEN** the row is `─` across the whole reply column in the border colour
+
+### Requirement: Interface rows carry emphasis
+
+The system SHALL set thinking rows and the other muted asides, such as the task summary and the welcome hint, in italic, SHALL paint picker descriptions muted on rows that are not highlighted, SHALL paint the picker title bold, SHALL paint the status line's unseen and waiting counts in the accent colour, and SHALL show `/help` section titles bold with keys and commands in the accent colour, flush left and whole at every width.
+
+#### Scenario: Thinking
+- **WHEN** a thinking row is shown in a colour terminal
+- **THEN** it is italic and muted
+
+#### Scenario: Picker description
+- **WHEN** the command picker is open
+- **THEN** descriptions on rows that are not highlighted are muted
+
+#### Scenario: Unseen count
+- **WHEN** rows arrive below the view
+- **THEN** the `↑ n` count is in the accent colour and the rest of the status line stays muted
+
+#### Scenario: Help headings
+- **WHEN** the user runs `/help` in a colour terminal
+- **THEN** each section title is bold and each key and command is accent
+
+#### Scenario: Help at Hackberry width
+- **WHEN** the user runs `/help` at 40 or 54 columns
+- **THEN** every row matches the plain help text, flush left and uncut
