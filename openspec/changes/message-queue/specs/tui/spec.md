@@ -1,37 +1,137 @@
+## MODIFIED Requirements
+
+### Requirement: The interface is keyboard first
+
+The system SHALL provide Enter to send, or to steer a running turn, Alt+Enter or Ctrl+Q to queue the draft, Shift+Enter or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
+
+#### Scenario: Send a message
+- **WHEN** the user types text and presses Enter
+- **THEN** the text is sent and the input clears
+
+#### Scenario: Clear a draft
+- **WHEN** the session is idle, the composer holds text, and the user presses Ctrl+C
+- **THEN** the text is deleted, nothing is sent, and the app stays open
+
+#### Scenario: Quit guard
+- **WHEN** the composer is empty and the user presses Ctrl+C
+- **THEN** the app exits on that press
+
+#### Scenario: Draft mid-turn
+- **WHEN** a turn is streaming, the composer holds text, and the user presses Ctrl+C
+- **THEN** the draft is cleared and the turn keeps running
+
+#### Scenario: Cancel then exit
+- **WHEN** a turn is streaming, the composer is empty, and the user presses Ctrl+C
+- **THEN** the app exits on that press and the turn ends with it
+
+#### Scenario: Picker open
+- **WHEN** a picker is open, the composer is empty, and the user presses Ctrl+C
+- **THEN** the app exits instead of swallowing the key
+
+#### Scenario: Picker open with text
+- **WHEN** a picker is open and the composer holds text
+- **THEN** Ctrl+C closes the picker, clears the text, and the app stays open
+
+#### Scenario: Confirmation open
+- **WHEN** a command confirmation or an `ask` question is open and the user presses Ctrl+C
+- **THEN** the app exits on that press
+
+#### Scenario: Start a second line
+- **WHEN** the user types a line and presses Shift+Enter
+- **THEN** the caret moves to a new row, nothing is sent, and the first line stays in the composer
+
+#### Scenario: Terminals without modifier reporting
+- **WHEN** the terminal never reports Shift+Enter separately
+- **THEN** Alt+Enter and Ctrl+J still start a new line
+
+#### Scenario: Cancel a running turn
+- **WHEN** the user presses Esc while a turn is streaming or running a tool
+- **THEN** the turn stops at its next check, the partial answer stays on screen, and the input line accepts text again
+
+#### Scenario: Disambiguated control keys
+- **WHEN** the terminal reports Ctrl+C as `CSI 99;5u`
+- **THEN** it follows the same clear-or-exit rule as a raw 0x03
+
+#### Scenario: Page keys
+- **WHEN** the terminal sends `CSI 5~` or `CSI 6~`
+- **THEN** the transcript pages up or down and no `5~` or `6~` text reaches the composer
+
+#### Scenario: Expand moved
+- **WHEN** the user presses Ctrl+E after a tool call
+- **THEN** the latest turn's tool rows expand, and Ctrl+O goes to the next waiting session instead
+
+#### Scenario: Newline keys
+- **WHEN** the terminal reports Shift+Enter, or the user presses Ctrl+J
+- **THEN** a newline is inserted and nothing is sent
+
+### Requirement: Twenty-three slash commands, no more
+
+The system SHALL provide exactly `/help`, `/new`, `/goal`, `/copy`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/queue`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
+
+#### Scenario: Help
+- **WHEN** the user types `/help`
+- **THEN** all twenty-three commands appear with a one-line description
+
+#### Scenario: Unknown command
+- **WHEN** the user types `/nope`
+- **THEN** nothing is sent to the model and the nearest matching command is suggested
+
+#### Scenario: Rename
+- **WHEN** the user runs `/rename fix the parser`
+- **THEN** the current session carries that title and no request is sent
+
+#### Scenario: Line mode
+- **WHEN** the user runs `/help` in line mode
+- **THEN** it prints the same list as a plain block
+
+## REMOVED Requirements
+
+### Requirement: Messages can be stashed for the session
+**Reason**: The queue holds messages that wait; a queue with nothing running is a stash.
+**Migration**: `/queue`, `/queue pop n`, `/queue delete n`, and `/queue clear` replace `/stash` and its forms.
+
 ## ADDED Requirements
 
-### Requirement: Messages sent during a turn are queued
+### Requirement: Messages wait in a queue
 
-The system SHALL hold a message sent while a turn runs in a queue drawn dim above the composer, SHALL send queued messages oldest first as each turn ends, SHALL pull the newest back into an empty draft on Up and pause the queue, SHALL resume on the next send, and SHALL NOT restart the running turn's meter for a queued message.
+The system SHALL add the draft to a session queue on Alt+Enter or Ctrl+Q, SHALL draw queued messages dim above the composer, SHALL send the oldest when a turn ends unless a queued message is open, SHALL NOT restart the running turn's meter for a queued message, and SHALL list, pop, delete, and clear queued messages with `/queue`.
 
-#### Scenario: Queue
-- **WHEN** a turn is running and the user sends `also add tests`
+#### Scenario: Queue during a turn
+- **WHEN** a turn is running and the user presses Alt+Enter on `also add tests`
 - **THEN** it shows above the composer, not in the transcript, and is sent when the turn ends
 
-#### Scenario: Edit a queued message
-- **WHEN** two messages are queued and the user presses Up on an empty draft
-- **THEN** the newer one is in the draft, the queue shows paused, and a turn ending sends nothing
+#### Scenario: Fallback key
+- **WHEN** the terminal does not send Alt+Enter and the user presses Ctrl+Q
+- **THEN** the draft is queued the same way
 
-#### Scenario: Resume
-- **WHEN** the user edits the pulled message and presses Enter while a turn runs
-- **THEN** it returns to the end of the queue and the queue is no longer paused
+#### Scenario: Idle queue
+- **WHEN** nothing is running and the user queues two messages
+- **THEN** both wait, and neither is sent until a turn ends
 
-#### Scenario: Meter
-- **WHEN** a message is queued four steps into a turn
-- **THEN** the status line still counts four steps
+#### Scenario: Pop
+- **WHEN** the user runs `/queue pop 1`
+- **THEN** the first queued message is in the draft and gone from the queue
 
-### Requirement: A draft can steer the running turn
+### Requirement: Queued messages are edited in place
 
-The system SHALL, on Ctrl+X, give the draft to the running turn before the model's next step and draw it as a user row marked `(steered)`, and SHALL send it as Enter does when no turn runs.
+The system SHALL walk from an empty draft through queued messages, newest first, and then history on ↑, and back on ↓, SHALL open a queued message in the composer, SHALL save it in its place on Enter or on leaving it, and SHALL remove it when saved empty.
+
+#### Scenario: Edit the next message
+- **WHEN** two messages are queued and the user presses ↑ twice on an empty draft
+- **THEN** the older one is open in the composer and highlighted in the queue
+
+#### Scenario: Save
+- **WHEN** the user changes the open message and presses Enter
+- **THEN** it keeps its place in the queue with the new text
+
+#### Scenario: Delete by emptying
+- **WHEN** the user clears the open message and presses Enter
+- **THEN** it is gone from the queue
+
+### Requirement: Enter steers a running turn
+
+The system SHALL, on Enter while a turn runs, give the draft to that turn before the model's next step and draw it as a user row marked `(steered)`.
 
 #### Scenario: Steer
-- **WHEN** a turn is running a tool and the user types `use pnpm, not npm` and presses Ctrl+X
-- **THEN** the model's next request carries that message and the turn goes on
-
-### Requirement: Ctrl+S stashes the draft
-
-The system SHALL stash a non-empty draft on Ctrl+S and clear it, and SHALL pop the newest stash into an empty draft.
-
-#### Scenario: Stash and pop
-- **WHEN** the user presses Ctrl+S on `half a thought`, then Ctrl+S again on the empty draft
-- **THEN** the draft is `half a thought` again and the stash is empty
+- **WHEN** a turn is running a tool and the user types `use pnpm, not npm` and presses Enter
+- **THEN** the model's next request carries it and the turn goes on

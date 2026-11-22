@@ -4,29 +4,35 @@
 
 A message sent while a turn runs goes straight to the worker: it shows in the
 transcript at once, cannot be edited or held back, and restarts the running
-turn's timer and step count. There is no way to steer a running turn, and
-stashing a draft needs a typed command.
+turn's timer and step count. A running turn cannot be steered. Stash is a
+second list for the same job.
 
 ## What Changes
 
-- A message sent during a turn waits in a queue drawn dim above the
-  composer, and is sent when the turn ends, oldest first.
-- Up on an empty draft pulls the newest queued message back for editing and
-  pauses the queue. Enter puts it back and resumes.
-- Ctrl+X sends the draft into the running turn, read before the model's next
-  step. With no turn running it sends as Enter does.
-- Ctrl+S stashes the draft, or pops the newest stash into an empty draft.
+- Enter sends when idle and steers a running turn: the message joins the
+  turn before the model's next step.
+- Alt+Enter, or Ctrl+Q in any terminal, queues the draft. Queued messages
+  show dim above the composer and are sent in order as turns end.
+- ↑/↓ from an empty draft move through queued messages, then history. A
+  queued message opens in the composer for editing; Enter saves it in its
+  place, and saving it empty deletes it.
+- While a queued message is open, the running turn waits before its next
+  step and carries on when it is saved or left.
+- `/queue` replaces `/stash`: list, `pop n`, `delete n`, `clear`. A queue
+  with nothing running is what the stash was.
+- Shift+Enter, or Ctrl+J in any terminal, inserts a newline; Alt+Enter no
+  longer does.
 - A message sent during a turn no longer resets the turn's meter.
 
 ## Keyboard and resources
 
-New keys: Ctrl+X and Ctrl+S; Up gains a meaning while messages wait. Raw
-mode already clears flow control, so Ctrl+S reaches imp. The queue lives in
-memory per session.
+Ctrl+Q reaches imp because raw mode clears flow control. Alt+Enter needs
+"Option as Meta" on macOS terminals, so Ctrl+Q is shown beside it. Shift+Enter
+needs the kitty keyboard protocol, so Ctrl+J is shown beside it.
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `tui`: a message queue, steering, and a stash key.
-- `agent-loop`: steering messages join a running turn.
+- `tui`: keys, the queue, and `/queue` for `/stash`.
+- `agent-loop`: steering and pausing a running turn.
