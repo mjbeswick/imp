@@ -19,7 +19,7 @@ accent block with no headings.
 - Fenced code lines carry a `│ ` gutter in the border colour.
 - List markers are accent; quote text is italic; a rule spans the width in
   the border colour.
-- Thinking rows are italic.
+- Thinking rows and other muted asides are italic.
 - Picker descriptions are muted and its title bold.
 - The status line's unseen and waiting counts are accent.
 - `/help` section titles are bold and its keys and commands accent.

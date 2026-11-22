@@ -60,7 +60,7 @@ The system SHALL paint `#` headings bold, underlined, and in the accent colour, 
 
 ### Requirement: Interface rows carry emphasis
 
-The system SHALL set thinking rows in italic, SHALL paint picker descriptions muted on rows that are not highlighted, SHALL paint the picker title bold, SHALL paint the status line's unseen and waiting counts in the accent colour, and SHALL show `/help` section titles bold with keys and commands in the accent colour.
+The system SHALL set thinking rows and the other muted asides, such as the task summary and the welcome hint, in italic, SHALL paint picker descriptions muted on rows that are not highlighted, SHALL paint the picker title bold, SHALL paint the status line's unseen and waiting counts in the accent colour, and SHALL show `/help` section titles bold with keys and commands in the accent colour.
 
 #### Scenario: Thinking
 - **WHEN** a thinking row is shown in a colour terminal

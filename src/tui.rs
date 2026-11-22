@@ -1504,31 +1504,20 @@ fn mark_current(current: bool, about: &str) -> String {
 fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool) -> Vec<String> {
     let item = &picker.items[index];
     let marker = if at == picker.index { "▸" } else { " " };
-    if !picker.items.iter().any(|item| !item.desc.is_empty()) {
+    let Some(start) = desc_column(picker, inner) else {
         return vec![format!("{marker} {}", item.label)];
-    }
-    let mut left = picker
-        .items
-        .iter()
-        .map(|item| item.label.chars().count())
-        .max()
-        .unwrap_or(0)
-        .max(10)
-        + 2;
+    };
+    let left = start - 4;
     let mut label = item.label.clone();
     let mut desc = item.desc.clone();
     if picker.kind != PickKind::Command {
-        // The right column stays whole, one space off the wall; the
-        // label gives way.
-        let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
-        left = left.min(inner.saturating_sub(2 + 2 + wide + 1)).max(4);
         label = fit(&label, left);
         if picker.kind == PickKind::Session {
             // Counts line up on their last digit.
+            let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
             desc = format!("{desc:>wide$}");
         }
     }
-    let start = 2 + left + 2;
     let room = inner.saturating_sub(start);
     if more && room >= 8 && picker.kind != PickKind::Session && desc.chars().count() > room {
         let mut parts = wrap(&desc, room);
@@ -1546,6 +1535,21 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
         }
     }
     vec![format!("{marker} {label:<left$}  {desc}")]
+}
+
+/// The column a picker's descriptions start at, or `None` when it has none.
+fn desc_column(picker: &Picker, inner: usize) -> Option<usize> {
+    if !picker.items.iter().any(|item| !item.desc.is_empty()) {
+        return None;
+    }
+    let mut left = picker.items.iter().map(|item| item.label.chars().count()).max().unwrap_or(0).max(10) + 2;
+    if picker.kind != PickKind::Command {
+        // The right column stays whole, one space off the wall; the
+        // label gives way.
+        let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+        left = left.min(inner.saturating_sub(2 + 2 + wide + 1)).max(4);
+    }
+    Some(2 + left + 2)
 }
 
 /// The visible list as drawn lines, each with its item index and highlight.
@@ -4463,7 +4467,12 @@ impl App {
         for (n, (role, line)) in visible.into_iter().enumerate() {
             let mut row = String::new();
             match line {
-                Line::Text(text) => row.push_str(&self.marked(*role, &fit(text, cols))),
+                Line::Text(text) => {
+                    let painted = self.marked(*role, &fit(text, cols));
+                    // Muted asides, reasoning first, are italic.
+                    let italic = if *role == Role::Thinking { "3" } else { "" };
+                    row.push_str(&self.palette.styled(italic, painted));
+                }
                 Line::Spans(spans) => {
                     row.push_str(&self.paint_spans(*role, spans));
                     if let Some(target) = labels[n].clone() {
@@ -4502,7 +4511,7 @@ impl App {
                 self.targets.extend(chip_targets(first + i, &unpaint(row)));
             }
         }
-        screen.push(self.palette.paint(Role::Thinking, &self.status_line(cols)));
+        screen.push(self.paint_status(cols));
 
         let mut tail = String::new();
         if let Some((overlay, cursor_x, cursor_y, targets)) = self.overlay(cols, rows) {
@@ -4740,7 +4749,8 @@ impl App {
             format!(
                 "{}{} {}{}",
                 line(&format!("{l}─ ")),
-                self.palette.paint(tone, &label),
+                // The title is bold; the footer's hints are not.
+                self.palette.styled(if tone == Role::Assistant { "1" } else { "" }, self.palette.paint(tone, &label)),
                 line(&"─".repeat(fill)),
                 line(&format!("{right}{r}"))
             )
@@ -4767,11 +4777,18 @@ impl App {
                 .paint(Role::Border, &format!("├{}┤", "─".repeat(inner))),
         );
 
+        let column = desc_column(picker, inner);
         for (text, _, selected) in &lines {
-            block.push(format!(
-                "{wall}{}{wall}",
-                self.boxed(text, inner, *selected)
-            ));
+            let row = match column.filter(|_| !*selected) {
+                // Descriptions are muted, except on the highlighted row.
+                Some(at) => {
+                    let row = self.boxed(text, inner, false);
+                    let cut = row.char_indices().nth(at).map_or(row.len(), |(i, _)| i);
+                    format!("{}{}", &row[..cut], self.palette.paint(Role::Thinking, &row[cut..]))
+                }
+                None => self.boxed(text, inner, *selected),
+            };
+            block.push(format!("{wall}{row}{wall}"));
         }
         block.push(edge('╰', '╯', &picker.footer(), "", Role::Thinking));
 
@@ -4979,6 +4996,21 @@ impl App {
             offset += line.len() + 1;
         }
         self.input.len()
+    }
+
+    /// The status line, muted, with the unseen and waiting counts in accent.
+    fn paint_status(&self, cols: usize) -> String {
+        let status = self.status_line(cols);
+        let mut painted = self.palette.paint(Role::Thinking, &status);
+        // What `paint` put ahead of the text: the muted colour, to resume after a count.
+        let muted = painted.strip_suffix(&format!("{status}\x1b[0m")).unwrap_or("").to_string();
+        let counts = [(self.unseen, format!("↑ {}", self.unseen)), (self.waiting(), format!("{} waiting", self.waiting()))];
+        for (n, count) in counts {
+            if self.palette.on && n > 0 {
+                painted = painted.replacen(&count, &format!("{}{muted}", self.palette.paint(Role::Info, &count)), 1);
+            }
+        }
+        painted
     }
 
     fn status_line(&self, cols: usize) -> String {
@@ -7020,6 +7052,41 @@ mod tests {
         assert!(out.contains(&accent("• ")), "marker: {out:?}");
         assert!(out.contains(&format!("\x1b[3m{}", a.palette.paint(Role::Thinking, "said"))), "quote: {out:?}");
         assert!(out.contains(&format!("\x1b[4m{}", a.palette.paint(Role::Link, "docs"))), "link: {out:?}");
+    }
+
+    #[test]
+    fn interface_rows_carry_emphasis() {
+        let mut a = colour_app();
+        let (tx, _cmds) = channel();
+        a.push(Role::Thinking, "pondering");
+        let out = a.frame(60, 12);
+        let thinking = a.palette.paint(Role::Thinking, "~ pondering");
+        assert!(out.contains(&format!("\x1b[3m{thinking}")), "thinking: {out:?}");
+        let colour = a.palette.paint(Role::Thinking, "").replace("\x1b[0m", "");
+        // Command picker: title bold, other rows' descriptions muted.
+        a.input = "/".into();
+        a.cursor = 1;
+        a.sync_menu();
+        let out = a.frame(80, 30);
+        assert!(out.contains("\x1b[1m"), "no bold title: {out:?}");
+        let Some(Pending::Pick(p)) = &a.pending else { panic!("no picker") };
+        let second = &p.items[p.matches()[1]].desc;
+        let head: String = second.chars().take(10).collect();
+        let at = out.find(&head).expect("description not shown");
+        let before = &out[..at];
+        assert!(before.rfind(&colour) > before.rfind("\x1b[0m"), "description not muted: {out:?}");
+        // The unseen count is accent, the rest of the status line muted.
+        a.pending = None;
+        a.input.clear();
+        for i in 0..20 {
+            a.push(Role::User, format!("line {i}"));
+        }
+        a.frame(60, 8);
+        a.handle_key(Key::PageUp, &tx);
+        a.push(Role::User, "more");
+        let out = a.frame(60, 8);
+        let count = format!("↑ {}", a.unseen);
+        assert!(out.contains(&a.palette.paint(Role::Info, &count)), "count: {out:?}");
     }
 
     #[test]
