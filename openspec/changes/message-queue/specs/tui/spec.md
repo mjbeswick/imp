@@ -64,6 +64,22 @@ The system SHALL provide Enter to send, or during a turn to steer or queue by th
 - **WHEN** the user presses Alt+Enter or Ctrl+J, or the terminal reports Shift+Enter
 - **THEN** a newline is inserted and nothing is sent
 
+#### Scenario: Ctrl+C stops a turn
+- **WHEN** a turn is running, the draft is empty, and the user presses Ctrl+C
+- **THEN** the turn stops and imp stays open
+
+#### Scenario: Ctrl+C clears a draft first
+- **WHEN** a turn is running and the draft holds text
+- **THEN** Ctrl+C clears the draft and the turn goes on
+
+#### Scenario: Ctrl+C on a prompt
+- **WHEN** a confirmation is open and the user presses Ctrl+C
+- **THEN** the command does not run, the turn stops, and imp stays open
+
+#### Scenario: Quitting takes two
+- **WHEN** nothing runs, the draft is empty, and the user presses Ctrl+C
+- **THEN** a line says `Ctrl+C again to quit`, and a second Ctrl+C within two seconds exits
+
 ### Requirement: Twenty-three slash commands, no more
 
 The system SHALL provide exactly `/help`, `/new`, `/goal`, `/copy`, `/sessions`, `/agent`, `/reload`, `/compact`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/queue`, `/rename`, and `/quit`, SHALL run them without sending a request to the model, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.

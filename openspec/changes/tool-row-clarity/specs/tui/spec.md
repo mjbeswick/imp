@@ -60,6 +60,26 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 - **WHEN** the user presses Ctrl+E after a tool call
 - **THEN** the latest turn's tool rows expand, and Ctrl+O goes to the next waiting session instead
 
+#### Scenario: Newline keys
+- **WHEN** the user presses Alt+Enter or Ctrl+J, or the terminal reports Shift+Enter
+- **THEN** a newline is inserted and nothing is sent
+
+#### Scenario: Ctrl+C stops a turn
+- **WHEN** a turn is running, the draft is empty, and the user presses Ctrl+C
+- **THEN** the turn stops and imp stays open
+
+#### Scenario: Ctrl+C clears a draft first
+- **WHEN** a turn is running and the draft holds text
+- **THEN** Ctrl+C clears the draft and the turn goes on
+
+#### Scenario: Ctrl+C on a prompt
+- **WHEN** a confirmation is open and the user presses Ctrl+C
+- **THEN** the command does not run, the turn stops, and imp stays open
+
+#### Scenario: Quitting takes two
+- **WHEN** nothing runs, the draft is empty, and the user presses Ctrl+C
+- **THEN** a line says `Ctrl+C again to quit`, and a second Ctrl+C within two seconds exits
+
 ### Requirement: Tool activity is one line each
 
 The system SHALL render each tool call as one row with what it does, its arguments, and elapsed time, SHALL animate the leading spinner at least every 100 ms while it runs, SHALL replace it with a bold mark when it finishes: `✓` when done, `!` in the accent colour when a command ran and exited non-zero, `✗` in the muted colour when the user declined, and `✗` in the error colour for any other failure, SHALL put a preview on indented lines and wrap to that indent, SHALL show the last three output lines of a non-zero exit with their line breaks kept, SHALL show a decline once, as `declined` on its row, SHALL update the row in place, SHALL charge only the tool's work, SHALL show failures with their reason in the error colour, SHALL expand or collapse every tool row of the latest turn on Ctrl+E and one such row on a click, and SHALL show expanded arguments as `$ <command>` for a shell call and as `key: value` lines otherwise.

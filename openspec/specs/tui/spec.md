@@ -7,7 +7,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard first
 
-The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand the last tool output, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
+The system SHALL send on Enter, steer or queue during a turn by the mode, newline on Shift+Enter, Alt+Enter, or Ctrl+J, cancel a turn on Esc, retry on Ctrl+R, toggle tool rows on Ctrl+E, toggle thinking on Ctrl+T and Ctrl+H, clear the view on Ctrl+L, scroll on PgUp and PgDn, stop a turn or clear a draft on Ctrl+C, ask for a second Ctrl+C before quitting, exit on Ctrl+D, decode control bytes and `CSI` sequences alike, and never type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -63,7 +63,27 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 
 #### Scenario: Expand moved
 - **WHEN** the user presses Ctrl+E after a tool call
-- **THEN** the last tool output expands, and Ctrl+O goes to the next waiting session instead
+- **THEN** the latest turn's tool rows expand, and Ctrl+O goes to the next waiting session instead
+
+#### Scenario: Newline keys
+- **WHEN** the user presses Alt+Enter or Ctrl+J, or the terminal reports Shift+Enter
+- **THEN** a newline is inserted and nothing is sent
+
+#### Scenario: Ctrl+C stops a turn
+- **WHEN** a turn is running, the draft is empty, and the user presses Ctrl+C
+- **THEN** the turn stops and imp stays open
+
+#### Scenario: Ctrl+C clears a draft first
+- **WHEN** a turn is running and the draft holds text
+- **THEN** Ctrl+C clears the draft and the turn goes on
+
+#### Scenario: Ctrl+C on a prompt
+- **WHEN** a confirmation is open and the user presses Ctrl+C
+- **THEN** the command does not run, the turn stops, and imp stays open
+
+#### Scenario: Quitting takes two
+- **WHEN** nothing runs, the draft is empty, and the user presses Ctrl+C
+- **THEN** a line says `Ctrl+C again to quit`, and a second Ctrl+C within two seconds exits
 
 ### Requirement: Every rendered line fits the terminal
 
@@ -271,7 +291,7 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 
 ### Requirement: The status line reports tokens and cost
 
-The system SHALL show the model name, the served model string when the API reports one that differs from the configured name, the estimated context tokens, and the running cost of the messages sent in the current process, SHALL abbreviate token counts at or above 1,000 with K and at or above 1,000,000 with M using one decimal, SHALL render cost with two decimals, SHALL NOT show the cache hit share or the permission mode, and SHALL omit a figure it cannot compute rather than guessing.
+The system SHALL show the model name, the served model when it differs, the estimated context tokens, and the cost of this process's messages, SHALL abbreviate 1,000 as K and 1,000,000 as M with one decimal, SHALL render cost with two decimals, SHALL NOT show the cache hit share, SHALL show the permission mode only when it is not `normal`, and SHALL omit a figure it cannot compute.
 
 #### Scenario: Abbreviated tokens
 - **WHEN** the estimated context is 3,400 tokens
@@ -299,7 +319,7 @@ The system SHALL show the model name, the served model string when the API repor
 
 #### Scenario: Removed signals
 - **WHEN** any frame is drawn
-- **THEN** the status line contains no cache percentage and no permission mode
+- **THEN** the status line contains no cache percentage, and no permission mode while the mode is `normal`
 
 #### Scenario: Unknown model
 - **WHEN** the configured model has no price entry
@@ -435,7 +455,7 @@ The system SHALL print help in named sections, SHALL show defaults as `(default:
 
 #### Scenario: Command sections
 - **WHEN** the user runs `/help`
-- **THEN** keys and commands appear in separate sections with aligned rows
+- **THEN** the commands appear in sections with aligned rows, no keys section, and a last line pointing to `?` and `/keys`
 
 #### Scenario: Narrow terminal
 - **WHEN** the width is 60 columns
@@ -863,7 +883,7 @@ The system SHALL provide exactly `/help`, `/keys`, `/diff`, `/new`, `/goal`, `/c
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all twenty-three commands appear with a one-line description
+- **THEN** all twenty-five commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -1189,7 +1209,7 @@ The system SHALL align every description in one help output to one column two sp
 
 ### Requirement: Yolo shows in colour
 
-The system SHALL paint the composer prompt glyph and the rule above the composer in the error colour while the live mode is `yolo`, SHALL paint the line-mode prompt the same way, SHALL leave the status line text unchanged, and SHALL emit nothing extra when colour is off.
+The system SHALL paint the composer prompt glyph and the rule above the composer in the error colour while the live mode is `yolo`, SHALL paint the line-mode prompt the same way, SHALL name the mode in the status line, and SHALL emit no colour when colour is off.
 
 #### Scenario: Yolo on
 - **WHEN** the user runs `/mode yolo` in a colour terminal
@@ -1201,7 +1221,7 @@ The system SHALL paint the composer prompt glyph and the rule above the composer
 
 #### Scenario: No colour
 - **WHEN** colour is off and the mode is `yolo`
-- **THEN** the frame is identical to the `normal` frame
+- **THEN** the frame differs from the `normal` frame only by `yolo` in the status line
 
 ### Requirement: Eleven roles cover the screen
 
@@ -1321,7 +1341,7 @@ The system SHALL remove control characters and escape sequences, other than newl
 
 ### Requirement: A keys card lists the chat keys
 
-The system SHALL open a keys card listing the chat keys in the picker overlay when the user types `?` into an empty composer, SHALL close it with Esc or `?`, and SHALL show the keys that act in every overlay and confirmation in that view's bottom edge or hint.
+The system SHALL open a keys card listing the chat keys in the picker overlay when the user types `?` into an empty composer or runs `/keys`, SHALL close it with Esc or `?`, and SHALL show the keys that act in every overlay and confirmation in that view's bottom edge or hint.
 
 #### Scenario: Keys card
 - **WHEN** the composer is empty and the user types `?`
@@ -1330,6 +1350,10 @@ The system SHALL open a keys card listing the chat keys in the picker overlay wh
 #### Scenario: Question mark in text
 - **WHEN** the composer holds `why` and the user types `?`
 - **THEN** the composer reads `why?` and no card opens
+
+#### Scenario: Keys command
+- **WHEN** the user runs `/keys`
+- **THEN** the keys card opens, and each key with a fallback shows it, such as `Alt+Enter, Ctrl+Q`
 
 ### Requirement: Redraws reuse rendered rows
 
@@ -1405,10 +1429,10 @@ The system SHALL render a closed fenced block whose language has a `render.<lang
 
 ### Requirement: Suggestions are accepted with one key
 
-The system SHALL draw a suggestion greyed out in an empty input with no key hint after it, SHALL fill the input with it on Tab or Right, SHALL drop it as soon as the user types, sends, or a turn starts, and SHALL NOT send it on Enter alone.
+The system SHALL draw a suggestion greyed out in an empty input with no key hint after it, SHALL fill the input with it on Right, SHALL drop it as soon as the user types, sends, or a turn starts, and SHALL NOT send it on Enter alone.
 
 #### Scenario: Accept
-- **WHEN** the input is empty, `run the tests` is suggested, and the user presses Tab then Enter
+- **WHEN** the input is empty, `run the tests` is suggested, and the user presses Right then Enter
 - **THEN** `run the tests` is sent
 
 #### Scenario: Typed over
@@ -1708,3 +1732,23 @@ The system SHALL use a syntax colour on a diff row only where it reaches a contr
 #### Scenario: Strong colour kept
 - **WHEN** the theme is `default` and an added Rust line holds a string
 - **THEN** the string is in the success colour
+
+### Requirement: Tab cycles the agent and Shift+Tab the mode
+
+The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo` on Shift+Tab, applying it at once, SHALL cycle agent profiles on Tab when the draft is empty and no picker is open, applying a change made during a turn when that turn ends, SHALL write one transcript line for each change, and SHALL show the agent in the status line when more than one exists, and the mode when it is not `normal`.
+
+#### Scenario: Mode
+- **WHEN** the mode is `strict` and the user presses Shift+Tab
+- **THEN** the mode is `yolo`, the prompt and rule turn to the error colour, and one line says so
+
+#### Scenario: Agent
+- **WHEN** two agents exist, the draft is empty, and the user presses Tab
+- **THEN** the other agent is active for the next message
+
+#### Scenario: Mid-turn agent
+- **WHEN** a turn is running and the user presses Tab
+- **THEN** the status line shows the coming agent and the switch happens when the turn ends
+
+#### Scenario: Text in the draft
+- **WHEN** the draft holds `fix` and the user presses Tab
+- **THEN** nothing changes
