@@ -258,12 +258,7 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
                     fence = None;
                     continue;
                 }
-                for body in std::mem::take(&mut fence_body) {
-                    rows.extend(hard_wrap(
-                        &[Span::styled(body, Style { fence: true, ..Style::default() })],
-                        width,
-                    ));
-                }
+                rows.extend(fence_rows(&std::mem::take(&mut fence_body), width));
                 fence = None;
             } else {
                 fence_body.push(line.to_string());
@@ -286,6 +281,10 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
             continue;
         }
 
+        if matches!(line.trim(), "---" | "***") {
+            rows.push(vec![Span::styled("─".repeat(width), Style { border: true, ..Style::default() })]);
+            continue;
+        }
         let (prefix, rest, style) = block(line);
         let indent = prefix.chars().count();
         let body = inline(rest, style, links);
@@ -314,11 +313,21 @@ pub fn lines(markdown: &str, width: usize, links: bool) -> Vec<Vec<Span>> {
     }
 
     // An unterminated fence is still shown as code, which is what the model meant.
-    for body in fence_body {
-        rows.extend(hard_wrap(
-            &[Span::styled(body, Style { fence: true, ..Style::default() })],
-            width,
-        ));
+    rows.extend(fence_rows(&fence_body, width));
+    rows
+}
+
+/// A fenced block's body rows behind a `│ ` gutter in the border colour.
+/// The gutter counts as fence, so a block keeps one copy label.
+fn fence_rows(body: &[String], width: usize) -> Vec<Vec<Span>> {
+    let gutter = Style { border: true, fence: true, ..Style::default() };
+    let mut rows = Vec::new();
+    for line in body {
+        let code = [Span::styled(line.clone(), Style { fence: true, ..Style::default() })];
+        for mut row in hard_wrap(&code, width.saturating_sub(2).max(1)) {
+            row.insert(0, Span::styled("│ ", gutter));
+            rows.push(row);
+        }
     }
     rows
 }
@@ -514,16 +523,13 @@ fn block(line: &str) -> (String, &str, Style) {
     let depth = line.len() - inner.len();
     if depth > 0 && !inner.is_empty() {
         let (prefix, rest, style) = block(inner);
-        if !prefix.is_empty() && !prefix.starts_with('│') && !prefix.starts_with('─') {
+        if !prefix.is_empty() && !prefix.starts_with('│') {
             return (format!("{}{prefix}", " ".repeat(depth.min(8))), rest, style);
         }
     }
     let dim = Style { dim: true, ..Style::default() };
     if line.trim().is_empty() {
         return (String::new(), line, Style::default());
-    }
-    if line.trim() == "---" || line.trim() == "***" {
-        return ("─".repeat(8), "", dim);
     }
     for (heading, mark) in [(1, "# "), (2, "## "), (3, "### ")] {
         if let Some(rest) = line.strip_prefix(mark) {
@@ -943,8 +949,9 @@ mod tests {
         let open = lines("```imptest\nA --> C", 30, false);
         assert!(open.iter().all(|r| !r[0].style.raw), "an open fence was drawn");
         let failed = lines("```impfail\nx\n```", 30, false);
-        assert_eq!(failed[0][0].text, "x");
-        assert!(failed[0][0].style.fence);
+        assert_eq!(failed[0][0].text, "│ ");
+        assert_eq!(failed[0][1].text, "x");
+        assert!(failed[0][1].style.fence);
     }
 
     #[test]
@@ -952,9 +959,21 @@ mod tests {
         let text = "before\n```\n**not bold**\n```\nafter";
         let rows = lines(text, 80, false);
         let joined = plain(&rows);
-        assert!(joined.iter().any(|r| r == "**not bold**"));
-        assert!(rows[1][0].style.fence, "the fence body should be marked");
-        assert!(!rows[1][0].style.code, "a fence body is not inline code");
+        assert!(joined.iter().any(|r| r == "│ **not bold**"));
+        assert!(rows[1][0].style.border, "the gutter is in the border colour");
+        assert!(rows[1][1].style.fence, "the fence body should be marked");
+        assert!(!rows[1][1].style.code, "a fence body is not inline code");
+    }
+
+    #[test]
+    fn a_fence_gutter_and_a_rule_fit_54_columns() {
+        let long = "x".repeat(80);
+        let rows = lines(&format!("```\n{long}\n```\n---"), 54, false);
+        let text = plain(&rows);
+        assert!(text.iter().all(|r| r.chars().count() <= 54), "{text:?}");
+        assert!(text[..text.len() - 1].iter().all(|r| r.starts_with("│ ")), "{text:?}");
+        assert_eq!(text.last().unwrap(), &"─".repeat(54));
+        assert!(rows.last().unwrap()[0].style.border);
     }
 
     #[test]

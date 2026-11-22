@@ -8,7 +8,7 @@
 ## 2. Markdown
 
 - [x] 2.1 Heading levels, underlined links, accent list markers, italic quotes; tests
-- [ ] 2.2 Fence gutter and full-width rule; tests at 54 columns
+- [x] 2.2 Fence gutter and full-width rule; tests at 54 columns
 
 ## 3. Interface
 
