@@ -42,4 +42,4 @@ attachment and reports `removed [image …]`; with none, nothing is said.
 
 ## Size
 
-Expected: 1 to 2 KB.
+Expected: 1 to 2 KB. Measured: `__text` +3036, `__cstring` +10; the new build also held the uncommitted diff-style theme helpers, so the true figure is a little lower.
