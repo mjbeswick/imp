@@ -12,8 +12,10 @@ imp links libcurl. An aarch64 Linux build on macOS needs a linker and a
 sysroot holding the device's `libcurl.so` and glibc. The plan copies those
 from the device once into `target/sysroot/` and links against them.
 
-## Open questions
+## Decisions
 
-- Toolchain: `cargo-zigbuild` (one tool, pins glibc) or rustup target plus a
-  linker from Homebrew. Leaning zigbuild.
-- Should measure.sh run in CI or by hand only?
+- **Toolchain: `cargo-zigbuild`.** One tool, and it pins the glibc version
+  to the device's, so the binary loads there. Rejected: a rustup target plus
+  a Homebrew linker, which needs the glibc pin set by hand.
+- **Measure by hand.** There is no CI; `measure.sh` runs when figures change.
+- **Stable Rust only.** Releases do not use nightly or `build-std`.

@@ -8,7 +8,7 @@
 ## 2. Cross-build
 
 - [ ] 2.1 Sysroot with the device's libcurl and glibc under `target/sysroot/`
-- [ ] 2.2 `deploy.sh` cross-builds and copies; `--native` keeps the old path
+- [ ] 2.2 `deploy.sh` cross-builds with `cargo zigbuild`, pinned to the device's glibc, and copies; `--native` keeps the old path
 - [ ] 2.3 The deployed binary runs `--version` on the device
 
 ## 3. Device
