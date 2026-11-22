@@ -3251,52 +3251,19 @@ impl App {
                 self.anchor.get_or_insert(self.cursor);
                 self.move_caret(m);
             }
-            Key::Word(m) => {
-                self.cursor = word_edge(&self.input, self.cursor, m == Move::Right);
-                self.dirty = true;
-            }
             Key::SelectWord(m) => {
                 self.anchor.get_or_insert(self.cursor);
                 self.cursor = word_edge(&self.input, self.cursor, m == Move::Right);
                 self.dirty = true;
             }
-            Key::Ctrl('a') | Key::Ctrl('u') | Key::Ctrl('k') => {
-                // The caret's row of the draft, not the whole draft.
-                let start = self.input[..self.cursor].rfind('\n').map_or(0, |i| i + 1);
-                let end = self.input[self.cursor..].find('\n').map_or(self.input.len(), |i| self.cursor + i);
-                match key {
-                    Key::Ctrl('a') => self.cursor = start,
-                    Key::Ctrl('u') => {
-                        self.input.replace_range(start..self.cursor, "");
-                        self.cursor = start;
-                        self.sync_menu();
-                    }
-                    _ => {
-                        self.input.replace_range(self.cursor..end, "");
-                        self.sync_menu();
-                    }
-                }
-                self.dirty = true;
-            }
-            Key::DeleteWord(_) | Key::Ctrl('w') => {
-                let forward = matches!(key, Key::DeleteWord(true));
-                let edge = word_edge(&self.input, self.cursor, forward);
-                let (from, to) = if forward { (self.cursor, edge) } else { (edge, self.cursor) };
-                if from < to {
+            Key::Word(_) | Key::Ctrl('a' | 'u' | 'k' | 'w') | Key::DeleteWord(_) | Key::Delete => {
+                let before = self.input.len();
+                edit_line(&mut self.input, &mut self.cursor, &key, "");
+                if self.input.len() != before {
                     self.follow_tail();
-                    self.input.replace_range(from..to, "");
-                    self.cursor = from;
                     self.sync_menu();
                 }
                 self.dirty = true;
-            }
-            Key::Delete => {
-                if self.cursor < self.input.len() {
-                    self.follow_tail();
-                    let next = next_boundary(&self.input, self.cursor);
-                    self.input.replace_range(self.cursor..next, "");
-                    self.sync_menu();
-                }
             }
             Key::Ctrl('q') => {
                 if self.queue_at.is_some() {
@@ -6724,6 +6691,42 @@ fn verb(what: &str) -> &'static str {
 /// The byte where the word after (`forward`) or before the caret at `i`
 /// ends: spaces and punctuation are skipped first, as readline does. A word
 /// is letters, digits, and `_`.
+/// One edit to a line of text at `caret`: typing, deleting by character,
+/// word, or row, caret moves, and pasting `clip` on Ctrl+V. The composer and
+/// the answer row share it. Returns false for a key it does not edit with.
+fn edit_line(text: &mut String, caret: &mut usize, key: &Key, clip: &str) -> bool {
+    let c = (*caret).min(text.len());
+    let start = text[..c].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[c..].find('\n').map_or(text.len(), |i| c + i);
+    let (cut, at) = match key {
+        Key::Char(ch) => {
+            text.insert(c, *ch);
+            (None, c + ch.len_utf8())
+        }
+        Key::Ctrl('v') => {
+            text.insert_str(c, clip);
+            (None, c + clip.len())
+        }
+        Key::Backspace => (Some(previous_boundary(text, c)..c), previous_boundary(text, c)),
+        Key::Delete => (Some(c..next_boundary(text, c)), c),
+        Key::Left => (None, previous_boundary(text, c)),
+        Key::Right => (None, next_boundary(text, c)),
+        Key::Home | Key::Ctrl('a') => (None, start),
+        Key::End => (None, end),
+        Key::Word(m) => (None, word_edge(text, c, *m == Move::Right)),
+        Key::DeleteWord(true) => (Some(c..word_edge(text, c, true)), c),
+        Key::DeleteWord(false) | Key::Ctrl('w') => (Some(word_edge(text, c, false)..c), word_edge(text, c, false)),
+        Key::Ctrl('u') => (Some(start..c), start),
+        Key::Ctrl('k') => (Some(c..end), c),
+        _ => return false,
+    };
+    if let Some(range) = cut {
+        text.replace_range(range, "");
+    }
+    *caret = at;
+    true
+}
+
 fn word_edge(s: &str, i: usize, forward: bool) -> usize {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     if forward {
