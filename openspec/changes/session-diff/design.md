@@ -11,9 +11,10 @@
 
 ## Tracking
 
-The session keeps `originals: Vec<(PathBuf, Option<String>)>`: the file's
-text before imp's first `edit` or `write` touched it, or `None` when it did
-not exist. Over 1 MB or not UTF-8, only the path is kept.
+The session keeps `originals: Vec<(PathBuf, Before)>`, recorded once the
+write is allowed and before it happens: `Text` of the file before imp's
+first `edit` or `write` touched it, `Missing` when it did not exist, or
+`Untracked` when it was over 1 MB or not UTF-8, which is listed, not diffed.
 
 ## Diff
 

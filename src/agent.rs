@@ -71,6 +71,16 @@ pub struct Goal {
     pub rounds: u32,
 }
 
+/// A file before imp first changed it this session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Before {
+    /// It did not exist.
+    Missing,
+    Text(String),
+    /// Over 1 MB or not UTF-8: listed, not diffed.
+    Untracked,
+}
+
 /// What one task has used so far: steps and tokens over all its requests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TaskTotals {
@@ -228,6 +238,8 @@ pub struct Session {
     declined: bool,
     pub last_model: Option<String>,
     pub attachments: Vec<Image>,
+    /// Each file `edit` or `write` touched this session, as it was before.
+    pub originals: Vec<(std::path::PathBuf, Before)>,
     /// Messages the user steered into the running turn, taken between steps.
     pub steer: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// Set by the chat while a queued message is edited: the turn waits
@@ -288,6 +300,7 @@ impl Session {
             last_model: None,
             attachments: Vec::new(),
             steer: Default::default(),
+            originals: Vec::new(),
             hold: Default::default(),
             transport: Box::new(Live),
             memory,
@@ -373,6 +386,21 @@ impl Session {
         loaded.retain(|m| m.role != crate::api::Role::System);
         self.history = system;
         self.history.extend(loaded);
+    }
+
+    /// Keep a file as it was before imp first changed it this session, for
+    /// `/diff`. Over 1 MB or not text, only the path is kept.
+    fn remember_original(&mut self, raw: &str) {
+        let Ok(path) = self.tools.resolve(raw) else { return };
+        if self.originals.iter().any(|(p, _)| *p == path) {
+            return;
+        }
+        let before = match std::fs::metadata(&path) {
+            Err(_) => Before::Missing,
+            Ok(m) if m.len() > 1024 * 1024 => Before::Untracked,
+            Ok(_) => std::fs::read_to_string(&path).map_or(Before::Untracked, Before::Text),
+        };
+        self.originals.push((path, before));
     }
 
     fn say(&mut self, message: Message) {
@@ -1154,6 +1182,7 @@ impl Session {
                 if let Err(why) = self.allowed_write(path, hooks) {
                     return (false, why.replace("{what}", "write"));
                 }
+                self.remember_original(path);
                 let o = self.tools.write(path, content);
                 (o.ok, o.text)
             }
@@ -1173,6 +1202,7 @@ impl Session {
                 if let Err(why) = self.allowed_write(path, hooks) {
                     return (false, why.replace("{what}", "edit"));
                 }
+                self.remember_original(path);
                 let o = self.tools.edit(path, &pairs);
                 (o.ok, o.text)
             }
@@ -2494,6 +2524,29 @@ mod tests {
         let mut hooks = Notes(Vec::new());
         s.turn("go", &mut hooks).unwrap();
         assert_eq!(hooks.0, vec!["cancelled".to_string()]);
+    }
+
+    #[test]
+    fn the_first_version_of_each_changed_file_is_kept() {
+        let (mut s, _fake) = scripted(vec![]);
+        let root = s.tools.root.clone();
+        std::fs::write(root.join("calc.py"), "a - b\n").unwrap();
+        std::fs::write(root.join("big.bin"), vec![0xffu8; 16]).unwrap();
+        let big = std::fs::File::create(root.join("large.txt")).unwrap();
+        big.set_len(2 * 1024 * 1024).unwrap();
+        let edit = json!({"path": "calc.py", "edits": [{"old": "a - b", "new": "a + b"}]});
+        assert!(s.run_tool("edit", &edit, &mut Null).0);
+        let again = json!({"path": "calc.py", "edits": [{"old": "a + b", "new": "a * b"}]});
+        assert!(s.run_tool("edit", &again, &mut Null).0);
+        s.run_tool("write", &json!({"path": "notes.md", "content": "new"}), &mut Null);
+        s.remember_original("big.bin");
+        s.remember_original("large.txt");
+        let found = |name: &str| s.originals.iter().find(|(p, _)| p.ends_with(name)).map(|(_, b)| b.clone());
+        assert_eq!(found("calc.py"), Some(Before::Text("a - b\n".into())), "the second edit replaced the first version");
+        assert_eq!(found("notes.md"), Some(Before::Missing));
+        assert_eq!(found("big.bin"), Some(Before::Untracked));
+        assert_eq!(found("large.txt"), Some(Before::Untracked));
+        assert_eq!(s.originals.len(), 4);
     }
 
     #[test]
