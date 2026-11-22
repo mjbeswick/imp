@@ -3532,7 +3532,10 @@ impl App {
         match cmd {
             "help" => {
                 let width = self.cols.load(Ordering::Relaxed) as usize;
-                self.push(Role::Info, crate::help::commands(width.saturating_sub(2).max(40), true))
+                let help = crate::help::commands(width.saturating_sub(2).max(40), true, self.palette.on);
+                // Shown output keeps its codes; help's cyan becomes the accent.
+                let accent = self.palette.paint(Role::Info, "").replace("\x1b[0m", "");
+                self.push(Role::Info, format!("{RAW}{}", help.replace("\x1b[36m", &accent)))
             }
             "quit" | "exit" => self.quit = true,
             other if other == "agent" || other.starts_with("agent ") => {
@@ -7087,6 +7090,21 @@ mod tests {
         let out = a.frame(60, 8);
         let count = format!("↑ {}", a.unseen);
         assert!(out.contains(&a.palette.paint(Role::Info, &count)), "count: {out:?}");
+    }
+
+    #[test]
+    fn help_titles_are_bold_and_commands_accent() {
+        let mut a = colour_app();
+        let (tx, _cmds) = channel();
+        a.run_command("help", &tx);
+        let out = a.frame(80, 60);
+        assert!(out.contains("\x1b[1mKeys\x1b[0m"), "{out:?}");
+        assert!(out.contains(&a.palette.paint(Role::Info, "/compact")), "{out:?}");
+        assert!(!out.contains("\x1b[36m"), "terminal cyan left in: {out:?}");
+        // Without colour, /help has no escapes.
+        let mut b = app();
+        b.run_command("help", &tx);
+        assert!(!b.frame(80, 60).contains("\x1b[1m"));
     }
 
     #[test]

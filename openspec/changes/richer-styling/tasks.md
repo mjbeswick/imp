@@ -13,4 +13,4 @@
 ## 3. Interface
 
 - [x] 3.1 Italic thinking, muted picker descriptions, bold picker title, accent status counts; tests
-- [ ] 3.2 `/help` with bold titles and accent cells; test
+- [x] 3.2 `/help` with bold titles and accent cells; test

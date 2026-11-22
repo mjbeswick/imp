@@ -235,7 +235,8 @@ pub fn usage(width: usize, color: bool) -> String {
 }
 
 /// `/help`, wrapped to `width`, with the keys of the chat or of line mode.
-pub fn commands(width: usize, chat: bool) -> String {
+/// `color` gives bold titles and cells in SGR 36, which the chat swaps for its accent.
+pub fn commands(width: usize, chat: bool, color: bool) -> String {
     let desc = |name: &str| {
         COMMANDS
             .iter()
@@ -247,7 +248,7 @@ pub fn commands(width: usize, chat: bool) -> String {
         sections.push((title, names.iter().map(|n| (*n, desc(n))).collect()));
     }
     let mut out = String::new();
-    table(&mut out, &sections, width, false);
+    table(&mut out, &sections, width, color);
     out.push('\n');
     let note = "Anything else goes to the model. Prefix a line with `!` to run it as a shell command.";
     out.push_str(&wrap(note, width).join("\n"));
@@ -406,7 +407,7 @@ mod tests {
 
     #[test]
     fn keys_are_rows() {
-        let text = commands(80, true);
+        let text = commands(80, true, false);
         assert!(text.contains("Ctrl+C"), "{text}");
         assert!(text.contains("Shift+Enter"), "{text}");
         assert!(text.contains("PgUp, PgDn"), "{text}");
@@ -414,7 +415,7 @@ mod tests {
 
     #[test]
     fn line_mode_lists_only_its_own_keys() {
-        let text = commands(80, false);
+        let text = commands(80, false, false);
         for key in ["Picker", "PgUp", "Tab", "Ctrl+E", "Esc"] {
             assert!(!text.contains(key), "{key} in line mode:\n{text}");
         }
@@ -429,7 +430,7 @@ mod tests {
             let n = GROUPS.iter().filter(|(_, g)| g.contains(name)).count();
             assert_eq!(n, 1, "{name} is in {n} groups");
         }
-        let text = commands(60, true);
+        let text = commands(60, true, false);
         for line in text.lines() {
             assert!(line.chars().count() <= 60, "too wide: {line:?}");
         }
@@ -441,7 +442,7 @@ mod tests {
 
     #[test]
     fn commands_describe_the_picker_forms() {
-        let text = commands(80, true);
+        let text = commands(80, true, false);
         for phrase in [
             "pick a session",
             "low, medium, high, or pick",

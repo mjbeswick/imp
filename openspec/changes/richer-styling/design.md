@@ -36,8 +36,10 @@ block.
 
 ## Help
 
-`help::commands` takes `color`. `/help` pushes its text behind `RAW`, so the
-SGR survives and `raw_rows` drops colour when the palette is off.
+`help::commands` takes `color`. `/help` asks for it when the palette is on,
+swaps `help.rs`'s SGR 36 for the theme accent, and pushes the text behind
+`RAW`, so the codes survive `clean`. Line mode and `--help` keep their own
+paths.
 
 ## Size
 
