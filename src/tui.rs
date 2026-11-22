@@ -709,6 +709,11 @@ fn unpaint(s: &str) -> String {
     out
 }
 
+/// `y` and `n` pick only when the choices are Yes and No; elsewhere they type.
+fn yes_no(opts: &[String]) -> bool {
+    matches!(opts, [y, n] if y.eq_ignore_ascii_case("yes") && n.eq_ignore_ascii_case("no"))
+}
+
 /// Click targets in one drawn row: each `[k] label` chip replays `k`, and
 /// `Esc stop` replays Esc. A chip runs to the next double space.
 fn chip_targets(row: usize, text: &str) -> Vec<(usize, usize, usize, Target)> {
@@ -5285,26 +5290,16 @@ impl App {
                 mut typed,
             } => match mode {
                 AskMode::Choose => match key {
-                    Key::Char('e') => {
-                        self.pending = Some(Pending::Question {
-                            q,
-                            opts,
-                            reply,
-                            mode: AskMode::Custom,
-                            typed,
-                        });
-                        self.dirty = true;
-                    }
                     Key::Esc => {
                         self.cancel.store(true, Ordering::Relaxed);
                         let _ = reply.send(None);
                         self.dirty = true;
                     }
-                    Key::Char('y') | Key::Char('Y') if opts.len() == 2 && !self.ask_multiple => {
+                    Key::Char('y') | Key::Char('Y') if yes_no(&opts) && !self.ask_multiple => {
                         let _ = reply.send(Some(opts[0].clone()));
                         self.dirty = true;
                     }
-                    Key::Char('n') | Key::Char('N') if opts.len() == 2 && !self.ask_multiple => {
+                    Key::Char('n') | Key::Char('N') if yes_no(&opts) && !self.ask_multiple => {
                         let _ = reply.send(Some(opts[1].clone()));
                         self.dirty = true;
                     }
@@ -5335,6 +5330,12 @@ impl App {
                         }
                         self.dirty = true;
                     }
+                    // Typing starts the answer, keeping the key typed.
+                    Key::Char(c) if !c.is_whitespace() => {
+                        typed.push(c);
+                        self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Custom, typed });
+                        self.dirty = true;
+                    }
                     _ => {
                         self.pending = Some(Pending::Question {
                             q,
@@ -5350,6 +5351,9 @@ impl App {
                         self.cancel.store(true, Ordering::Relaxed);
                         let _ = reply.send(None);
                         self.dirty = true;
+                    }
+                    Key::Enter if typed.is_empty() => {
+                        self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Custom, typed });
                     }
                     Key::Enter => {
                         let _ = reply.send(Some(typed.clone()));
@@ -6109,8 +6113,8 @@ impl App {
             }
         }
         parts.push(match mode {
-            AskMode::Choose if self.ask_multiple => (format!("[e] answer   Esc stop   1-{} mark   Enter send", opts.len()), 2, false),
-            AskMode::Choose => ("[e] answer   Esc stop".to_string(), 2, false),
+            AskMode::Choose if self.ask_multiple => (format!("type to answer   Esc stop   1-{} mark   Enter send", opts.len()), 2, false),
+            AskMode::Choose => ("type to answer   Esc stop".to_string(), 2, false),
             AskMode::Custom => (format!("> {typed}{CARET}"), 4, false),
         });
         let mut rows: Vec<(String, bool)> = Vec::new();
@@ -9872,7 +9876,7 @@ mod tests {
         assert!(out.contains("which database?\r\n"), "{out}");
         assert!(out.contains("▌ [2] postgres"), "{out}");
         assert!(out.contains("[1] sqlite"), "{out}");
-        assert!(out.contains("[e]"), "{out}");
+        assert!(out.contains("type to answer"), "{out}");
     }
 
     #[test]
@@ -10000,7 +10004,7 @@ mod tests {
         let text = strip(&out);
         assert!(text.contains("again)"), "the end of choice 1 was cut: {text}");
         assert!(text.contains("[3] Something else"), "{text}");
-        assert!(text.contains("[e] answer"), "{text}");
+        assert!(text.contains("type to answer"), "{text}");
     }
 
     #[test]
@@ -10017,6 +10021,46 @@ mod tests {
         let (cmd_tx, _cmd_rx) = channel();
         a.handle_key(Key::Char('y'), &cmd_tx);
         assert_eq!(rx.recv().unwrap().as_deref(), Some("Yes"));
+    }
+
+    #[test]
+    fn typing_starts_a_custom_answer() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.pending = Some(Pending::Question {
+            q: "which?".into(),
+            opts: vec!["Python".into(), "Rust".into()],
+            reply: tx,
+            mode: AskMode::Choose,
+            typed: String::new(),
+        });
+        assert!(strip(&a.frame(60, 20)).contains("type to answer   Esc stop"));
+        let (cmd_tx, _cmd_rx) = channel();
+        a.handle_key(Key::Enter, &cmd_tx);
+        for c in "yes, go".chars() {
+            a.handle_key(Key::Char(c), &cmd_tx);
+        }
+        assert!(rx.try_recv().is_err(), "y picked a choice that is not Yes");
+        assert!(strip(&a.frame(60, 20)).contains("> yes, go"), "the first letter was lost");
+        a.handle_key(Key::Enter, &cmd_tx);
+        assert_eq!(rx.recv().unwrap().as_deref(), Some("yes, go"));
+    }
+
+    #[test]
+    fn an_empty_answer_is_not_sent() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        a.pending = Some(Pending::Question {
+            q: "which?".into(),
+            opts: vec!["A".into(), "B".into(), "C".into()],
+            reply: tx,
+            mode: AskMode::Custom,
+            typed: String::new(),
+        });
+        let (cmd_tx, _cmd_rx) = channel();
+        a.handle_key(Key::Enter, &cmd_tx);
+        assert!(rx.try_recv().is_err(), "an empty answer was sent");
+        assert!(matches!(a.pending, Some(Pending::Question { mode: AskMode::Custom, .. })));
     }
 
     #[test]
