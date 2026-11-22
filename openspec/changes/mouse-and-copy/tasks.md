@@ -18,4 +18,4 @@
 
 ## 4. Docs
 
-- [ ] 4.1 README: clicks, copy, Ctrl+G, Ctrl+V, and the tmux and Terminal.app notes for OSC 52
+- [x] 4.1 README: clicks, copy, Ctrl+G, Ctrl+V, and the tmux and Terminal.app notes for OSC 52

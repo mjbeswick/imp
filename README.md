@@ -62,7 +62,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
-Ctrl+E expand the last tool call · Ctrl+D leaves line mode
+Ctrl+E expand the last tool call · Ctrl+V paste the copy · Ctrl+G release the mouse · Ctrl+D leaves line mode
 Ctrl+O next waiting · Ctrl+N/Ctrl+P next or previous session · ? keys, from an empty composer
 ```
 
@@ -230,10 +230,20 @@ anything is shown.
 
 ### Mouse
 
-The chat captures the mouse wheel, so it scrolls the conversation rather than
-the terminal's scrollback. Clicks are ignored; select text with your terminal's
-modifier, Option-drag in iTerm. `mouse=off` gives the mouse back to the
-terminal.
+The chat captures the mouse. The wheel scrolls the conversation rather than
+the terminal's scrollback. A click on a picker row, a `[y] yes` chip, a
+question option, or a picker hint does what its key does; `[a] always` takes
+a second click. Every click has a key.
+
+Each reply and code block shows a dim `⧉` at its right edge. Click it, or
+run `/copy` or `/copy code`, to copy. Ctrl+V pastes the copy into the
+composer. The copy also goes to the terminal clipboard over OSC 52, which
+iTerm2, Ghostty, kitty, and WezTerm accept and Terminal.app ignores; under
+tmux it needs `set -g set-clipboard on`.
+
+Ctrl+G hands the mouse to the terminal until the next key, so its own
+selection works; on kmscon, which has no Shift-drag bypass, that is the way to
+select. `mouse=off` gives the mouse back for good.
 
 ### Themes
 
