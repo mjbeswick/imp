@@ -837,7 +837,9 @@ fn print_ui_to<W: Write>(
             let _ = name;
         }
         Ui::ToolEnd { ok, preview, output, ms, .. } => {
-            let role = if ok { tui::Role::Tool } else { tui::Role::Error };
+            let finish = tui::Finish::of(ok, &output);
+            // A non-zero exit is an accent `!` row; the chat marks it the same.
+            let role = if finish == tui::Finish::Exited { tui::Role::Info } else { finish.role() };
             let time = tui::duration(ms);
             let preview = preview_lines(&render::clean(&preview));
             if ok {
@@ -849,7 +851,7 @@ fn print_ui_to<W: Write>(
                 writeln!(out, "  {}", palette.paint(role, &line))?;
             } else {
                 // The failure reason starts on its own indented line.
-                writeln!(out, "  {}", palette.paint(role, &format!("✗ {time}")))?;
+                writeln!(out, "  {}", palette.paint(role, &format!("{} {time}", finish.mark())))?;
                 for line in preview.lines() {
                     writeln!(out, "    {}", palette.paint(role, line.trim_end()))?;
                 }
@@ -1093,6 +1095,22 @@ mod tests {
         let plain: String = text.split('\x1b').map(|p| p.split_once('m').map_or(p, |(_, r)| r)).collect();
         assert!(plain.contains("  ✗ 1.4s\n    exit 1 hi\n"), "{plain:?}");
         assert!(!plain.lines().any(|l| l.ends_with(' ')), "{plain:?}");
+    }
+
+    #[test]
+    fn line_mode_marks_match_the_chat() {
+        let palette = tui::Palette::detect(&config::Config::default());
+        for (ok, output, want) in [
+            (false, "exit 1\nno tests", "  ! 1.4s\n"),
+            (false, "refused: the user declined to run this command", "  ✗ 1.4s\n"),
+            (false, "refused: outside the session", "  ✗ 1.4s\n"),
+        ] {
+            let mut out = Vec::new();
+            let end = Ui::ToolEnd { ok, preview: "why".into(), output: output.into(), detail: String::new(), ms: 1400 };
+            print_ui_to(&mut out, end, config::Verbosity::Low, &palette).unwrap();
+            let text = String::from_utf8(out).unwrap();
+            assert!(text.starts_with(want), "{output}: {text:?}");
+        }
     }
 
     #[test]
