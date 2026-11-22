@@ -2,7 +2,7 @@
 
 ## 1. Thinking
 
-- [ ] 1.1 Ctrl+T runs `/think`; keys card row; palette shows `/think · Ctrl+T`; tests
+- [x] 1.1 Ctrl+T runs `/think`; keys card row; palette shows `/think · Ctrl+T`; tests
 
 ## 2. Retry
 

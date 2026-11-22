@@ -23,6 +23,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Ctrl+U, Ctrl+K", "delete to the row's start or end"),
     ("Ctrl+L", "clear the screen"),
     ("Ctrl+E", "expand the latest turn's tool rows"),
+    ("Ctrl+T", "thinking on or off for the next turn"),
     ("Ctrl+V", "paste a clipboard image, or the last copy"),
     ("Ctrl+G", "release the mouse to select text"),
     ("Ctrl+O", "next session waiting on you"),

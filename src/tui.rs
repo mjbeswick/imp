@@ -2100,7 +2100,7 @@ const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
 ];
 
 /// Commands a key does exactly; the palette shows the key after the description.
-const COMMAND_KEYS: &[(&str, &str)] = &[("/keys", "?"), ("/next", "Ctrl+O")];
+const COMMAND_KEYS: &[(&str, &str)] = &[("/keys", "?"), ("/next", "Ctrl+O"), ("/think", "Ctrl+T")];
 
 /// Commands whose argument is typed rather than picked.
 const FREE_TEXT: &[&str] = &["queue", "rename", "diff"];
@@ -3301,6 +3301,7 @@ impl App {
                 let n = self.panes.len();
                 self.show((self.at + 1) % n);
             }
+            Key::Ctrl('t') => self.run_command("think", tx),
             Key::Ctrl('e') => {
                 self.toggle_tool();
                 self.dirty = true;
@@ -8667,6 +8668,18 @@ mod tests {
         assert_ne!(a.queue_mode, mode, "Ctrl+Q did not replay");
         a.palette_action("next-session", &tx);
         assert_eq!(a.entries.last().unwrap().text, "one session");
+    }
+
+    #[test]
+    fn ctrl_t_toggles_thinking() {
+        let mut a = app();
+        let (tx, rx) = channel();
+        let was = a.cfg.thinking;
+        a.handle_key(Key::Ctrl('t'), &tx);
+        assert_ne!(a.cfg.thinking, was, "Ctrl+T did not toggle thinking");
+        assert!(matches!(rx.try_recv(), Ok(Cmd::SetThinking(on)) if on != was));
+        let think = a.palette_items().into_iter().find(|i| i.label == "/think").unwrap();
+        assert!(think.desc.ends_with(" · Ctrl+T"), "{}", think.desc);
     }
 
     /// The keys a keys card row names. A row missing here fails the test.
