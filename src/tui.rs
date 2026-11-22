@@ -679,12 +679,27 @@ pub enum Key {
     End,
     PageUp,
     PageDown,
+    /// Forward delete; Shift+Delete too.
+    Delete,
+    /// Shift with Up, Down, Left, Right, Home, or End: extend the selection.
+    Select(Move),
     Ctrl(char),
     WheelUp,
     WheelDown,
     /// A left-button press at a 1-based column and row.
     Click(u16, u16),
     Unknown,
+}
+
+/// A caret move that a Shift turns into a selection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Move {
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
 }
 
 pub fn decode(buf: &mut Vec<u8>) -> Vec<Key> {
@@ -747,7 +762,15 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
             if let (Some(sgr), b'M' | b'm') = (params.strip_prefix(b"<"), b) {
                 return Some((i + 1, mouse(sgr, b == b'M')));
             }
+            // `1;2` is Shift; other modifiers keep the plain key.
+            let shift = params == b"1;2";
             let key = match b {
+                b'A' if shift => Key::Select(Move::Up),
+                b'B' if shift => Key::Select(Move::Down),
+                b'C' if shift => Key::Select(Move::Right),
+                b'D' if shift => Key::Select(Move::Left),
+                b'H' if shift => Key::Select(Move::Home),
+                b'F' if shift => Key::Select(Move::End),
                 b'A' => Key::Up,
                 b'B' => Key::Down,
                 b'C' => Key::Right,
@@ -758,6 +781,7 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
                 b'~' => match params {
                     b"5" => Key::PageUp,
                     b"6" => Key::PageDown,
+                    b"3" | b"3;2" => Key::Delete,
                     _ => Key::Unknown,
                 },
                 b'u' => disambiguated(params),
@@ -6102,10 +6126,30 @@ mod tests {
 
     #[test]
     fn modified_arrow_takes_no_parameters_as_text() {
-        let mut buf = b"\x1b[1;2A".to_vec();
+        // Shift selects; any other modifier keeps the plain arrow.
+        let mut buf = b"\x1b[1;5A".to_vec();
         let keys = decode(&mut buf);
         assert_eq!(keys.len(), 1);
         assert!(matches!(keys[0], Key::Up));
+    }
+
+    #[test]
+    fn shift_moves_and_delete_decode() {
+        let cases: [(&[u8], Key); 9] = [
+            (b"\x1b[1;2A", Key::Select(Move::Up)),
+            (b"\x1b[1;2B", Key::Select(Move::Down)),
+            (b"\x1b[1;2C", Key::Select(Move::Right)),
+            (b"\x1b[1;2D", Key::Select(Move::Left)),
+            (b"\x1b[1;2H", Key::Select(Move::Home)),
+            (b"\x1b[1;2F", Key::Select(Move::End)),
+            (b"\x1b[3~", Key::Delete),
+            (b"\x1b[3;2~", Key::Delete),
+            (b"\x1b[1;5D", Key::Left),
+        ];
+        for (bytes, want) in cases {
+            let mut buf = bytes.to_vec();
+            assert_eq!(decode(&mut buf), vec![want], "{bytes:?}");
+        }
     }
 
     #[test]

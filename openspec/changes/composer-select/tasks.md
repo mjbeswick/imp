@@ -2,7 +2,7 @@
 
 ## 1. Keys
 
-- [ ] 1.1 Decode Shift+arrows, Shift+Home/End, Delete, and Shift+Delete; tests for each sequence and for Ctrl+arrow staying plain
+- [x] 1.1 Decode Shift+arrows, Shift+Home/End, Delete, and Shift+Delete; tests for each sequence and for Ctrl+arrow staying plain
 
 ## 2. Selection
 
