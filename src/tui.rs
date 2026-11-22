@@ -3269,9 +3269,10 @@ impl App {
                 self.dirty = true;
             }
             Key::Up => {
-                let (row, col) = self.caret_position();
+                let rows = self.draft_rows_now();
+                let (row, col) = self.drawn_caret(&rows);
                 if row > 0 {
-                    self.cursor = self.cursor_at(row - 1, col);
+                    self.cursor = self.drawn_at(&rows, row - 1, col);
                     self.dirty = true;
                 } else if let Some(i) = self.queue_at {
                     // Older queued messages, then history.
@@ -3301,9 +3302,10 @@ impl App {
                 }
             }
             Key::Down => {
-                let (row, col) = self.caret_position();
-                if row + 1 < self.input.matches('\n').count() + 1 {
-                    self.cursor = self.cursor_at(row + 1, col);
+                let rows = self.draft_rows_now();
+                let (row, col) = self.drawn_caret(&rows);
+                if row + 1 < rows.len() {
+                    self.cursor = self.drawn_at(&rows, row + 1, col);
                     self.dirty = true;
                 } else if let Some(i) = self.queue_at {
                     // Newer queued messages, then an empty draft.
@@ -5826,24 +5828,30 @@ impl App {
             (&self.input[..], self.cursor)
         };
         let cursor = cursor.min(text.len());
-        let upto = &text[..cursor];
-        let caret_row = upto.matches('\n').count();
-        let caret_col = cursor - upto.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        // Two columns for the prefix, one for a caret at the row's end.
+        let width = cols.saturating_sub(3).max(1);
+        let rows = draft_rows(text, width);
+        let caret_row = rows
+            .iter()
+            .position(|(s, e)| cursor >= *s && cursor <= *e)
+            .unwrap_or(rows.len().saturating_sub(1));
         // The selection in this text's bytes, as the shell `!` shifts them.
         let off = usize::from(shell);
         let sel = self.selection().map(|(a, b)| (a.saturating_sub(off), b.saturating_sub(off)));
         let mut plain = Vec::new();
-        let mut at = 0;
-        for (i, line) in text.split('\n').enumerate() {
+        for (i, &(from, to)) in rows.iter().enumerate() {
+            let line = &text[from..to];
             // Marks at a byte: the selection's end, the caret, then its start,
-            // so the caret always sits outside the selection.
+            // so the caret always sits outside the selection. A selection that
+            // begins or ends on a row boundary belongs to the row it enters.
             let (s, e) = match sel {
-                Some((a, b)) if a < at + line.len() + 1 && b > at => {
-                    (Some(a.saturating_sub(at)), Some((b - at).min(line.len())).filter(|_| b <= at + line.len()))
-                }
-                _ => (None, None),
+                Some((a, b)) => (
+                    (a >= from && a < to).then(|| a - from),
+                    (b > from && b <= to).then(|| b - from),
+                ),
+                None => (None, None),
             };
-            let caret = (i == caret_row).then_some(caret_col.min(line.len()));
+            let caret = (i == caret_row).then(|| cursor - from);
             let mut body = String::new();
             let marks = |body: &mut String, pos: usize| {
                 if e == Some(pos) {
@@ -5861,7 +5869,6 @@ impl App {
                 body.push(ch);
             }
             marks(&mut body, line.len());
-            at += line.len() + 1;
             let prefix = if i != 0 {
                 "  "
             } else if shell {
@@ -5884,14 +5891,12 @@ impl App {
             .collect()
     }
 
-    /// Paint one composer row, keeping the tail when it is wider than the screen.
-    fn paint_composer_row(&self, row: &str, cols: usize) -> String {
+    /// Paint one composer row. Rows are already cut to the width.
+    fn paint_composer_row(&self, row: &str, _cols: usize) -> String {
         // The prompt glyph and its space; `»` is two bytes.
         let cut = row.char_indices().nth(2).map_or(row.len(), |(i, _)| i);
-        let (prefix, body) = row.split_at(cut);
-        // ponytail: the zero-width selection marks count toward the width, so
-        // a selected long row is cut two columns early.
-        let fitted = tail(body, cols.saturating_sub(2));
+        let (prefix, fitted) = row.split_at(cut);
+        let fitted = fitted.to_string();
         // A selection that runs on from the row before, or was cut off the
         // front, starts reversed.
         let open = fitted.contains(SEL_END) && fitted.find(SEL_START).is_none_or(|s| fitted.find(SEL_END) < Some(s));
@@ -5958,42 +5963,61 @@ impl App {
     /// Move the caret within the draft. Up and Down change rows only; the
     /// plain keys recall history themselves.
     fn move_caret(&mut self, m: Move) {
-        let (row, col) = self.caret_position();
+        let rows = self.draft_rows_now();
+        let (row, col) = self.drawn_caret(&rows);
         self.cursor = match m {
             Move::Left => previous_boundary(&self.input, self.cursor),
             Move::Right => next_boundary(&self.input, self.cursor),
             Move::Home => 0,
             Move::End => self.input.len(),
-            Move::Up if row > 0 => self.cursor_at(row - 1, col),
-            Move::Down if row < self.input.matches('\n').count() => self.cursor_at(row + 1, col),
+            Move::Up if row > 0 => self.drawn_at(&rows, row - 1, col),
+            Move::Down if row + 1 < rows.len() => self.drawn_at(&rows, row + 1, col),
             Move::Up | Move::Down => self.cursor,
         };
         self.dirty = true;
     }
 
-    /// Row and byte column of the caret within the input.
-    fn caret_position(&self) -> (usize, usize) {
-        let cursor = self.cursor.min(self.input.len());
-        let upto = &self.input[..cursor];
-        let row = upto.matches('\n').count();
-        let col = upto.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        (row, cursor - col)
+    /// The draft without the shell `!`, which is drawn as the prompt.
+    fn draft_text(&self) -> &str {
+        if self.input.starts_with('!') {
+            &self.input[1..]
+        } else {
+            &self.input
+        }
     }
 
-    /// Byte offset of a row and column, clamped to what the row holds.
-    fn cursor_at(&self, row: usize, col: usize) -> usize {
-        let mut offset = 0;
-        for (i, line) in self.input.split('\n').enumerate() {
-            if i == row {
-                let mut at = col.min(line.len());
-                while at > 0 && !line.is_char_boundary(at) {
-                    at -= 1;
-                }
-                return offset + at;
-            }
-            offset += line.len() + 1;
-        }
-        self.input.len()
+    /// The draft's drawn rows at the terminal's width.
+    fn draft_rows_now(&self) -> Vec<(usize, usize)> {
+        let cols = self.cols.load(Ordering::Relaxed) as usize;
+        let width = if cols >= 5 { cols - 3 } else { 77 };
+        draft_rows(self.draft_text(), width)
+    }
+
+    /// The caret's drawn row and its column in characters.
+    fn drawn_caret(&self, rows: &[(usize, usize)]) -> (usize, usize) {
+        let text = self.draft_text();
+        let off = usize::from(self.input.starts_with('!'));
+        let probe = self.cursor.saturating_sub(off).min(text.len());
+        let row = rows
+            .iter()
+            .position(|(s, e)| probe >= *s && probe <= *e)
+            .unwrap_or(rows.len().saturating_sub(1));
+        let (from, _) = rows[row];
+        (row, text[from..probe].chars().count())
+    }
+
+    /// The byte offset on a drawn row at a character column.
+    fn drawn_at(&self, rows: &[(usize, usize)], row: usize, col: usize) -> usize {
+        let Some(&(from, to)) = rows.get(row) else {
+            return self.input.len();
+        };
+        let text = self.draft_text();
+        let at = text[from..to]
+            .char_indices()
+            .nth(col)
+            .map(|(i, _)| from + i)
+            .unwrap_or(to);
+        at + usize::from(self.input.starts_with('!'))
     }
 
     /// The status line, muted, with the unseen and waiting counts in accent.
@@ -6211,6 +6235,34 @@ fn fit_path(path: &str, room: usize) -> Option<String> {
         }
     }
     (room >= 8).then(|| tail(last, room))
+}
+
+/// The draft as drawn rows: byte ranges in `text`, broken at the last space
+/// that fits in `width` columns, or mid-word when no space does.
+fn draft_rows(text: &str, width: usize) -> Vec<(usize, usize)> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut base = 0;
+    for line in text.split('\n') {
+        let chars: Vec<(usize, char)> = line.char_indices().collect();
+        let mut start = 0;
+        while chars.len() - start > width {
+            // A space stays on the row it ends, so no character is hidden.
+            let cut = chars[start..start + width]
+                .iter()
+                .rposition(|(_, c)| *c == ' ')
+                .map(|i| start + i + 1)
+                .unwrap_or(start + width);
+            let from = chars[start].0;
+            let to = chars[cut].0;
+            rows.push((base + from, base + to));
+            start = cut;
+        }
+        let from = chars.get(start).map(|(i, _)| *i).unwrap_or(line.len());
+        rows.push((base + from, base + line.len()));
+        base += line.len() + 1;
+    }
+    rows
 }
 
 fn tail(text: &str, width: usize) -> String {
@@ -7110,7 +7162,7 @@ mod tests {
         b.cursor = 5;
         b.handle_key(Key::Select(Move::Up), &tx);
         let out = b.frame(54, 10);
-        assert!(out.contains("> ab\x1b[7m \x1b[0m\x1b[7m\x1b[27m"), "{out:?}");
+        assert!(out.contains("> ab\x1b[7m \x1b[0m"), "{out:?}");
         assert!(out.contains("  \x1b[7mcd\x1b[27m"), "{out:?}");
         // A long selected draft still fits the width.
         let mut c = app();
@@ -9050,7 +9102,83 @@ mod tests {
             let visible = strip(line);
             assert!(visible.chars().count() <= 40, "{visible:?}");
         }
-        assert!(out.contains("…"), "a wide row is not marked as cut");
+        assert!(
+            !out.contains("…"),
+            "a wrapped row was cut instead of wrapped"
+        );
+        assert_eq!(out.matches('x').count(), 90, "the draft lost characters");
+    }
+
+    #[test]
+    fn draft_rows_break_at_spaces_and_keep_every_byte() {
+        let text = "the quick brown fox jumps over the lazy dog again and again and again";
+        let rows = draft_rows(text, 20);
+        assert!(rows.len() > 1);
+        assert_eq!(rows[0].0, 0);
+        assert_eq!(rows.last().unwrap().1, text.len());
+        for pair in rows.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "rows leave a gap");
+        }
+        for &(s, e) in &rows[1..rows.len() - 1] {
+            assert!(text[..e].ends_with(' '), "{:?} did not break at a space", &text[s..e]);
+            assert!(text[s..e].chars().count() <= 20);
+        }
+    }
+
+    #[test]
+    fn an_eighty_character_word_breaks_mid_word() {
+        let text = "x".repeat(80);
+        let rows = draft_rows(&text, 51);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|(s, e)| e - s <= 51));
+        assert_eq!(rows[0].1, 51, "a word that cannot break was not cut at the edge");
+    }
+
+    #[test]
+    fn a_wide_draft_is_drawn_across_rows() {
+        let mut a = app();
+        a.input = "word ".repeat(24);
+        a.cursor = a.input.len();
+        let out = strip(&a.frame(54, 12));
+        let lines: Vec<&str> = out.lines().map(|l| l.trim_end_matches('\r')).collect();
+        assert!(
+            lines.iter().all(|l| l.chars().count() <= 54),
+            "a row is wider than the terminal: {out:?}"
+        );
+        assert!(out.contains("> word word"), "the first row lost its glyph: {out:?}");
+        assert!(
+            lines.iter().any(|l| l.starts_with("  word")),
+            "no continuation row: {out:?}"
+        );
+        assert!(out.matches("word").count() >= 20, "the draft lost words: {out:?}");
+    }
+
+    #[test]
+    fn up_moves_inside_a_wrapped_line() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.input = "word ".repeat(30);
+        a.cursor = a.input.len();
+        a.frame(54, 12);
+        let before = a.draft_rows_now();
+        let (row, _) = a.drawn_caret(&before);
+        assert_eq!(row, before.len() - 1, "the caret is not on the last row");
+        a.handle_key(Key::Up, &tx);
+        let (row, _) = a.drawn_caret(&before);
+        assert_eq!(row, before.len() - 2, "Up did not move one drawn row");
+        assert_eq!(a.input.len(), 150, "Up changed the draft");
+    }
+
+    #[test]
+    fn up_on_the_top_row_recalls_history() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.input = "x".repeat(120);
+        a.cursor = 0;
+        a.frame(54, 12);
+        a.history.push("earlier".into());
+        a.handle_key(Key::Up, &tx);
+        assert_eq!(a.input, "earlier", "Up in the first row did not reach history");
     }
 
     #[test]
