@@ -782,6 +782,12 @@ pub enum Key {
     Delete,
     /// Shift with Up, Down, Left, Right, Home, or End: extend the selection.
     Select(Move),
+    /// Option or Alt with ←/→ (or Alt+B/F): move by word.
+    Word(Move),
+    /// Shift+Option with ←/→: extend the selection by word.
+    SelectWord(Move),
+    /// Delete a word: after the caret when true, before it otherwise.
+    DeleteWord(bool),
     Ctrl(char),
     WheelUp,
     WheelDown,
@@ -816,6 +822,19 @@ pub fn decode(buf: &mut Vec<u8>) -> Vec<Key> {
             if buf.len() >= 2 && buf[1] == b'\r' {
                 buf.drain(..2);
                 keys.push(Key::Newline);
+                continue;
+            }
+            // Alt sends ESC and the key in one write; a lone Esc arrives alone.
+            let alt = match buf.get(1) {
+                Some(b'b') => Some(Key::Word(Move::Left)),
+                Some(b'f') => Some(Key::Word(Move::Right)),
+                Some(b'd') => Some(Key::DeleteWord(true)),
+                Some(0x7f) | Some(0x08) => Some(Key::DeleteWord(false)),
+                _ => None,
+            };
+            if let Some(key) = alt {
+                buf.drain(..2);
+                keys.push(key);
                 continue;
             }
             buf.remove(0);
@@ -861,9 +880,15 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
             if let (Some(sgr), b'M' | b'm') = (params.strip_prefix(b"<"), b) {
                 return Some((i + 1, mouse(sgr, b == b'M')));
             }
-            // `1;2` is Shift; other modifiers keep the plain key.
+            // `1;2` is Shift, `1;3` Alt, `1;4` Shift+Alt; other modifiers
+            // keep the plain key.
             let shift = params == b"1;2";
+            let (alt, shift_alt) = (params == b"1;3", params == b"1;4");
             let key = match b {
+                b'C' if alt => Key::Word(Move::Right),
+                b'D' if alt => Key::Word(Move::Left),
+                b'C' if shift_alt => Key::SelectWord(Move::Right),
+                b'D' if shift_alt => Key::SelectWord(Move::Left),
                 b'A' if shift => Key::Select(Move::Up),
                 b'B' if shift => Key::Select(Move::Down),
                 b'C' if shift => Key::Select(Move::Right),
@@ -881,6 +906,7 @@ fn control_sequence(buf: &[u8]) -> Option<(usize, Key)> {
                     b"5" => Key::PageUp,
                     b"6" => Key::PageDown,
                     b"3" | b"3;2" => Key::Delete,
+                    b"3;3" => Key::DeleteWord(true),
                     // tmux, screen, and rxvt send Home and End this way.
                     b"1" | b"7" => Key::Home,
                     b"4" | b"8" => Key::End,
@@ -7376,6 +7402,28 @@ mod tests {
         ATT.store(false, SeqCst);
         put(b"b");
         assert_eq!(rx.recv_timeout(Duration::from_secs(2)).ok(), Some(b"b".to_vec()));
+    }
+
+    #[test]
+    fn alt_and_option_word_keys_decode() {
+        let cases: [(&[u8], Key); 9] = [
+            (b"\x1bb", Key::Word(Move::Left)),
+            (b"\x1bf", Key::Word(Move::Right)),
+            (b"\x1bd", Key::DeleteWord(true)),
+            (b"\x1b\x7f", Key::DeleteWord(false)),
+            (b"\x1b[1;3D", Key::Word(Move::Left)),
+            (b"\x1b[1;3C", Key::Word(Move::Right)),
+            (b"\x1b[1;4D", Key::SelectWord(Move::Left)),
+            (b"\x1b[1;4C", Key::SelectWord(Move::Right)),
+            (b"\x1b[3;3~", Key::DeleteWord(true)),
+        ];
+        for (bytes, want) in cases {
+            let mut buf = bytes.to_vec();
+            assert_eq!(decode(&mut buf), vec![want], "{bytes:?}");
+        }
+        // A lone Esc, and Esc followed by another key, stay Esc.
+        assert_eq!(decode(&mut b"\x1b".to_vec()), vec![Key::Esc]);
+        assert_eq!(decode(&mut b"\x1bx".to_vec()), vec![Key::Esc, Key::Char('x')]);
     }
 
     #[test]
