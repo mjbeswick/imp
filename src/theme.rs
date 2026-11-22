@@ -203,8 +203,63 @@ pub const THEMES: &[Theme] = &[
 /// A quiet background in a slot's hue: dark on dark themes, pale on light.
 /// Light text means a dark theme.
 pub fn tint(c: [u8; 3], text: [u8; 3]) -> [u8; 3] {
+    tint_by(c, text, 1)
+}
+
+/// White on dark themes, black on light: the text for changed words.
+pub fn strong_text(text: [u8; 3]) -> [u8; 3] {
+    if text.iter().map(|&v| v as u32).sum::<u32>() > 384 { [255; 3] } else { [0; 3] }
+}
+
+/// `tint` at `n` times the strength: 2 marks the changed words of a diff.
+pub fn tint_by(c: [u8; 3], text: [u8; 3], n: u32) -> [u8; 3] {
     let dark = text.iter().map(|&v| v as u32).sum::<u32>() > 384;
-    c.map(|v| if dark { (v as u32 * 22 / 100) as u8 } else { (255 - (255 - v as u32) * 12 / 100) as u8 })
+    c.map(|v| if dark { (v as u32 * 22 * n / 100) as u8 } else { (255 - (255 - v as u32) * 12 * n / 100) as u8 })
+}
+
+/// `tint_256` one cube step stronger, for changed words, with white or
+/// black text: the theme's text colour is too faint on it in some themes.
+pub fn tint_256_strong(c: [u8; 3], text: [u8; 3]) -> (u8, u8) {
+    let (bg, _) = tint_256(c, text);
+    let dark = text.iter().map(|&v| v as u32).sum::<u32>() > 384;
+    let i = bg - 16;
+    let step = |v: u8| if dark { (v + 1).min(5) } else { v.saturating_sub(1) };
+    let (r, g, b) = (i / 36, i / 6 % 6, i % 6);
+    // Only the strong channels move, so the hue stays.
+    let lift = |v: u8, base: u8| if v != base { step(v) } else { v };
+    let base = if dark { 0 } else { 5 };
+    let bg = 16 + 36 * lift(r, base) + 6 * lift(g, base) + lift(b, base);
+    // A lifted cube colour can be bright even on a dark theme: whichever of
+    // white and black reads better on it.
+    let on = from_256(bg);
+    let fg = if contrast([255; 3], on) >= contrast([0; 3], on) { 231 } else { 16 };
+    (bg, fg)
+}
+
+/// WCAG contrast ratio between two colours.
+pub fn contrast(a: [u8; 3], b: [u8; 3]) -> f64 {
+    let lum = |c: [u8; 3]| {
+        let f = |v: u8| {
+            let v = v as f64 / 255.0;
+            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
+    };
+    let (x, y) = (lum(a), lum(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+/// The 256-colour cube or grey ramp entry as RGB.
+pub fn from_256(i: u8) -> [u8; 3] {
+    const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    if i >= 232 {
+        [8 + 10 * (i - 232); 3]
+    } else if i >= 16 {
+        let i = i - 16;
+        [STEPS[(i / 36) as usize], STEPS[(i / 6 % 6) as usize], STEPS[(i % 6) as usize]]
+    } else {
+        [0x80; 3]
+    }
 }
 
 /// `tint` for 256 colours, as (background, text). The nearest entry turns
@@ -320,29 +375,6 @@ pub fn save(name: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn contrast(a: [u8; 3], b: [u8; 3]) -> f64 {
-        let lum = |c: [u8; 3]| {
-            let f = |v: u8| {
-                let v = v as f64 / 255.0;
-                if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
-            };
-            0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
-        };
-        let (x, y) = (lum(a), lum(b));
-        (x.max(y) + 0.05) / (x.min(y) + 0.05)
-    }
-
-    /// The 256-colour cube or grey ramp entry as RGB.
-    fn from_256(i: u8) -> [u8; 3] {
-        const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
-        if i >= 232 {
-            [8 + 10 * (i - 232); 3]
-        } else {
-            let i = i - 16;
-            [STEPS[(i / 36) as usize], STEPS[(i / 6 % 6) as usize], STEPS[(i % 6) as usize]]
-        }
-    }
-
     #[test]
     fn diff_text_reads_on_its_tint() {
         for t in THEMES {
@@ -371,6 +403,19 @@ mod tests {
             let true_c = contrast(fg, tint(code, fg));
             let fb_c = contrast(from_256(f256), from_256(b256));
             assert!(true_c >= 4.5 && fb_c >= 4.5, "{}: {true_c:.1} {fb_c:.1}", t.name);
+        }
+    }
+
+    #[test]
+    fn changed_words_read_on_the_stronger_tint() {
+        for t in THEMES.iter().filter(|t| t.name != "mono") {
+            let fg = t.rgb(Slot::Text);
+            for slot in [Slot::Success, Slot::Error] {
+                let true_c = contrast(strong_text(fg), tint_by(t.rgb(slot), fg, 2));
+                let (b, f) = tint_256_strong(t.rgb(slot), fg);
+                let fb_c = contrast(from_256(f), from_256(b));
+                assert!(true_c >= 4.5 && fb_c >= 4.5, "{} {slot:?}: {true_c:.1} {fb_c:.1}", t.name);
+            }
         }
     }
 

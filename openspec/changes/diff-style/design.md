@@ -59,7 +59,16 @@ passes everywhere.
   too. Rejected.
 
 The changed-word tint doubles the plain tint's strength: 44% of the colour
-on dark themes, 24% on light. A test keeps the text on it at 4.5:1.
+on dark themes, 24% on light. The theme's text colour fell under 4.5:1 on it
+in solarized-light even at a third more strength, so changed words are
+white on dark themes and black on light, at 6.65:1 or better. In 256 colours
+a lifted cube colour can be bright even on a dark theme, so the text there
+is whichever of white and black reads better. A test checks every theme at
+both depths.
+
+Diff rows carry one mark per character, the syntax kind in the low bits and
+a changed flag on top, and wrap by character so the marks stay aligned; a
+continuation starts under the code.
 
 ## Size
 

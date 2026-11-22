@@ -13,6 +13,7 @@ mod providers;
 mod render;
 mod secrets;
 mod store;
+mod syntax;
 mod theme;
 mod tools;
 mod transport;

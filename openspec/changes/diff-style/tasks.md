@@ -6,7 +6,7 @@
 
 ## 2. Changed words
 
-- [ ] 2.1 Pair removed and added runs and mark differing words; tests for a one-word change and an unpaired run
+- [x] 2.1 Pair removed and added runs and mark differing words; tests for a one-word change and an unpaired run
 
 ## 3. Syntax
 

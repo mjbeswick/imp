@@ -513,6 +513,24 @@ impl Palette {
         format!("{bg}{}\x1b[0m", self.paint(Role::User, text).replace("\x1b[0m", "\x1b[39m"))
     }
 
+    /// A run of a diff row: text colour on the row's tint, or on a tint
+    /// twice as strong and bold when the words changed.
+    pub(crate) fn diff_run(&self, role: Role, text: &str, mark: u8) -> String {
+        use crate::theme::{strong_text, tint_256, tint_256_strong, tint_by, Slot};
+        let band = self.theme.rgb(if role == Role::Add { Slot::Success } else { Slot::Error });
+        let fg = self.theme.rgb(Slot::Text);
+        let changed = mark & CHANGED != 0;
+        let attrs = if changed { "\x1b[1m" } else { "" };
+        if self.truecolor {
+            let [r, g, b] = tint_by(band, fg, if changed { 2 } else { 1 });
+            let [x, y, z] = if changed { strong_text(fg) } else { fg };
+            format!("\x1b[48;2;{r};{g};{b}m\x1b[38;2;{x};{y};{z}m{attrs}{text}\x1b[0m")
+        } else {
+            let (bg, f) = if changed { tint_256_strong(band, fg) } else { tint_256(band, fg) };
+            format!("\x1b[48;5;{bg}m\x1b[38;5;{f}m{attrs}{text}\x1b[0m")
+        }
+    }
+
     /// SGR attributes ahead of painted text. `mono` keeps them; `NO_COLOR`
     /// and `never` drop them with every other escape.
     pub(crate) fn styled(&self, codes: &str, painted: String) -> String {
@@ -1126,7 +1144,13 @@ impl WorkerHooks {
 struct Entry {
     role: Role,
     text: String,
+    /// For a diff row, one mark per character of `text`: its syntax kind in
+    /// the low bits and `CHANGED` for a word that differs from its pair.
+    marks: Vec<u8>,
 }
+
+/// The mark bit for a word that differs between a removed and an added line.
+const CHANGED: u8 = 0x80;
 
 /// One drawn row: plain text, or styled spans from the markdown renderer.
 enum Line {
@@ -1134,10 +1158,15 @@ enum Line {
     /// A tool row's last summary line, with its duration for the right edge.
     Timed(String, String),
     Spans(Vec<crate::render::Span>),
+    /// A diff row and its marks, one per character.
+    Diff(String, Vec<u8>),
 }
 
 /// One entry's rows at `cols`, led by a blank row when `gap` opens a turn.
 fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Role, Line)> {
+    if !entry.marks.is_empty() {
+        return diff_rows(entry, cols);
+    }
     let mut lines = Vec::new();
     if gap {
         lines.push((Role::User, Line::Text(String::new())));
@@ -1206,6 +1235,115 @@ fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Ro
         }
     }
     lines
+}
+
+/// A diff entry cut into rows by character, so the marks stay aligned.
+/// Continuations start under the code, past the indent and the sign.
+fn diff_rows(entry: &Entry, cols: usize) -> Vec<(Role, Line)> {
+    let chars: Vec<char> = entry.text.chars().collect();
+    let cols = cols.max(8);
+    let mut rows = Vec::new();
+    let mut at = 0;
+    while at < chars.len() || rows.is_empty() {
+        let lead = if at == 0 { 0 } else { 3 };
+        let end = (at + cols - lead).min(chars.len());
+        let text: String = " ".repeat(lead) + &chars[at..end].iter().collect::<String>();
+        let mut marks = vec![0u8; lead];
+        marks.extend((at..end).map(|i| entry.marks.get(i).copied().unwrap_or(0)));
+        rows.push((entry.role, Line::Diff(text, marks)));
+        at = end;
+    }
+    rows
+}
+
+/// Marks for diff lines: syntax kinds by extension, and the words that
+/// differ in each removed line paired, by position, with an added line in
+/// the run that follows it. One mark per character, the sign included.
+fn diff_marks(lines: &[String], ext: &str) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = lines
+        .iter()
+        .map(|l| {
+            let mut m = vec![0u8];
+            m.extend(crate::syntax::kinds(ext, l.get(1..).unwrap_or("")));
+            m.resize(l.chars().count().max(1), 0);
+            m
+        })
+        .collect();
+    let sign = |i: usize, c: char| lines.get(i).is_some_and(|l| l.starts_with(c));
+    let mut i = 0;
+    while i < lines.len() {
+        let dels = (i..lines.len()).take_while(|&j| sign(j, '-')).count();
+        let adds = (i + dels..lines.len()).take_while(|&j| sign(j, '+')).count();
+        for k in 0..dels.min(adds) {
+            let (a, b) = (i + k, i + dels + k);
+            let (old, new) = (&lines[a][1..], &lines[b][1..]);
+            // ponytail: O(n·m) on tokens; lines over 200 characters keep the plain tint.
+            if old.chars().count() <= 200 && new.chars().count() <= 200 {
+                let (gone, came) = changed_words(old, new);
+                for c in gone {
+                    out[a][c + 1] |= CHANGED;
+                }
+                for c in came {
+                    out[b][c + 1] |= CHANGED;
+                }
+            }
+        }
+        i += (dels + adds).max(1);
+    }
+    out
+}
+
+/// The character positions of words in `old` and `new` outside their
+/// longest common run of tokens: words, single punctuation, and spaces.
+fn changed_words(old: &str, new: &str) -> (Vec<usize>, Vec<usize>) {
+    fn tokens(s: &str) -> Vec<(usize, String)> {
+        let mut out: Vec<(usize, String)> = Vec::new();
+        for (i, c) in s.chars().enumerate() {
+            let word = |c: char| c.is_alphanumeric() || c == '_';
+            match out.last_mut() {
+                Some((_, t)) if word(c) && t.chars().all(word) => t.push(c),
+                Some((_, t)) if c == ' ' && t.chars().all(|x| x == ' ') => t.push(c),
+                _ => out.push((i, c.to_string())),
+            }
+        }
+        out
+    }
+    let (a, b) = (tokens(old), tokens(new));
+    let mut dp = vec![vec![0u16; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            dp[i][j] = if a[i].1 == b[j].1 { dp[i + 1][j + 1] + 1 } else { dp[i + 1][j].max(dp[i][j + 1]) };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let (mut gone, mut came) = (Vec::new(), Vec::new());
+    let spread = |t: &(usize, String), out: &mut Vec<usize>| {
+        if !t.1.starts_with(' ') {
+            out.extend(t.0..t.0 + t.1.chars().count());
+        }
+    };
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i].1 == b[j].1 {
+            i += 1;
+            j += 1;
+        } else if j < b.len() && (i == a.len() || dp[i][j + 1] >= dp[i + 1][j]) {
+            spread(&b[j], &mut came);
+            j += 1;
+        } else {
+            spread(&a[i], &mut gone);
+            i += 1;
+        }
+    }
+    (gone, came)
+}
+
+/// The extension of the `path` in a tool call's arguments, lower case.
+fn args_ext(args: &str) -> String {
+    let path = serde_json::from_str::<serde_json::Value>(args)
+        .ok()
+        .and_then(|v| v.get("path").and_then(|p| p.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
 }
 
 /// Starts an entry whose text is shown output with its own colours.
@@ -2352,12 +2490,23 @@ impl App {
 
     /// One diff row, indented under its tool row like a failure's reason.
     fn push_diff(&mut self, line: String) {
-        let role = match line.chars().next() {
-            Some('+') => Role::Add,
-            Some('-') => Role::Delete,
-            _ => Role::Context,
-        };
-        self.push(role, format!("  {line}"));
+        self.push_diffs(vec![line], "");
+    }
+
+    /// Diff rows for a file with extension `ext`, marked for syntax and for
+    /// the words that changed.
+    fn push_diffs(&mut self, lines: Vec<String>, ext: &str) {
+        let marks = diff_marks(&lines, ext);
+        for (line, m) in lines.into_iter().zip(marks) {
+            let role = match line.chars().next() {
+                Some('+') => Role::Add,
+                Some('-') => Role::Delete,
+                _ => Role::Context,
+            };
+            let marks = if matches!(role, Role::Add | Role::Delete) { [vec![0, 0], m].concat() } else { Vec::new() };
+            self.entries.push(Entry { role, text: format!("  {line}"), marks });
+        }
+        self.dirty = true;
     }
 
     /// Start another live session, or reset this one without a factory.
@@ -2423,6 +2572,7 @@ impl App {
         self.entries.push(Entry {
             role,
             text: text.into(),
+            marks: Vec::new(),
         });
         self.dirty = true;
     }
@@ -2559,9 +2709,7 @@ impl App {
                             let preview = preview_detail(&row.detail);
                             row.detail_count = preview.len();
                             row.detail_start = Some(start);
-                            for line in preview {
-                                self.push_diff(line);
-                            }
+                            self.push_diffs(preview, &args_ext(&row.args));
                         }
                         let text = tool_row_text(&row, self.verbosity);
                         if let Some(entry) = self.entries.get_mut(row.index) {
@@ -3120,9 +3268,7 @@ impl App {
                     preview_detail(&row.detail)
                 };
                 row.detail_count = lines.len();
-                for line in lines {
-                    self.push_diff(line);
-                }
+                self.push_diffs(lines, &args_ext(&row.args));
             }
         }
         self.tool = Some(row);
@@ -4861,7 +5007,7 @@ impl App {
             // Replies leave two columns for their copy label.
             let width = if self.cfg.mouse && entry.role == Role::Assistant { cols.saturating_sub(2) } else { cols };
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (width, markdown, gap, entry.role as u8, &entry.text).hash(&mut h);
+            (width, markdown, gap, entry.role as u8, &entry.text, &entry.marks).hash(&mut h);
             let key = h.finish();
             if self.drawn.get(i).map(|slot| slot.0) != Some(key) {
                 let slot = (key, entry_lines(entry, width, markdown, gap));
@@ -4963,6 +5109,7 @@ impl App {
                         self.targets.push((lead + n + 1, cols.saturating_sub(1), cols, target));
                     }
                 }
+                Line::Diff(text, marks) => row.push_str(&self.paint_diff(*role, text, marks, cols)),
                 Line::Timed(text, time) => {
                     row.push_str(&self.marked(*role, text));
                     let gap = cols.saturating_sub(text.chars().count() + time.chars().count());
@@ -5046,6 +5193,28 @@ impl App {
         self.shown = screen;
         self.shown_size = (cols, rows);
         self.shown_overlay = !tail.is_empty();
+        out
+    }
+
+    /// A diff row: each run of characters on the row's tint, twice as strong
+    /// for changed words, to the screen edge. Plain text with colour off.
+    fn paint_diff(&self, role: Role, text: &str, marks: &[u8], cols: usize) -> String {
+        if !self.palette.on {
+            return fit(text, cols);
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let lead = chars.iter().take_while(|c| **c == ' ').count();
+        let mut out: String = chars[..lead].iter().collect();
+        let mut i = lead;
+        while i < chars.len() {
+            let m = marks.get(i).copied().unwrap_or(0);
+            let j = (i..chars.len()).find(|&k| marks.get(k).copied().unwrap_or(0) != m).unwrap_or(chars.len());
+            out.push_str(&self.palette.diff_run(role, &chars[i..j].iter().collect::<String>(), m));
+            i = j;
+        }
+        if chars.len() < cols {
+            out.push_str(&self.palette.diff_run(role, &" ".repeat(cols - chars.len()), 0));
+        }
         out
     }
 
@@ -6971,6 +7140,26 @@ mod tests {
         assert!(matches!(&a.pending, Some(Pending::Pick(p)) if p.kind == PickKind::Keys));
         let out = strip(&a.frame(80, 30));
         assert!(out.contains("Ctrl+Q") && out.contains("Shift+Tab"), "{out:?}");
+    }
+
+    #[test]
+    fn changed_words_stand_out_in_paired_lines() {
+        let lines: Vec<String> = ["-let count = 3;", "+let count = 4;"].iter().map(|s| s.to_string()).collect();
+        let marks = diff_marks(&lines, "");
+        let changed = |i: usize| -> String {
+            lines[i].chars().zip(&marks[i]).filter(|(_, m)| **m & CHANGED != 0).map(|(c, _)| c).collect()
+        };
+        assert_eq!((changed(0), changed(1)), ("3".to_string(), "4".to_string()));
+        // An added run with nothing removed before it has no emphasis.
+        let lone: Vec<String> = ["+one", "+two"].iter().map(|s| s.to_string()).collect();
+        assert!(diff_marks(&lone, "").iter().flatten().all(|m| m & CHANGED == 0));
+        // Drawn: the changed word bold on the stronger tint.
+        let mut a = colour_app();
+        a.push_diffs(lines.clone(), "");
+        let out = a.frame(54, 10);
+        let fg = a.palette.theme.rgb(crate::theme::Slot::Text);
+        let [r, g, b] = crate::theme::tint_by(a.palette.theme.rgb(crate::theme::Slot::Success), fg, 2);
+        assert!(out.contains(&format!("\x1b[48;2;{r};{g};{b}m\x1b[38;2;255;255;255m\x1b[1m4")), "{out:?}");
     }
 
     #[test]
@@ -10152,9 +10341,9 @@ mod tests {
         a.push_diff("+short line".into());
         let out = a.frame(54, 8);
         let row = out.split("\r\n").find(|r| r.contains("+short line")).expect("diff row");
-        let band = row.split_once("+short line").unwrap().1;
-        let pad = band.split('\x1b').next().unwrap();
-        assert_eq!(2 + "+short line".len() + pad.len(), 54, "{row:?}");
+        let shown = strip(row);
+        assert_eq!(shown.trim_end_matches("\x1b[K").chars().count(), 54, "{row:?}");
+        assert!(row.ends_with("\x1b[0m") || row.ends_with("\x1b[0m\x1b[K"), "the band stops short: {row:?}");
         assert!(row.starts_with("  \x1b[48;2;"), "the indent must stay clear: {row:?}");
         // Without colour the row keeps its sign and no padding.
         let mut b = app();
