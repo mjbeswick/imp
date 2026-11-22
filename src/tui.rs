@@ -2096,8 +2096,13 @@ const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
     ("scroll up", "PgUp", "page-up"),
     ("scroll down", "PgDn", "page-down"),
     ("release the mouse", "Ctrl+G", "release"),
+    ("steer or queue", "Ctrl+Q", "queue-mode"),
+    ("paste", "Ctrl+V", "paste"),
     ("quit", "Ctrl+D", "quit"),
 ];
+
+/// Commands a key does exactly; the palette shows the key after the description.
+const COMMAND_KEYS: &[(&str, &str)] = &[("/keys", "?"), ("/next", "Ctrl+O")];
 
 /// Commands whose argument is typed rather than picked.
 const FREE_TEXT: &[&str] = &["queue", "rename", "diff"];
@@ -3568,7 +3573,10 @@ impl App {
             .map(|(name, desc)| PickItem {
                 label: name.to_string(),
                 value: format!("cmd:{}", name.trim_start_matches('/')),
-                desc: desc.to_string(),
+                desc: match COMMAND_KEYS.iter().find(|(c, _)| c == name) {
+                    Some((_, key)) => format!("{desc} · {key}"),
+                    None => desc.to_string(),
+                },
                 actions: Vec::new(),
             })
             .collect();
@@ -3590,9 +3598,13 @@ impl App {
                 let n = self.panes.len();
                 if n > 1 {
                     self.show((self.at + 1) % n);
+                } else {
+                    self.push(Role::Info, "one session");
                 }
             }
             "keys" => self.open_keys(),
+            "queue-mode" => self.handle_key_inner(Key::Ctrl('q'), tx),
+            "paste" => self.handle_key_inner(Key::Ctrl('v'), tx),
             "stop" => self.handle_key_inner(Key::Esc, tx),
             "expand" => self.handle_key_inner(Key::Ctrl('e'), tx),
             "clear" => self.handle_key_inner(Key::Ctrl('l'), tx),
@@ -8651,6 +8663,24 @@ mod tests {
         let a = app();
         let actions: Vec<String> = a.palette_items().into_iter().filter_map(|i| i.value.strip_prefix("key:").map(String::from)).collect();
         assert!(!actions.iter().any(|v| v == "thinking"), "/think is already a palette row");
+    }
+
+    #[test]
+    fn the_palette_shows_command_keys_and_more_actions() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let items = a.palette_items();
+        let desc = |label: &str| items.iter().find(|i| i.label == label).map(|i| i.desc.clone()).unwrap_or_default();
+        assert!(desc("/keys").ends_with(" · ?"), "{}", desc("/keys"));
+        assert!(desc("/next").ends_with(" · Ctrl+O"), "{}", desc("/next"));
+        assert!(!desc("/mode").contains('·'), "/mode does not do what Shift+Tab does");
+        assert_eq!(desc("steer or queue"), "Ctrl+Q");
+        assert_eq!(desc("paste"), "Ctrl+V");
+        let mode = a.queue_mode;
+        a.palette_action("queue-mode", &tx);
+        assert_ne!(a.queue_mode, mode, "Ctrl+Q did not replay");
+        a.palette_action("next-session", &tx);
+        assert_eq!(a.entries.last().unwrap().text, "one session");
     }
 
     #[test]
