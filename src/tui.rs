@@ -1415,6 +1415,8 @@ pub struct App {
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
     queue_at: Option<usize>,
+    /// The turn ended while a queued message was open; send on close.
+    queue_due: bool,
     /// Shared with the session: messages that join the running turn, and
     /// the flag that holds it while a queued message is edited.
     steer: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -1515,6 +1517,8 @@ struct Pane {
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
     queue_at: Option<usize>,
+    /// The turn ended while a queued message was open; send on close.
+    queue_due: bool,
     /// Shared with the session: messages that join the running turn, and
     /// the flag that holds it while a queued message is edited.
     steer: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -1551,6 +1555,7 @@ impl Pane {
             queue_mode: false,
             queued: Vec::new(),
             queue_at: None,
+            queue_due: false,
             steer: session_steer.clone(),
             hold: session_hold.clone(),
             hist_pos: None,
@@ -2099,6 +2104,7 @@ impl App {
             queue_mode: false,
             queued: Vec::new(),
             queue_at: None,
+            queue_due: false,
             steer: session_steer.clone(),
             hold: session_hold.clone(),
             history,
@@ -2172,6 +2178,7 @@ impl App {
         swap(&mut self.queue_mode, &mut p.queue_mode);
         swap(&mut self.queued, &mut p.queued);
         swap(&mut self.queue_at, &mut p.queue_at);
+        swap(&mut self.queue_due, &mut p.queue_due);
         swap(&mut self.steer, &mut p.steer);
         swap(&mut self.hold, &mut p.hold);
         swap(&mut self.hist_pos, &mut p.hist_pos);
@@ -2657,6 +2664,8 @@ impl App {
                 // The next queued message starts, unless one is being edited or
                 // the user stopped the turn: then the queue waits.
                 let stopped = self.cancel.load(Ordering::Relaxed);
+                // Ended while a queued message is open: it goes on when closed.
+                self.queue_due = self.queue_at.is_some() && !stopped;
                 if self.queue_at.is_none() && !stopped && !self.queued.is_empty() {
                     let text = self.queued.remove(0);
                     if let Some(tx) = self.worker.as_ref().map(|w| w.0.clone()) {
@@ -2961,6 +2970,21 @@ impl App {
                 if row > 0 {
                     self.cursor = self.cursor_at(row - 1, col);
                     self.dirty = true;
+                } else if let Some(i) = self.queue_at {
+                    // Older queued messages, then history.
+                    let kept = self.save_queued(tx, false);
+                    match kept.unwrap_or(i).checked_sub(1).filter(|&o| o < self.queued.len()) {
+                        Some(o) => self.open_queued(o),
+                        None if !self.history.is_empty() => {
+                            let last = self.history.len() - 1;
+                            self.hist_pos = Some(last);
+                            self.input = self.history[last].clone();
+                            self.cursor = self.input.len();
+                        }
+                        None => {}
+                    }
+                } else if self.input.is_empty() && self.hist_pos.is_none() && !self.queued.is_empty() {
+                    self.open_queued(self.queued.len() - 1);
                 } else if !self.history.is_empty() {
                     let pos = match self.hist_pos {
                         None => self.history.len() - 1,
@@ -2978,6 +3002,17 @@ impl App {
                 if row + 1 < self.input.matches('\n').count() + 1 {
                     self.cursor = self.cursor_at(row + 1, col);
                     self.dirty = true;
+                } else if let Some(i) = self.queue_at {
+                    // Newer queued messages, then an empty draft.
+                    let next = match self.save_queued(tx, false) {
+                        Some(i) => i + 1,
+                        None => i,
+                    };
+                    if next < self.queued.len() {
+                        self.open_queued(next);
+                    } else {
+                        self.release_queue(tx);
+                    }
                 } else if let Some(p) = self.hist_pos {
                     if p + 1 < self.history.len() {
                         self.hist_pos = Some(p + 1);
@@ -3337,6 +3372,11 @@ impl App {
     }
 
     fn submit(&mut self, tx: &Sender<Cmd>) {
+        // Enter on an open queued message saves it; empty, it is removed.
+        if self.queue_at.is_some() {
+            self.save_queued(tx, true);
+            return;
+        }
         if self.input.trim().is_empty() {
             return;
         }
@@ -3381,6 +3421,45 @@ impl App {
             return;
         }
         self.start_turn(text, tx);
+    }
+
+    /// Open queued message `i` in the composer and hold the running turn.
+    fn open_queued(&mut self, i: usize) {
+        self.queue_at = Some(i);
+        self.input = self.queued[i].clone();
+        self.cursor = self.input.len();
+        self.hold.store(true, Ordering::SeqCst);
+        self.dirty = true;
+    }
+
+    /// Put the open queued message back, or remove it when emptied, and
+    /// release the turn. Returns its index if it was kept. `closing` leaves
+    /// the queue rather than moving within it.
+    fn save_queued(&mut self, tx: &Sender<Cmd>, closing: bool) -> Option<usize> {
+        let i = self.queue_at.take()?;
+        self.hold.store(false, Ordering::SeqCst);
+        let text = std::mem::take(&mut self.input);
+        self.cursor = 0;
+        self.dirty = true;
+        let kept = if text.trim().is_empty() {
+            self.queued.remove(i);
+            None
+        } else {
+            self.queued[i] = text;
+            Some(i)
+        };
+        if closing {
+            self.release_queue(tx);
+        }
+        kept
+    }
+
+    /// A turn that ended while a queued message was open hands on now.
+    fn release_queue(&mut self, tx: &Sender<Cmd>) {
+        if std::mem::take(&mut self.queue_due) && !self.status.streaming && !self.queued.is_empty() {
+            let next = self.queued.remove(0);
+            self.start_turn(next, tx);
+        }
     }
 
     /// Show a user message and send it as a turn. A turn already running
@@ -5507,12 +5586,13 @@ impl App {
             0 => String::new(),
             n => format!(" · {n} waiting"),
         };
+        let paused = if self.queue_at.is_some() && self.status.streaming { " · paused · editing queue" } else { "" };
         let goal = match &self.status.goal {
             Some((_, round, rounds)) => format!(" · goal {round}/{rounds}"),
             None => String::new(),
         };
         let left = format!(
-            "{place}{model} · {} tok{money}{goal}{unseen}{thinking}{waiting}",
+            "{place}{model} · {} tok{money}{goal}{paused}{unseen}{thinking}{waiting}",
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
@@ -6635,6 +6715,54 @@ mod tests {
         b.cursor = 4;
         b.handle_key(Key::Enter, &tx);
         assert_eq!(b.status.steps, 3, "the meter restarted");
+    }
+
+    #[test]
+    fn queued_messages_are_walked_and_edited_in_place() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.history = vec!["old".into()];
+        a.queued = vec!["first".into(), "second".into()];
+        // Newest first, holding the turn, then older, then history.
+        a.handle_key(Key::Up, &tx);
+        assert_eq!((a.queue_at, a.input.as_str()), (Some(1), "second"));
+        assert!(a.hold.load(Ordering::SeqCst), "the turn is not held");
+        let shown = strip(&a.frame(70, 14));
+        assert!(shown.contains("editing queued 2/2 · Enter save · ↑↓ move"), "{shown:?}");
+        assert!(a.status_line(120).contains("paused · editing queue"));
+        a.handle_key(Key::Up, &tx);
+        assert_eq!((a.queue_at, a.input.as_str()), (Some(0), "first"));
+        a.handle_key(Key::Up, &tx);
+        assert_eq!((a.queue_at, a.input.as_str(), a.hist_pos), (None, "old", Some(0)));
+        assert!(!a.hold.load(Ordering::SeqCst), "the hold outlived the edit");
+        // Edit in place with Enter.
+        a.input.clear();
+        a.cursor = 0;
+        a.hist_pos = None;
+        a.handle_key(Key::Up, &tx);
+        a.input = "second, edited".into();
+        a.cursor = a.input.len();
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.queued, vec!["first", "second, edited"]);
+        assert!(a.queue_at.is_none() && a.input.is_empty());
+        assert!(cmds.try_recv().is_err(), "saving sent something");
+        // Emptied, it is removed.
+        a.handle_key(Key::Up, &tx);
+        a.input.clear();
+        a.cursor = 0;
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.queued, vec!["first"]);
+        // Down past the newest returns to an empty draft.
+        a.handle_key(Key::Up, &tx);
+        a.handle_key(Key::Down, &tx);
+        assert!(a.queue_at.is_none() && a.input.is_empty() && a.queued == vec!["first"]);
+        // A turn ending mid-edit waits for the edit, then goes on.
+        a.handle_key(Key::Up, &tx);
+        a.apply(Ev::Done(None));
+        assert!(cmds.try_recv().is_err(), "sent while being edited");
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "first"));
     }
 
     #[test]
