@@ -92,6 +92,22 @@ The system SHALL print help in named sections, SHALL show defaults as `(default:
 - **WHEN** the width is 60 columns
 - **THEN** no help row is wider than 60 and no flag name is cut
 
+#### Scenario: Hackberry width
+- **WHEN** the width is 54 or 40 columns
+- **THEN** no help row is wider than the screen, and at 40 each description sits under its cell
+
+#### Scenario: Default row
+- **WHEN** a flag has a default
+- **THEN** `(default: X)` is on its own row at the description column and is never split
+
+#### Scenario: Example note
+- **WHEN** `imp --help` lists `imp "why is the build failing?"`
+- **THEN** the row above it reads `# one request, then exit`
+
+#### Scenario: Colour
+- **WHEN** `imp --help` prints to a pipe or with `NO_COLOR` set
+- **THEN** it contains no escape sequences
+
 #### Scenario: Flag help
 - **WHEN** the user runs `imp --help` in an 80-column terminal
 - **THEN** no line exceeds 80 columns, every flag appears once, and defaults are shown

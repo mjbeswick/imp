@@ -411,7 +411,7 @@ The system SHALL persist submitted prompts to a history file, SHALL recall them 
 
 ### Requirement: Help is grouped, aligned, and shared
 
-The system SHALL print help in named sections, SHALL show defaults as `(default: X)` on their own row, SHALL indent long-only flags past the short-flag column, SHALL put each example's description above its command, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, SHALL colour `--help` only on a terminal without `NO_COLOR`, and SHALL use the same command table for `--help`, `/help`, and line mode.
+The system SHALL print help in named sections, SHALL show defaults as `(default: X)`, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, and SHALL use the same command table for `--help`, `/help`, and line mode.
 
 #### Scenario: Aligned sections
 - **WHEN** the user runs `imp --help`
@@ -1460,3 +1460,15 @@ The system SHALL show a path under the session directory in a tool row relative 
 
 - **WHEN** a labelled call writes into the scratch folder
 - **THEN** the tool row names it under `$IMP_TMP`
+
+### Requirement: Help fits narrow screens
+
+The system SHALL put `(default: X)` on its own row, SHALL indent long-only flags past the short-flag column, SHALL put each example's description above its command, SHALL move descriptions under their cells when fewer than 24 columns remain, and SHALL colour `--help` only on a terminal without `NO_COLOR`.
+
+#### Scenario: Long-only flag indent
+- **WHEN** `imp --help` lists `-c, --continue` and `--rename`
+- **THEN** `--rename` starts in the same column as `--continue`
+
+#### Scenario: Descriptions under cells
+- **WHEN** the width is 40 columns
+- **THEN** `-l, --list` is on its own row and `list sessions and exit` is on the next, indented six
