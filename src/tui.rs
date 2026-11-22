@@ -6814,6 +6814,22 @@ mod tests {
     }
 
     #[test]
+    fn an_open_queued_message_holds_the_turn_and_esc_still_stops_it() {
+        let (mut a, _cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.queued = vec!["next".into()];
+        a.handle_key(Key::Up, &tx);
+        assert!(a.hold.load(Ordering::SeqCst));
+        a.handle_key(Key::Esc, &tx);
+        assert!(a.cancel.load(Ordering::Relaxed), "Esc did not stop the held turn");
+        // Leaving the message releases the hold.
+        a.handle_key(Key::Enter, &tx);
+        assert!(!a.hold.load(Ordering::SeqCst));
+        assert_eq!(a.queued, vec!["next"]);
+    }
+
+    #[test]
     fn delete_removes_forward() {
         let (tx, _cmds) = channel();
         let mut a = app();
