@@ -2,8 +2,8 @@
 
 ## 1. Attributes
 
-- [x] 1.1 `Palette.attrs`: mono keeps bold, italic, underline, reverse; picker row reversed; tests for mono and `NO_COLOR`
-- [ ] 1.2 Inline code on its tint, not bold; mono reverses it; test
+- [x] 1.1 `Palette::styled`: mono keeps bold, italic, underline, reverse; picker row reversed; tests for mono and `NO_COLOR`
+- [x] 1.2 Inline code on its tint, not bold; mono reverses it; test
 
 ## 2. Markdown
 

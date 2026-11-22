@@ -472,6 +472,24 @@ impl Palette {
         }
     }
 
+    /// Inline code: text on a tint of the code colour, as diff rows are,
+    /// since the code colour on its own tint is too faint in some themes.
+    /// Reversed under mono.
+    pub(crate) fn code(&self, text: &str) -> String {
+        if !self.on {
+            return self.styled("7", text.to_string());
+        }
+        use crate::theme::{tint, tint_256, Slot};
+        let (c, fg) = (self.theme.rgb(Slot::Code), self.theme.rgb(Slot::Text));
+        if self.truecolor {
+            let ([r, g, b], [x, y, z]) = (tint(c, fg), fg);
+            format!("\x1b[48;2;{r};{g};{b}m\x1b[38;2;{x};{y};{z}m{text}\x1b[0m")
+        } else {
+            let (bg, fg) = tint_256(c, fg);
+            format!("\x1b[48;5;{bg}m\x1b[38;5;{fg}m{text}\x1b[0m")
+        }
+    }
+
     pub(crate) fn theme_name(&self) -> &'static str {
         self.theme.name
     }
@@ -4570,13 +4588,18 @@ impl App {
                 role
             };
             let mut codes = Vec::new();
-            if span.style.bold || span.style.code {
+            if span.style.bold {
                 codes.push("1");
             }
             if span.style.italic {
                 codes.push("3");
             }
-            let mut text = self.palette.styled(&codes.join(";"), self.palette.paint(colour, &span.text));
+            let painted = if span.style.code {
+                self.palette.code(&span.text)
+            } else {
+                self.palette.paint(colour, &span.text)
+            };
+            let mut text = self.palette.styled(&codes.join(";"), painted);
             if let Some(url) = &span.link {
                 text = crate::render::hyperlink(url, &text);
             }
@@ -6959,13 +6982,22 @@ mod tests {
     }
 
     #[test]
-    fn inline_code_is_bold_in_the_code_colour() {
+    fn inline_code_sits_on_its_tint_and_is_not_bold() {
         let mut a = colour_app();
         a.push(Role::Assistant, "could not `bash` it");
         let out = a.frame(60, 12);
-        assert!(out.contains("\x1b[1m"), "not bold: {out:?}");
-        let code = a.palette.paint(Role::Code, "bash");
-        assert!(out.contains(&format!("\x1b[1m{code}")), "not the code colour: {out:?}");
+        let [r, g, b] = crate::theme::tint(
+            a.palette.theme.rgb(crate::theme::Slot::Code),
+            a.palette.theme.rgb(crate::theme::Slot::Text),
+        );
+        let [x, y, z] = a.palette.theme.rgb(crate::theme::Slot::Text);
+        let code = format!("\x1b[48;2;{r};{g};{b}m\x1b[38;2;{x};{y};{z}mbash\x1b[0m");
+        assert!(out.contains(&code), "no tint: {out:?}");
+        assert!(!out.contains("\x1b[1m"), "code is bold: {out:?}");
+        // Mono has no tint, so code is reversed.
+        a.palette = a.palette.with_theme(crate::theme::by_name("mono").unwrap());
+        a.push(Role::Assistant, "and `sh`");
+        assert!(a.frame(60, 12).contains("\x1b[7msh\x1b[0m"));
     }
 
     #[test]

@@ -13,7 +13,7 @@ accent block with no headings.
 - `mono` keeps bold, italic, underline, and reverse; only colour is off.
   `NO_COLOR` and `color=never` still emit no escapes.
 - The selected picker row is reversed under `mono`.
-- Inline code is the code colour on a tint of it, not bold.
+- Inline code is text on a tint of the code colour, not bold.
 - `#` is bold, underlined, and accent; `##` bold and accent; `###` bold.
 - Links are underlined.
 - Fenced code lines carry a `│ ` gutter in the border colour.

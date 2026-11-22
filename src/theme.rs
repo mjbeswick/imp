@@ -364,6 +364,17 @@ mod tests {
     }
 
     #[test]
+    fn inline_code_reads_on_its_tint() {
+        for t in THEMES.iter().filter(|t| t.name != "mono") {
+            let (code, fg) = (t.rgb(Slot::Code), t.rgb(Slot::Text));
+            let (b256, f256) = tint_256(code, fg);
+            let true_c = contrast(fg, tint(code, fg));
+            let fb_c = contrast(from_256(f256), from_256(b256));
+            assert!(true_c >= 4.5 && fb_c >= 4.5, "{}: {true_c:.1} {fb_c:.1}", t.name);
+        }
+    }
+
+    #[test]
     fn tint_is_dark_on_dark_and_pale_on_light() {
         let green = [0x7f, 0xd6, 0x8f];
         assert!(tint(green, [0xe6; 3]).iter().all(|&v| v < 0x40));

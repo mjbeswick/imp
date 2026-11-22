@@ -2,7 +2,7 @@
 
 ### Requirement: The interface uses colour with meaning
 
-The system SHALL colour by role rather than by text, SHALL paint inline code in the code colour on a tint of that colour and not bold, SHALL keep fenced blocks and quotes muted, SHALL detect truecolor, 256-colour, and no-colour terminals, SHALL honour `NO_COLOR` and a `color=auto|always|never` setting, and SHALL keep bold, italic, underline, and reverse under the `mono` theme while emitting no colour.
+The system SHALL colour by role rather than by text, SHALL paint inline code in the text colour on a tint of the code colour and not bold, SHALL keep fenced blocks and quotes muted, SHALL detect truecolor, 256-colour, and no-colour terminals, SHALL honour `NO_COLOR` and a `color=auto|always|never` setting, and SHALL keep bold, italic, underline, and reverse under the `mono` theme while emitting no colour.
 
 #### Scenario: Truecolor terminal
 - **WHEN** `COLORTERM` advertises truecolor
@@ -22,7 +22,7 @@ The system SHALL colour by role rather than by text, SHALL paint inline code in 
 
 #### Scenario: Inline code is not dim
 - **WHEN** a reply contains `` `bash` `` inside a sentence
-- **THEN** that span is in the code colour on its tint, not bold and not the muted grey
+- **THEN** that span is in the text colour on a tint of the code colour, not bold and not the muted grey
 
 #### Scenario: Fenced code stays dim
 - **WHEN** a reply contains a fenced block

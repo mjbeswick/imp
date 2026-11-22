@@ -3,8 +3,11 @@
 ## Approaches
 
 - **Code: tint background, no bold (chosen).** Separates code from bold text
-  in every theme. `theme::tint` already makes readable diff bands. In `mono`
-  the tint is gone, so code falls back to reverse video.
+  in every theme. `theme::tint` already makes readable diff bands, and the
+  text colour goes on it as in diffs: the code colour on its own tint fell
+  under 4.5:1 in `default-light`, both solarized themes, and
+  `catppuccin-latte`. In `mono` the tint is gone, so code falls back to
+  reverse video.
 - **Code: bold plus tint.** Louder, and bold code next to bold prose still
   collides. Rejected.
 - **Fences: a `│ ` gutter (chosen).** Works without colour, needs no padding
@@ -17,9 +20,9 @@
 
 ## Painting
 
-`Palette` gains `attrs`: true when escapes are allowed at all. `on` stays the
-colour switch. `paint_spans` adds SGR 1, 3, 4, and 7 under `attrs`, colour
-under `on`. `select` reverses the row when `attrs` is set and colour is off.
+`Palette.allowed` already means escapes are allowed at all, and `on` is the
+colour switch. `Palette::styled` adds SGR 1, 3, 4, and 7 under `allowed`,
+colour stays under `on`. `select` reverses the row when colour is off.
 
 `Style` gains `heading: u8`, `link` styling comes from `Span::link`, and
 `marker` for list markers. The renderer sets them; the painter maps them.
