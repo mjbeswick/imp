@@ -1,5 +1,57 @@
 ## MODIFIED Requirements
 
+### Requirement: The status line reports tokens and cost
+
+The system SHALL show the model name, the served model string when the API reports one that differs from the configured name, the estimated context tokens, and the running cost of the messages sent in the current process, SHALL abbreviate token counts at or above 1,000 with K and at or above 1,000,000 with M using one decimal, SHALL render cost with two decimals, SHALL NOT show the cache hit share, SHALL show the permission mode only when it is not `normal`, and SHALL omit a figure it cannot compute rather than guessing.
+
+#### Scenario: Abbreviated tokens
+- **WHEN** the estimated context is 3,400 tokens
+- **THEN** the status line shows `3.4K tok`, and a context of 1,200,000 shows `1.2M tok`
+
+#### Scenario: Small counts stay exact
+- **WHEN** the estimated context is 940 tokens
+- **THEN** the status line shows `940 tok`
+
+#### Scenario: Served model differs
+- **WHEN** the configured model is `deepseek-flash` and a response reports `deepseek-flash-2026-11`
+- **THEN** the status line shows `deepseek-flash (deepseek-flash-2026-11)`
+
+#### Scenario: Served model matches
+- **WHEN** the response reports the same string as the configured model, or no response has arrived
+- **THEN** the status line shows the configured name alone
+
+#### Scenario: Two-decimal cost
+- **WHEN** the messages sent in this process cost 0.4246
+- **THEN** the status line shows `$0.42`
+
+#### Scenario: Cost accumulates
+- **WHEN** a second response costs 0.0531
+- **THEN** the status line shows the sum, `$0.48`, not the last response alone
+
+#### Scenario: Removed signals
+- **WHEN** any frame is drawn
+- **THEN** the status line contains no cache percentage, and no permission mode while the mode is `normal`
+
+#### Scenario: Unknown model
+- **WHEN** the configured model has no price entry
+- **THEN** the status line shows token counts and no cost
+
+### Requirement: Yolo shows in colour
+
+The system SHALL paint the composer prompt glyph and the rule above the composer in the error colour while the live mode is `yolo`, SHALL paint the line-mode prompt the same way, SHALL name the mode in the status line, and SHALL emit no colour when colour is off.
+
+#### Scenario: Yolo on
+- **WHEN** the user runs `/mode yolo` in a colour terminal
+- **THEN** the next frame paints `> ` and the rule in the error colour
+
+#### Scenario: Back to normal
+- **WHEN** the user runs `/mode normal`
+- **THEN** the glyph and rule return to their usual colours
+
+#### Scenario: No colour
+- **WHEN** colour is off and the mode is `yolo`
+- **THEN** the frame differs from the `normal` frame only by `yolo` in the status line
+
 ### Requirement: The interface is keyboard first
 
 The system SHALL provide Enter to send, or during a turn to steer or queue by the mode, Ctrl+Q to toggle that mode, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, Ctrl+C to decline an open prompt and stop the turn, else to stop a running turn, else to clear a non-empty draft, else to ask for a second Ctrl+C within two seconds before exiting, Ctrl+D to exit on an empty draft, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
@@ -204,7 +256,7 @@ The system SHALL print help in named sections, SHALL show defaults as `(default:
 
 ### Requirement: Tab cycles the agent and Shift+Tab the mode
 
-The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo` on Shift+Tab, applying it at once, SHALL cycle agent profiles on Tab when the draft is empty and no picker is open, applying a change made during a turn when that turn ends, SHALL write one transcript line for each change, and SHALL show the agent and the mode in the status line.
+The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo` on Shift+Tab, applying it at once, SHALL cycle agent profiles on Tab when the draft is empty and no picker is open, applying a change made during a turn when that turn ends, SHALL write one transcript line for each change, and SHALL show the agent in the status line when more than one exists, and the mode when it is not `normal`.
 
 #### Scenario: Mode
 - **WHEN** the mode is `strict` and the user presses Shift+Tab

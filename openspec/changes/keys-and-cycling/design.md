@@ -30,9 +30,13 @@ after it.
 
 ## Status line
 
-`<agent> · <mode> · <model> · …`, with the agent left out when it is the
-default and only one exists. It sits before the model so it is the last
-thing cut.
+`<model> · <agent> · <mode> · …`: after the model, because the status line
+must start with it. The agent shows when more than one exists, with
+`→ <next>` while a Tab choice waits for the turn to end. The mode shows only
+when it is not `normal`: an earlier decision kept the mode off the status
+line, and `normal` is noise, but `strict` and `yolo` should never be hidden,
+and with colour off yolo was otherwise invisible. This modifies "The status
+line reports tokens and cost" and "Yolo shows in colour".
 
 ## `/keys`
 

@@ -5657,8 +5657,18 @@ impl App {
             Some((_, round, rounds)) => format!(" · goal {round}/{rounds}"),
             None => String::new(),
         };
+        // The agent, when there is a choice of them, and the mode.
+        let agent = match (&self.agent_next, self.agents.len() > 1) {
+            (Some(next), _) => format!("{} → {next} · ", self.agent),
+            (None, true) => format!("{} · ", self.agent),
+            (None, false) => String::new(),
+        };
+        let mode = match self.cfg.live_permissions() {
+            crate::config::Permissions::Normal => String::new(),
+            other => format!("{} · ", other.as_str()),
+        };
         let left = format!(
-            "{place}{model} · {} tok{money}{goal}{paused}{unseen}{thinking}{waiting}",
+            "{place}{model} · {agent}{mode}{} tok{money}{goal}{paused}{unseen}{thinking}{waiting}",
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
@@ -6923,6 +6933,21 @@ mod tests {
     }
 
     #[test]
+    fn the_status_line_names_the_agent_and_an_unusual_mode() {
+        let mut a = app();
+        a.agents = vec![("build".into(), String::new())];
+        a.agent = "build".into();
+        assert!(a.status_line(80).starts_with("deepseek-flash · 0 tok"), "{}", a.status_line(80));
+        a.agents.push(("review".into(), String::new()));
+        assert!(a.status_line(80).starts_with("deepseek-flash · build · 0 tok"));
+        a.agent_next = Some("review".into());
+        assert!(a.status_line(80).starts_with("deepseek-flash · build → review · 0 tok"));
+        a.cfg.set_permissions(crate::config::Permissions::Strict);
+        assert!(a.status_line(80).starts_with("deepseek-flash · build → review · strict · 0 tok"));
+        assert!(a.status_line(54).chars().count() <= 54);
+    }
+
+    #[test]
     fn delete_removes_forward() {
         let (tx, _cmds) = channel();
         let mut a = app();
@@ -7899,6 +7924,7 @@ mod tests {
     #[test]
     fn the_status_line_shortens_a_long_directory() {
         let mut a = app();
+        a.agents.clear();
         let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
         a.root = home.join("Projects/imp/src/providers");
         let left = "deepseek-flash · 0 tok · $0.00";
@@ -7949,9 +7975,16 @@ mod tests {
         assert!(!a.frame(80, 20).contains(&error), "yolo colour stayed");
 
         let mut plain = app();
+        plain.agents.clear();
         let before = plain.frame(80, 20);
         plain.cfg.set_permissions(crate::config::Permissions::Yolo);
-        assert_eq!(plain.frame(80, 20), before, "no-colour frame changed");
+        // Only the status line names it; no colour appears.
+        let after = plain.frame(80, 20);
+        assert!(!after.contains("38;"), "colour with colour off");
+        let rows = |f: &str| f.split("\r\n").map(str::to_string).collect::<Vec<_>>();
+        let (b, a2) = (rows(&before), rows(&after));
+        assert_eq!(b[..b.len() - 1], a2[..a2.len() - 1], "more than the status line changed");
+        assert!(a2.last().unwrap().contains("deepseek-flash · yolo · "), "{after:?}");
     }
 
     #[test]
@@ -8548,6 +8581,7 @@ mod tests {
     #[test]
     fn status_reports_tokens_and_cost() {
         let mut a = app();
+        a.agents.clear();
         a.status.tokens = 3400;
         a.status.hit = 900;
         a.status.miss = 100;
