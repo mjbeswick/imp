@@ -10,6 +10,6 @@
 
 ## 3. Syntax
 
-- [ ] 3.1 Token rules for Rust, shell, Python, JS/TS, TOML, and YAML; a test per language
+- [x] 3.1 Token rules for Rust, shell, Python, JS/TS, TOML, and YAML; a test per language
 - [ ] 3.2 Draw syntax spans under word emphasis, unknown extensions plain; tests for both
 - [ ] 3.3 Fall back to the text colour under 4.5:1; tests for `solarized-light` and `default`
