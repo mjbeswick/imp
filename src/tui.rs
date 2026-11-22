@@ -2102,7 +2102,7 @@ const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
 ];
 
 /// Commands a key does exactly; the palette shows the key after the description.
-const COMMAND_KEYS: &[(&str, &str)] = &[("/keys", "?"), ("/next", "Ctrl+O"), ("/think", "Ctrl+T")];
+const COMMAND_KEYS: &[(&str, &str)] = &[("/keys", "?"), ("/next", "Ctrl+O"), ("/think", "Ctrl+T"), ("/retry", "Ctrl+R")];
 
 /// Commands whose argument is typed rather than picked.
 const FREE_TEXT: &[&str] = &["queue", "rename", "diff"];
@@ -8738,6 +8738,8 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(Cmd::SetThinking(on)) if on != was));
         let think = a.palette_items().into_iter().find(|i| i.label == "/think").unwrap();
         assert!(think.desc.ends_with(" · Ctrl+T"), "{}", think.desc);
+        let retry = a.palette_items().into_iter().find(|i| i.label == "/retry").unwrap();
+        assert!(retry.desc.ends_with(" · Ctrl+R"), "{}", retry.desc);
     }
 
     /// The keys a keys card row names. A row missing here fails the test.

@@ -62,7 +62,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
-Ctrl+E expand the last tool call · Ctrl+V paste the copy · Ctrl+G release the mouse · Ctrl+D leaves line mode
+Ctrl+E expand the last tool call · Ctrl+R retry · Ctrl+T thinking · Ctrl+V paste the copy · Ctrl+G release the mouse · Ctrl+D leaves line mode
 Ctrl+O next waiting · Ctrl+N next session · Ctrl+P palette · ? keys, from an empty composer
 ```
 
@@ -104,6 +104,7 @@ one 16 MB output buffer budget.
 /provider  manage providers      /queue     messages waiting to send
 /rename    rename this session   /quit      leave
 /next      next session waiting on you
+/retry     send the last message again, dropping its reply
 ```
 
 Tab on an empty draft switches agent and Shift+Tab steps the mode through

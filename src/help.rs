@@ -23,6 +23,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Ctrl+U, Ctrl+K", "delete to the row's start or end"),
     ("Ctrl+L", "clear the screen"),
     ("Ctrl+E", "expand the latest turn's tool rows"),
+    ("Ctrl+R", "send the last message again"),
     ("Ctrl+T", "thinking on or off for the next turn"),
     ("Ctrl+V", "paste a clipboard image, or the last copy"),
     ("Ctrl+G", "release the mouse to select text"),
@@ -39,7 +40,7 @@ const LINE_KEYS: &[(&str, &str)] = &[("Enter", "send"), ("Ctrl+D", "leave")];
 
 /// Commands by area, named from `COMMANDS`.
 const GROUPS: &[(&str, &[&str])] = &[
-    ("Conversation", &["/new", "/goal", "/compact", "/think", "/queue", "/copy"]),
+    ("Conversation", &["/new", "/goal", "/compact", "/retry", "/think", "/queue", "/copy"]),
     ("Model and agent", &["/model", "/provider", "/agent", "/mode", "/reload"]),
     ("Workspace", &["/cwd", "/cd", "/image", "/shell", "/diff"]),
     ("Session", &["/sessions", "/next", "/fork", "/rename", "/quit"]),
@@ -56,6 +57,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
     ("/goal", "keep working until a goal is met; off to stop"),
+    ("/retry", "send the last message again, dropping its reply"),
     ("/think", "toggle thinking for the next turn"),
     ("/mode", "normal, strict, or yolo for this session"),
     ("/verbosity", "step detail: low, medium, high, or pick"),
@@ -449,7 +451,7 @@ mod tests {
 
     #[test]
     fn every_command_sits_in_one_group() {
-        assert_eq!(COMMANDS.len(), 25);
+        assert_eq!(COMMANDS.len(), 26);
         for (name, _) in COMMANDS {
             let n = GROUPS.iter().filter(|(_, g)| g.contains(name)).count();
             assert_eq!(n, 1, "{name} is in {n} groups");
