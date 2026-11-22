@@ -3035,6 +3035,17 @@ impl App {
                 }
             }
             Key::Tab => self.sync_menu(),
+            Key::BackTab => {
+                // Shift+Tab steps through the modes; it applies at once.
+                use crate::config::Permissions::*;
+                let next = match self.cfg.live_permissions() {
+                    Normal => "strict",
+                    Strict => "yolo",
+                    Yolo => "normal",
+                };
+                self.set_mode(next, tx);
+                self.dirty = true;
+            }
             Key::Esc => {
                 if self.status.streaming {
                     self.cancel.store(true, Ordering::Relaxed);
@@ -6827,6 +6838,25 @@ mod tests {
         a.handle_key(Key::Enter, &tx);
         assert!(!a.hold.load(Ordering::SeqCst));
         assert_eq!(a.queued, vec!["next"]);
+    }
+
+    #[test]
+    fn shift_tab_cycles_the_mode_at_once() {
+        let (tx, _cmds) = channel();
+        let mut a = app();
+        a.status.streaming = true;
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            a.handle_key(Key::BackTab, &tx);
+            seen.push(a.cfg.live_permissions());
+        }
+        use crate::config::Permissions::*;
+        assert_eq!(seen, vec![Strict, Yolo, Normal]);
+        assert_eq!(a.entries.len(), 3, "one line per change");
+        // Yolo turns the rule red.
+        a.handle_key(Key::BackTab, &tx);
+        a.handle_key(Key::BackTab, &tx);
+        assert!(a.yolo());
     }
 
     #[test]
