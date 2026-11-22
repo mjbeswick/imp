@@ -5103,12 +5103,39 @@ impl App {
         let upto = &text[..cursor];
         let caret_row = upto.matches('\n').count();
         let caret_col = cursor - upto.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        // The selection in this text's bytes, as the shell `!` shifts them.
+        let off = usize::from(shell);
+        let sel = self.selection().map(|(a, b)| (a.saturating_sub(off), b.saturating_sub(off)));
         let mut plain = Vec::new();
+        let mut at = 0;
         for (i, line) in text.split('\n').enumerate() {
-            let mut body = line.to_string();
-            if i == caret_row {
-                body.insert(caret_col.min(body.len()), CARET);
+            // Marks at a byte: the selection's end, the caret, then its start,
+            // so the caret always sits outside the selection.
+            let (s, e) = match sel {
+                Some((a, b)) if a < at + line.len() + 1 && b > at => {
+                    (Some(a.saturating_sub(at)), Some((b - at).min(line.len())).filter(|_| b <= at + line.len()))
+                }
+                _ => (None, None),
+            };
+            let caret = (i == caret_row).then_some(caret_col.min(line.len()));
+            let mut body = String::new();
+            let marks = |body: &mut String, pos: usize| {
+                if e == Some(pos) {
+                    body.push(SEL_END);
+                }
+                if caret == Some(pos) {
+                    body.push(CARET);
+                }
+                if s == Some(pos) {
+                    body.push(SEL_START);
+                }
+            };
+            for (j, ch) in line.char_indices() {
+                marks(&mut body, j);
+                body.push(ch);
             }
+            marks(&mut body, line.len());
+            at += line.len() + 1;
             let prefix = if i != 0 {
                 "  "
             } else if shell {
@@ -5133,9 +5160,24 @@ impl App {
     fn paint_composer_row(&self, row: &str, cols: usize) -> String {
         let prefix = row.get(..2).unwrap_or(row);
         let body = row.get(2..).unwrap_or("");
+        // ponytail: the zero-width selection marks count toward the width, so
+        // a selected long row is cut two columns early.
         let fitted = tail(body, cols.saturating_sub(2));
+        // A selection that runs on from the row before, or was cut off the
+        // front, starts reversed.
+        let open = fitted.contains(SEL_END) && fitted.find(SEL_START).is_none_or(|s| fitted.find(SEL_END) < Some(s));
+        let fitted = format!("{}{fitted}", if open { "\x1b[7m" } else { "" })
+            .replace(CARET, "\x1b[7m \x1b[0m")
+            .replace(SEL_START, "\x1b[7m")
+            .replace(SEL_END, "\x1b[27m");
+        // A selection that runs on to the next row ends with this one.
+        let fitted = if fitted.matches("\x1b[7m").count() > fitted.matches("\x1b[27m").count() + fitted.matches("\x1b[0m").count() {
+            fitted + "\x1b[27m"
+        } else {
+            fitted
+        };
         let tone = if self.yolo() { Role::Error } else { Role::User };
-        self.palette.paint(tone, prefix) + &fitted.replace(CARET, "\x1b[7m \x1b[0m")
+        self.palette.paint(tone, prefix) + &fitted
     }
 
     /// Yolo is shown by colour alone: the prompt glyph and the rule.
@@ -5346,6 +5388,11 @@ fn fit(text: &str, cols: usize) -> String {
 /// Marks the caret cell before colour escapes are added, so truncating a row
 /// can never cut a control sequence in half.
 const CARET: char = '\u{0}';
+
+/// Where the draft's selection starts and ends, until the painter swaps
+/// them for reverse video.
+const SEL_START: char = '\u{e000}';
+const SEL_END: char = '\u{e001}';
 
 /// Keep the end of a row, dropping the left and marking the cut with an ellipsis.
 /// The one line that reports a new session root.
@@ -6227,6 +6274,38 @@ mod tests {
         assert_eq!((a.input.as_str(), a.selection()), ("ab\ncd", Some((2, 5))));
         a.handle_key(Key::Select(Move::Up), &tx);
         assert_eq!(a.input, "ab\ncd", "Shift+Up recalled history");
+    }
+
+    #[test]
+    fn a_selection_is_drawn_reversed() {
+        let (tx, _cmds) = channel();
+        // Colour off: reverse video still shows it, as it does the caret.
+        let mut a = app();
+        a.input = "make it red".into();
+        a.cursor = a.input.len();
+        for _ in 0..3 {
+            a.handle_key(Key::Select(Move::Left), &tx);
+        }
+        let out = a.frame(54, 10);
+        assert!(out.contains("make it \x1b[7m \x1b[0m\x1b[7mred\x1b[27m"), "{out:?}");
+        assert!(!out.contains('\u{e000}') && !out.contains('\u{e001}'), "marks leaked: {out:?}");
+        // Across rows: the end of the first and all of the second.
+        let mut b = app();
+        b.input = "ab\ncd".into();
+        b.cursor = 5;
+        b.handle_key(Key::Select(Move::Up), &tx);
+        let out = b.frame(54, 10);
+        assert!(out.contains("> ab\x1b[7m \x1b[0m\x1b[7m\x1b[27m"), "{out:?}");
+        assert!(out.contains("  \x1b[7mcd\x1b[27m"), "{out:?}");
+        // A long selected draft still fits the width.
+        let mut c = app();
+        c.input = "x".repeat(120);
+        c.cursor = 120;
+        for _ in 0..80 {
+            c.handle_key(Key::Select(Move::Left), &tx);
+        }
+        let row = strip(&c.frame(54, 10)).lines().find(|l| l.starts_with("> ")).unwrap().trim_end_matches('\r').to_string();
+        assert!(row.chars().count() <= 54, "{row:?}");
     }
 
     #[test]
