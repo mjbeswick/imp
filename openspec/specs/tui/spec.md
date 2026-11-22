@@ -7,7 +7,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard first
 
-The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
+The system SHALL provide Enter to send, or mid-turn to steer or queue, Ctrl+Q to switch that, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+E to expand tool rows, Ctrl+L to clear the view, PgUp/PgDn to scroll, Ctrl+C to decline, close, clear, or stop before it quits, and Ctrl+D to exit from an empty draft, SHALL decode those keys from control bytes or `CSI` sequences, and SHALL NOT type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -18,20 +18,20 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 - **THEN** the text is deleted, nothing is sent, and the app stays open
 
 #### Scenario: Quit guard
-- **WHEN** the composer is empty and the user presses Ctrl+C
-- **THEN** the app exits on that press
+- **WHEN** the composer is empty, nothing runs, and the user presses Ctrl+C once
+- **THEN** the app stays open and asks for a second press
 
 #### Scenario: Draft mid-turn
 - **WHEN** a turn is streaming, the composer holds text, and the user presses Ctrl+C
 - **THEN** the draft is cleared and the turn keeps running
 
 #### Scenario: Cancel then exit
-- **WHEN** a turn is streaming, the composer is empty, and the user presses Ctrl+C
-- **THEN** the app exits on that press and the turn ends with it
+- **WHEN** a turn is streaming, the composer is empty, and the user presses Ctrl+C twice
+- **THEN** the first press stops the turn and the second asks before exiting
 
 #### Scenario: Picker open
 - **WHEN** a picker is open, the composer is empty, and the user presses Ctrl+C
-- **THEN** the app exits instead of swallowing the key
+- **THEN** the picker closes and the app stays open
 
 #### Scenario: Picker open with text
 - **WHEN** a picker is open and the composer holds text
@@ -39,7 +39,7 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 
 #### Scenario: Confirmation open
 - **WHEN** a command confirmation or an `ask` question is open and the user presses Ctrl+C
-- **THEN** the app exits on that press
+- **THEN** it is declined and the app stays open
 
 #### Scenario: Start a second line
 - **WHEN** the user types a line and presses Shift+Enter
@@ -55,7 +55,7 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 
 #### Scenario: Disambiguated control keys
 - **WHEN** the terminal reports Ctrl+C as `CSI 99;5u`
-- **THEN** it follows the same clear-or-exit rule as a raw 0x03
+- **THEN** it follows the same rule as a raw 0x03
 
 #### Scenario: Page keys
 - **WHEN** the terminal sends `CSI 5~` or `CSI 6~`
@@ -84,6 +84,14 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 #### Scenario: Quitting takes two
 - **WHEN** nothing runs, the draft is empty, and the user presses Ctrl+C
 - **THEN** a line says `Ctrl+C again to quit`, and a second Ctrl+C within two seconds exits
+
+#### Scenario: Ctrl+D keeps a draft
+- **WHEN** the composer holds text and the user presses Ctrl+D
+- **THEN** nothing happens and the draft stays
+
+#### Scenario: Ctrl+D quits
+- **WHEN** the composer is empty and the user presses Ctrl+D
+- **THEN** the app exits
 
 ### Requirement: Every rendered line fits the terminal
 
@@ -1397,7 +1405,7 @@ The system SHALL open a keys card listing the chat keys in the picker overlay wh
 
 #### Scenario: Keys command
 - **WHEN** the user runs `/keys`
-- **THEN** the keys card opens, and each key with a fallback shows it, such as `Alt+Enter, Ctrl+Q`
+- **THEN** the keys card opens, and each key with a fallback shows it, such as `Shift+Enter, Alt+Enter, Ctrl+J`
 
 ### Requirement: Redraws reuse rendered rows
 
