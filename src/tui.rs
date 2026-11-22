@@ -1182,7 +1182,8 @@ impl Hooks for WorkerHooks {
         {
             return None;
         }
-        rx.recv_timeout(Duration::from_secs(600)).ok().flatten()
+        // A question waits until answered, as a confirmation does.
+        rx.recv().ok().flatten()
     }
 }
 
@@ -7572,6 +7573,17 @@ mod tests {
         assert!(a.pending.is_some(), "an out-of-range key dropped the question");
         a.handle_key(Key::Enter, &tx);
         assert_eq!(answers.try_recv().ok(), Some(Some("Rust (Recommended), Zig".into())));
+    }
+
+    #[test]
+    fn a_question_waits_for_its_answer() {
+        let (tx, rx) = channel();
+        let mut hooks = WorkerHooks { tx, waited: Duration::ZERO };
+        let asker = std::thread::spawn(move || hooks.ask_choices("which?", &[("a".into(), String::new())], false));
+        let Ok(Ev::Question { reply, .. }) = rx.recv_timeout(Duration::from_secs(2)) else { panic!("no question") };
+        std::thread::sleep(Duration::from_millis(200));
+        reply.send(Some("a".into())).unwrap();
+        assert_eq!(asker.join().unwrap().as_deref(), Some("a"));
     }
 
     #[test]
