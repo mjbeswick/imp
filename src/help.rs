@@ -32,7 +32,7 @@ const LINE_KEYS: &[(&str, &str)] = &[("Enter", "send"), ("Ctrl+D", "leave")];
 const GROUPS: &[(&str, &[&str])] = &[
     ("Conversation", &["/new", "/goal", "/compact", "/think", "/queue", "/copy"]),
     ("Model and agent", &["/model", "/provider", "/agent", "/mode", "/reload"]),
-    ("Workspace", &["/cwd", "/cd", "/image", "/shell"]),
+    ("Workspace", &["/cwd", "/cd", "/image", "/shell", "/diff"]),
     ("Session", &["/sessions", "/next", "/fork", "/rename", "/quit"]),
     ("Interface", &["/help", "/keys", "/theme", "/verbosity"]),
 ];
@@ -56,6 +56,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/fork", "copy the session and continue there"),
     ("/theme", "set the colour theme"),
     ("/shell", "open a shell"),
+    ("/diff", "what imp changed this session; git for git diff"),
     ("/model", "set or pick the session model"),
     ("/provider", "list, add, edit, delete, or use providers"),
     ("/queue", "messages waiting to send: add, pop, delete, clear"),
@@ -439,7 +440,7 @@ mod tests {
 
     #[test]
     fn every_command_sits_in_one_group() {
-        assert_eq!(COMMANDS.len(), 24);
+        assert_eq!(COMMANDS.len(), 25);
         for (name, _) in COMMANDS {
             let n = GROUPS.iter().filter(|(_, g)| g.contains(name)).count();
             assert_eq!(n, 1, "{name} is in {n} groups");

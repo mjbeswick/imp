@@ -81,6 +81,20 @@ pub enum Before {
     Untracked,
 }
 
+/// One file's change for `/diff`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileDiff {
+    /// The path from the session directory, or in full outside it.
+    pub name: String,
+    pub ext: String,
+    pub adds: usize,
+    pub dels: usize,
+    /// ' ', '-', or '+' rows, and `⋯` between hunks.
+    pub rows: Vec<String>,
+    /// Over 1 MB or not text: listed only.
+    pub untracked: bool,
+}
+
 /// What one task has used so far: steps and tokens over all its requests.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TaskTotals {
@@ -386,6 +400,33 @@ impl Session {
         loaded.retain(|m| m.role != crate::api::Role::System);
         self.history = system;
         self.history.extend(loaded);
+    }
+
+    /// What imp's `edit` and `write` changed this session: each file's net
+    /// change against its first version. Files back as they were are left out.
+    pub fn session_changes(&self) -> Vec<FileDiff> {
+        let mut out = Vec::new();
+        // Paths are recorded resolved; the root may not be (`/var` on macOS).
+        let real = self.tools.root.canonicalize().unwrap_or_else(|_| self.tools.root.clone());
+        for (path, before) in &self.originals {
+            let short = path.strip_prefix(&real).or_else(|_| path.strip_prefix(&self.tools.root));
+            let name = short.unwrap_or(path).display().to_string();
+            let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            let now = std::fs::read_to_string(path).unwrap_or_default();
+            let old = match before {
+                Before::Untracked => {
+                    out.push(FileDiff { name, ext, adds: 0, dels: 0, rows: Vec::new(), untracked: true });
+                    continue;
+                }
+                Before::Missing => "",
+                Before::Text(t) => t.as_str(),
+            };
+            let (rows, adds, dels) = crate::linediff::hunks(old, &now);
+            if !rows.is_empty() {
+                out.push(FileDiff { name, ext, adds, dels, rows, untracked: false });
+            }
+        }
+        out
     }
 
     /// Keep a file as it was before imp first changed it this session, for
@@ -2547,6 +2588,25 @@ mod tests {
         assert_eq!(found("big.bin"), Some(Before::Untracked));
         assert_eq!(found("large.txt"), Some(Before::Untracked));
         assert_eq!(s.originals.len(), 4);
+    }
+
+    #[test]
+    fn session_changes_are_net_per_file() {
+        let (mut s, _fake) = scripted(vec![]);
+        let root = s.tools.root.clone();
+        std::fs::write(root.join("calc.py"), "def add(a, b):\n    return a - b\n").unwrap();
+        let e = |old: &str, new: &str| json!({"path": "calc.py", "edits": [{"old": old, "new": new}]});
+        assert!(s.run_tool("edit", &e("a - b", "a + b"), &mut Null).0);
+        assert!(s.run_tool("edit", &e("a + b", "a * b"), &mut Null).0);
+        s.run_tool("write", &json!({"path": "notes.md", "content": "one\ntwo\n"}), &mut Null);
+        std::fs::write(root.join("same.txt"), "x\n").unwrap();
+        s.remember_original("same.txt");
+        let changes = s.session_changes();
+        let names: Vec<&str> = changes.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["calc.py", "notes.md"], "an unchanged file was listed");
+        assert_eq!((changes[0].adds, changes[0].dels, changes[0].ext.as_str()), (1, 1, "py"));
+        assert!(changes[0].rows.contains(&"-    return a - b".to_string()) && changes[0].rows.contains(&"+    return a * b".to_string()));
+        assert_eq!((changes[1].adds, changes[1].dels), (2, 0));
     }
 
     #[test]

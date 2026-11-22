@@ -962,6 +962,8 @@ pub enum Cmd {
     Attach(Vec<crate::api::Image>),
     /// Drop the last unsent attachment.
     Detach,
+    /// `/diff` with its arguments.
+    Diff(String),
     SetThinking(bool),
     SetAgent(String),
     SetModel(String),
@@ -1040,6 +1042,8 @@ pub enum Ev {
     Done(Option<String>),
     /// The user's likely next message, drawn greyed out in an empty input.
     Suggest(String),
+    /// Changed files for `/diff`.
+    Diff(Vec<crate::agent::FileDiff>),
     /// A goal round begins.
     GoalRound { text: String, round: u32, rounds: u32 },
     /// The goal ended, and why.
@@ -1990,7 +1994,7 @@ fn first_run_outcome(result: Result<(), String>) -> KeyOutcome {
 }
 
 /// Commands whose argument is typed rather than picked.
-const FREE_TEXT: &[&str] = &["queue", "rename"];
+const FREE_TEXT: &[&str] = &["queue", "rename", "diff"];
 
 /// Rows the picker shows at once. Paging moves by the same amount.
 const PICK_ROWS: usize = 8;
@@ -2754,6 +2758,7 @@ impl App {
                 }
             }
             Ev::Info(t) => self.push(Role::Info, t),
+            Ev::Diff(files) => self.show_diff(files),
             Ev::Error(t) => self.push(Role::Error, t),
             Ev::Root(path) => {
                 self.root = path;
@@ -3637,6 +3642,42 @@ impl App {
         self.start_turn(text, tx);
     }
 
+    /// `/diff`: a summary row per file, then each file's diff in its
+    /// syntax, at most 200 rows in all, then what is not tracked.
+    fn show_diff(&mut self, files: Vec<crate::agent::FileDiff>) {
+        if files.is_empty() {
+            self.push(Role::Info, "imp has changed no file this session; /diff git shows the repository");
+            return;
+        }
+        let wide = files.iter().map(|f| f.name.chars().count()).max().unwrap_or(0);
+        let summary: Vec<String> = files
+            .iter()
+            .map(|f| match f.untracked {
+                true => format!("{:wide$}  not diffed: over 1 MB or not text", f.name),
+                false => format!("{:wide$}  +{} −{}", f.name, f.adds, f.dels),
+            })
+            .collect();
+        self.push(Role::Info, summary.join("\n"));
+        let mut room = 200usize;
+        let mut cut = 0;
+        for f in files.iter().filter(|f| !f.untracked) {
+            if room == 0 {
+                cut += f.rows.len();
+                continue;
+            }
+            self.push(Role::Context, format!("── {}", f.name));
+            let take = f.rows.len().min(room);
+            cut += f.rows.len() - take;
+            room -= take;
+            self.push_diffs(f.rows[..take].to_vec(), &f.ext);
+        }
+        if cut > 0 {
+            self.push(Role::Context, format!("… {cut} more lines"));
+        }
+        self.push(Role::Thinking, "changes made by shell commands are not tracked; /diff git shows everything");
+        self.follow_tail();
+    }
+
     /// The keys card, for `?` and `/keys`.
     fn open_keys(&mut self) {
         let rows = crate::help::KEYS
@@ -4167,6 +4208,9 @@ impl App {
             }
             "quit" | "exit" => self.quit = true,
             "keys" => self.open_keys(),
+            other if other == "diff" || other.starts_with("diff ") => {
+                let _ = tx.send(Cmd::Diff(other["diff".len()..].trim().to_string()));
+            }
             other if other == "agent" || other.starts_with("agent ") => {
                 let rest = other.strip_prefix("agent").unwrap_or("").trim();
                 match rest {
@@ -6331,6 +6375,9 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         }
                     }
                 }
+                Ok(Cmd::Diff(_args)) => {
+                    let _ = ev_tx.send(Ev::Diff(worker_session.session_changes()));
+                }
                 Ok(Cmd::Detach) => {
                     if let Some(image) = worker_session.attachments.pop() {
                         let _ = ev_tx.send(Ev::Info(format!("removed {}", crate::images::marker(&image))));
@@ -7237,6 +7284,40 @@ mod tests {
         assert_eq!(fg, text, "solarized-light kept a faint string colour");
         let (fg, success, _, _) = string_fg("default");
         assert_eq!(fg, success, "default lost its string colour");
+    }
+
+    #[test]
+    fn slash_diff_shows_a_summary_then_styled_capped_diffs() {
+        use crate::agent::FileDiff;
+        let (tx, cmds) = channel();
+        let mut a = app();
+        a.run_command("diff", &tx);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Diff(args)) if args.is_empty()));
+        a.run_command("diff git --staged", &tx);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Diff(args)) if args == "git --staged"));
+        a.apply(Ev::Diff(Vec::new()));
+        assert!(a.entries.last().unwrap().text.contains("changed no file"));
+        let f = |name: &str, ext: &str, rows: Vec<String>, adds: usize, dels: usize| FileDiff {
+            name: name.into(), ext: ext.into(), adds, dels, rows, untracked: false,
+        };
+        let many: Vec<String> = (0..250).map(|i| format!("+line {i}")).collect();
+        let mut b = app();
+        b.apply(Ev::Diff(vec![
+            f("calc.py", "py", vec!["-    return a - b".into(), "+    return a * b".into()], 1, 1),
+            f("long.txt", "txt", many, 250, 0),
+            FileDiff { name: "big.bin".into(), ext: "bin".into(), adds: 0, dels: 0, rows: Vec::new(), untracked: true },
+        ]));
+        let summary = &b.entries[0].text;
+        assert!(summary.contains("calc.py   +1 −1") && summary.contains("long.txt  +250 −0"), "{summary}");
+        assert!(summary.contains("big.bin   not diffed"), "{summary}");
+        assert!(b.entries.iter().any(|e| e.text == "── calc.py"));
+        let py = b.entries.iter().find(|e| e.text.contains("return a * b")).unwrap();
+        assert_eq!(py.role, Role::Add);
+        assert!(py.marks.iter().any(|m| m & !CHANGED == crate::syntax::KEYWORD), "no syntax marks");
+        let shown = b.entries.iter().filter(|e| e.role == Role::Add || e.role == Role::Delete).count();
+        assert_eq!(shown, 200, "the cap did not hold");
+        assert!(b.entries.iter().any(|e| e.text == "… 52 more lines"));
+        assert!(b.entries.last().unwrap().text.contains("not tracked"));
     }
 
     #[test]

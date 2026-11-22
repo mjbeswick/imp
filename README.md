@@ -100,6 +100,7 @@ one 16 MB output buffer budget.
 /cd        browse or change cwd  /image     browse or attach an image
 /fork      copy the session      /theme     set the colour theme
 /shell     open a shell          /model     set or pick the session model
+/diff      what imp changed; `/diff git [args]` for git diff
 /provider  manage providers      /queue     messages waiting to send
 /rename    rename this session   /quit      leave
 /next      next session waiting on you

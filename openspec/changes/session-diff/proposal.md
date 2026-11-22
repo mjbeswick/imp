@@ -9,7 +9,7 @@ through every edit, and no quick `git diff` from the chat.
 
 - `/diff` shows the net change to every file imp's `edit` and `write` tools
   touched this session: a summary row per file with `+N −M`, then the diffs,
-  capped with Ctrl+E for the rest, in the diff colours.
+  200 rows at most with a count of the rest, in the diff colours.
 - `/diff git [args]` runs `git diff` with those arguments in the session
   directory and shows it the same way.
 - Neither is sent to the model.
