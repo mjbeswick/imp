@@ -147,7 +147,10 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    cfg.resolve_key_env(config::key_lookup())?;
+    // A chat can ask for a key; a line-mode run has nobody to ask.
+    let interactive = unsafe { isatty(0) } != 0 && unsafe { isatty(1) } != 0;
+    let chat = prompt.is_none() && wants_chat(mode, interactive);
+    let missing_key = key_gate(chat, cfg.resolve_key_env(config::key_lookup()))?;
 
     let existing = match &resume {
         Some(id) => store::Log::open(&sessions_dir, id),
@@ -214,8 +217,6 @@ fn run() -> Result<(), String> {
             (result, id)
         }
         None => {
-            let interactive = unsafe { isatty(0) } != 0 && unsafe { isatty(1) } != 0;
-            let chat = wants_chat(mode, interactive);
             if chat {
                 // Builds each further live session, with its own mode and buffers.
                 let fresh: tui::Fresh = {
@@ -233,7 +234,7 @@ fn run() -> Result<(), String> {
                         )
                     })
                 };
-                match tui::run(session, tui_cfg, fresh) {
+                match tui::run(session, tui_cfg, fresh, missing_key) {
                     Ok(id) => (Ok(()), id),
                     Err(e) => (Err(e), None),
                 }
@@ -250,6 +251,17 @@ fn run() -> Result<(), String> {
         eprintln!("{}", resume_line(&id));
     }
     result
+}
+
+/// A missing key stops line mode; the chat gets a chance to ask for one.
+fn key_gate(chat: bool, resolved: Result<(), String>) -> Result<Option<String>, String> {
+    match resolved {
+        Ok(()) => Ok(None),
+        Err(var) if chat => Ok(Some(var)),
+        Err(var) => Err(format!(
+            "{var} is not set; run imp in a terminal to enter a key, or export it"
+        )),
+    }
 }
 
 /// The line printed when a session ends, naming the id `imp -r` accepts.
@@ -961,6 +973,18 @@ mod tests {
         assert_eq!(resume_id(&args(&["-r", "512705c23"]), 0).map(|s| s.as_str()), Some("512705c23"));
         // Strict: a word is an id, so a typo fails instead of resuming the newest.
         assert_eq!(resume_id(&args(&["-r", "fix", "it"]), 0).map(|s| s.as_str()), Some("fix"));
+    }
+
+    #[test]
+    fn a_missing_key_stops_line_mode_but_not_the_chat() {
+        let err = key_gate(false, Err("DEEPSEEK_API_KEY".into())).unwrap_err();
+        assert!(err.contains("DEEPSEEK_API_KEY"), "{err}");
+        assert!(err.contains("terminal"), "no fix named: {err}");
+        assert_eq!(
+            key_gate(true, Err("DEEPSEEK_API_KEY".into())).unwrap(),
+            Some("DEEPSEEK_API_KEY".to_string())
+        );
+        assert_eq!(key_gate(true, Ok(())).unwrap(), None);
     }
 
     #[test]

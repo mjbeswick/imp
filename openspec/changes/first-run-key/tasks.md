@@ -7,7 +7,7 @@
 
 ## 2. Startup
 
-- [ ] 2.1 Record a missing key instead of failing, keep line mode's error and add the terminal hint, and pass the variable to the chat; tests for both branches
+- [x] 2.1 Record a missing key instead of failing, keep line mode's error and add the terminal hint, and pass the variable to the chat; tests for both branches
 
 ## 3. Onboarding
 

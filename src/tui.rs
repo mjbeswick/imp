@@ -5456,7 +5456,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
     (cmd_tx, ev_rx, session_id)
 }
 
-pub fn run(session: Session, cfg: Config, fresh: Fresh) -> Result<Option<String>, String> {
+pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<String>) -> Result<Option<String>, String> {
     install_guards();
     MOUSE.store(cfg.mouse, Ordering::Relaxed);
     let _raw = RawMode::enter();
