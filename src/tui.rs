@@ -1225,7 +1225,6 @@ pub struct App {
     max_top: usize,
     unseen: usize,
     pending: Option<Pending>,
-    pending_since: Option<Instant>,
     /// The theme active when the theme picker opened, while it previews.
     preview_from: Option<&'static crate::theme::Theme>,
     /// Where managed provider profiles are written.
@@ -1306,7 +1305,6 @@ struct Pane {
     max_top: usize,
     unseen: usize,
     pending: Option<Pending>,
-    pending_since: Option<Instant>,
     stash: Vec<String>,
     bell_pending: bool,
     status: Status,
@@ -1333,7 +1331,6 @@ impl Pane {
             max_top: 0,
             unseen: 0,
             pending: None,
-            pending_since: None,
             stash: Vec::new(),
             bell_pending: false,
             status: Status::default(),
@@ -1874,7 +1871,6 @@ impl App {
             max_top: 0,
             unseen: 0,
             pending: None,
-            pending_since: None,
             preview_from: None,
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
@@ -1936,7 +1932,6 @@ impl App {
         swap(&mut self.max_top, &mut p.max_top);
         swap(&mut self.unseen, &mut p.unseen);
         swap(&mut self.pending, &mut p.pending);
-        swap(&mut self.pending_since, &mut p.pending_since);
         swap(&mut self.stash, &mut p.stash);
         swap(&mut self.bell_pending, &mut p.bell_pending);
         swap(&mut self.status, &mut p.status);
@@ -1960,10 +1955,6 @@ impl App {
         self.at = index;
         self.touched = Instant::now();
         self.replied = false;
-        // A prompt's deadline counts from when it is in view.
-        if self.pending_since.is_some() {
-            self.pending_since = Some(Instant::now());
-        }
         self.dirty = true;
     }
 
@@ -2367,7 +2358,6 @@ impl App {
             }
             Ev::Confirm { what, reply, always } => {
                 self.pending = Some(Pending::Confirm { what, reply, always });
-                self.pending_since = Some(Instant::now());
                 self.tick_spinner();
                 self.since = Instant::now();
                 self.bell_pending = true;
@@ -2381,7 +2371,6 @@ impl App {
                     mode: AskMode::Choose,
                     typed: String::new(),
                 });
-                self.pending_since = Some(Instant::now());
                 self.since = Instant::now();
                 self.bell_pending = true;
                 self.dirty = true;
@@ -2389,7 +2378,6 @@ impl App {
             }
             Ev::Stop(reason) => {
                 self.pending = None;
-                self.pending_since = None;
                 self.status.streaming = false;
                 self.cancel.store(true, Ordering::Relaxed);
                 self.push(Role::Error, reason);
@@ -2584,7 +2572,6 @@ impl App {
                 self.cursor = 0;
                 self.hist_pos = None;
                 self.pending = None;
-                self.pending_since = None;
                 self.follow_tail();
                 self.dirty = true;
             }
@@ -2601,9 +2588,6 @@ impl App {
         }
         if let Some(pending) = self.pending.take() {
             self.answer(pending, key, tx);
-            if self.pending.is_none() {
-                self.pending_since = None;
-            }
             return;
         }
 
@@ -4290,14 +4274,12 @@ impl App {
     }
 
     /// How long the loop may wait for a key: short while anything moves,
-    /// longer while a prompt counts down, long when idle. `quiet` is the time
-    /// since the last key or event.
+    /// long otherwise, an open prompt included. `quiet` is the time since
+    /// the last key or event.
     fn loop_wait(&self, quiet: Duration) -> Duration {
         let streaming = self.status.streaming || self.panes.iter().flatten().any(|p| p.status.streaming);
         if streaming || self.tool.as_ref().is_some_and(|row| row.running) || quiet < Duration::from_secs(2) {
             Duration::from_millis(50)
-        } else if self.pending_since.is_some() {
-            Duration::from_secs(1)
         } else {
             Duration::from_secs(5)
         }
@@ -6692,7 +6674,6 @@ mod tests {
         let (reply, answers) = channel();
         a.status.streaming = true;
         a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
-        a.pending_since = Some(Instant::now() - Duration::from_secs(600));
         a.frame(80, 12);
         assert!(a.pending.is_some() && a.status.streaming, "the prompt gave up");
         assert!(answers.try_recv().is_err());
@@ -6713,7 +6694,6 @@ mod tests {
         assert!(a.cancel.load(Ordering::Relaxed), "the turn kept running");
         assert!(!a.status.streaming);
         assert!(a.pending.is_none(), "a stale prompt stayed on screen");
-        assert!(a.pending_since.is_none());
         assert!(a.entries.last().expect("entry").text.contains("no answer"));
     }
 
@@ -9560,8 +9540,10 @@ mod tests {
         a.status.streaming = true;
         assert_eq!(a.loop_wait(quiet), Duration::from_millis(50));
         a.status.streaming = false;
-        a.pending_since = Some(Instant::now());
-        assert_eq!(a.loop_wait(quiet), Duration::from_secs(1));
+        // An open prompt moves nothing, so the loop sleeps as when idle.
+        let (reply, _answers) = channel();
+        a.apply(Ev::Confirm { what: "run `ls`".into(), reply, always: false });
+        assert_eq!(a.loop_wait(quiet), Duration::from_secs(5));
     }
 
     #[test]
