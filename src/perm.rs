@@ -144,8 +144,11 @@ fn safe_shell(cmd: &str) -> bool {
         return false;
     }
     // `;`, `&&`, and `||` join commands that are each checked alone; a lone
-    // `&` would background one, so it is refused.
-    let bytes = masked.as_bytes();
+    // `&` would background one, so it is refused. A `;` that ends a `find
+    // -exec` clause is part of that command, not a chain.
+    let mut split = masked.clone().into_bytes();
+    blank_exec_terminators(&masked, &mut split);
+    let bytes = &split;
     let (mut parts, mut start, mut i) = (Vec::new(), 0, 0);
     while i < bytes.len() {
         let two = bytes.get(i + 1) == Some(&bytes[i]);
@@ -166,6 +169,35 @@ fn safe_shell(cmd: &str) -> bool {
     }
     parts.push((start, cmd.len()));
     parts.into_iter().all(|(from, to)| safe_pipeline(&cmd[from..to], &masked[from..to]))
+}
+
+/// Blank the `;` that ends a `find -exec` clause, so the chain test does not
+/// treat it as a command separator. `+` ends a clause without a separator.
+fn blank_exec_terminators(masked: &str, split: &mut [u8]) {
+    let mut exec = false;
+    let mut start = None;
+    let word = |s: usize, text: &str, exec: &mut bool, split: &mut [u8]| {
+        if text == "-exec" || text == "-execdir" {
+            *exec = true;
+        } else if *exec && (text == ";" || text == "\\;") {
+            split[s + text.len() - 1] = b' ';
+            *exec = false;
+        } else if *exec && text == "+" {
+            *exec = false;
+        }
+    };
+    for (i, c) in masked.char_indices() {
+        if c.is_whitespace() {
+            if let Some(s) = start.take() {
+                word(s, &masked[s..i], &mut exec, split);
+            }
+        } else if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(s) = start {
+        word(s, &masked[s..], &mut exec, split);
+    }
 }
 
 /// One command or pipeline of `safe_shell`.
@@ -194,7 +226,10 @@ fn safe_pipeline(cmd: &str, masked: &str) -> bool {
                 }),
                 _ => false,
             },
-            "find" => !flag(&["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]),
+            "find" => {
+                let write = ["-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"];
+                !flag(&write) && exec_clauses_safe(&words)
+            }
             "fd" => !flag(&["--exec", "--exec-batch"]) && !short('x') && !short('X'),
             "sort" => !flag(&["--output", "--compress-program"]) && !short('o'),
             "rg" => !flag(&["--pre"]),
@@ -203,6 +238,32 @@ fn safe_pipeline(cmd: &str, masked: &str) -> bool {
             _ => SAFE.contains(&first),
         }
     })
+}
+
+/// True when every `-exec` or `-execdir` clause runs a program that is itself
+/// safe and read-only. A clause with no `;` or `+` terminator fails closed.
+fn exec_clauses_safe(words: &[&str]) -> bool {
+    let mut at = 0;
+    while at < words.len() {
+        if matches!(words[at], "-exec" | "-execdir") {
+            let start = at + 1;
+            let mut end = start;
+            while end < words.len() && !matches!(words[end], ";" | "\\;" | "+") {
+                end += 1;
+            }
+            if end == words.len() {
+                return false;
+            }
+            let clause = words[start..end].join(" ");
+            if clause.is_empty() || !safe_pipeline(&clause.to_ascii_lowercase(), &clause) {
+                return false;
+            }
+            at = end + 1;
+        } else {
+            at += 1;
+        }
+    }
+    true
 }
 
 /// The files a command prints whole with `cat`: each part of a `;` or `&&`
@@ -344,6 +405,14 @@ pub fn shape(cmd: &str) -> Option<String> {
         Some(_) => return None,
         None => cmd.as_str(),
     };
+    // An exec or xargs shape would arm a writer if it were ever allowed.
+    let lower = masked.to_ascii_lowercase();
+    if ["-exec", "--exec", "-ok", "xargs"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return None;
+    }
     let mut words = Vec::new();
     for w in cmd.split_whitespace() {
         words.push(w);
@@ -519,6 +588,30 @@ mod tests {
             classify_command("git status", Permissions::Normal, false),
             Decision::Allow
         );
+    }
+
+    #[test]
+    fn a_find_exec_clause_is_judged_by_what_it_runs() {
+        let ask = |c: &str| classify_command(c, Permissions::Normal, false);
+        assert_eq!(ask("find . -type f -exec ls -l {} +"), Decision::Allow);
+        assert_eq!(ask("find . -exec wc -l {} ;"), Decision::Allow);
+        assert_eq!(ask("find . -exec git diff {} +"), Decision::Allow);
+        assert_eq!(ask("find . -exec rm {} +"), Decision::Ask);
+        assert_eq!(ask("find . -exec sh -c 'echo hi' ;"), Decision::Ask);
+        assert_eq!(ask("find . -exec /bin/rm {} +"), Decision::Ask);
+        assert_eq!(ask("find . -exec sort -o out {} +"), Decision::Ask);
+        assert_eq!(ask("find . -delete"), Decision::Ask);
+        assert_eq!(ask("find . -exec find . -delete ;"), Decision::Ask);
+        assert_eq!(ask("find . -exec ls"), Decision::Ask, "no terminator");
+    }
+
+    #[test]
+    fn exec_and_xargs_never_get_an_always_shape() {
+        assert_eq!(shape("find . -exec rm {} +"), None);
+        assert_eq!(shape("find . -exec ls {} +"), None);
+        assert_eq!(shape("ls | xargs rm"), None);
+        assert_eq!(shape("find . -name '*.rs'"), Some("find .".into()));
+        assert!(shape("ls").is_some(), "a plain command lost its shape");
     }
 
     #[test]
