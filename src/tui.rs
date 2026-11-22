@@ -516,17 +516,39 @@ impl Palette {
     /// A run of a diff row: text colour on the row's tint, or on a tint
     /// twice as strong and bold when the words changed.
     pub(crate) fn diff_run(&self, role: Role, text: &str, mark: u8) -> String {
-        use crate::theme::{strong_text, tint_256, tint_256_strong, tint_by, Slot};
+        use crate::syntax::{COMMENT, KEYWORD, NUMBER, STRING};
+        use crate::theme::{strong_text, tint_256, tint_256_strong, tint_by, to_256, Slot};
         let band = self.theme.rgb(if role == Role::Add { Slot::Success } else { Slot::Error });
         let fg = self.theme.rgb(Slot::Text);
         let changed = mark & CHANGED != 0;
-        let attrs = if changed { "\x1b[1m" } else { "" };
+        let kind = mark & !CHANGED;
+        // Changed words take white or black for contrast; otherwise strings,
+        // numbers, and comments take their colours.
+        let colour = match kind {
+            _ if changed => None,
+            STRING => Some(Slot::Success),
+            NUMBER => Some(Slot::Accent),
+            COMMENT => Some(Slot::Muted),
+            _ => None,
+        };
+        let mut attrs = String::new();
+        if changed || kind == KEYWORD {
+            attrs.push_str("\x1b[1m");
+        }
+        if kind == COMMENT {
+            attrs.push_str("\x1b[3m");
+        }
         if self.truecolor {
             let [r, g, b] = tint_by(band, fg, if changed { 2 } else { 1 });
-            let [x, y, z] = if changed { strong_text(fg) } else { fg };
+            let [x, y, z] = match colour {
+                Some(slot) => self.theme.rgb(slot),
+                None if changed => strong_text(fg),
+                None => fg,
+            };
             format!("\x1b[48;2;{r};{g};{b}m\x1b[38;2;{x};{y};{z}m{attrs}{text}\x1b[0m")
         } else {
             let (bg, f) = if changed { tint_256_strong(band, fg) } else { tint_256(band, fg) };
+            let f = colour.map_or(f, |slot| to_256(self.theme.rgb(slot)));
             format!("\x1b[48;5;{bg}m\x1b[38;5;{f}m{attrs}{text}\x1b[0m")
         }
     }
@@ -7160,6 +7182,28 @@ mod tests {
         let fg = a.palette.theme.rgb(crate::theme::Slot::Text);
         let [r, g, b] = crate::theme::tint_by(a.palette.theme.rgb(crate::theme::Slot::Success), fg, 2);
         assert!(out.contains(&format!("\x1b[48;2;{r};{g};{b}m\x1b[38;2;255;255;255m\x1b[1m4")), "{out:?}");
+    }
+
+    #[test]
+    fn diff_rows_carry_syntax_under_the_word_emphasis() {
+        let mut a = colour_app();
+        a.push_diffs(vec![r#"+let x = "hi"; // note"#.into()], "rs");
+        let out = a.frame(60, 8);
+        let t = a.palette.theme;
+        let bg = crate::theme::tint(t.rgb(crate::theme::Slot::Success), t.rgb(crate::theme::Slot::Text));
+        let on = |slot: crate::theme::Slot| {
+            let [x, y, z] = t.rgb(slot);
+            format!("\x1b[48;2;{};{};{}m\x1b[38;2;{x};{y};{z}m", bg[0], bg[1], bg[2])
+        };
+        use crate::theme::Slot::*;
+        assert!(out.contains(&format!("{}\x1b[1mlet", on(Text))), "keyword: {out:?}");
+        assert!(out.contains(&format!("{}\"hi\"", on(Success))), "string: {out:?}");
+        assert!(out.contains(&format!("{}\x1b[3m// note", on(Muted))), "comment: {out:?}");
+        // Plain text for an unknown extension.
+        let mut b = colour_app();
+        b.push_diffs(vec![r#"+let x = "hi";"#.into()], "txt");
+        let plain = b.frame(60, 8);
+        assert!(!plain.contains("\x1b[1mlet") && plain.contains(&format!("{}+let x = \"hi\";", on(Text))), "{plain:?}");
     }
 
     #[test]
