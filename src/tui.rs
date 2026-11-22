@@ -2818,17 +2818,7 @@ impl App {
         if matches!(key, Key::Char('?')) {
             match &self.pending {
                 None if self.input.is_empty() => {
-                    let rows = crate::help::KEYS
-                        .iter()
-                        .map(|(k, what)| PickItem {
-                            label: k.to_string(),
-                            value: k.to_string(),
-                            desc: what.to_string(),
-                            actions: Vec::new(),
-                        })
-                        .collect();
-                    self.pending = Some(Pending::Pick(Picker::new("keys", rows, PickKind::Keys)));
-                    self.dirty = true;
+                    self.open_keys();
                     return;
                 }
                 Some(Pending::Pick(p)) if p.kind == PickKind::Keys => {
@@ -3472,6 +3462,21 @@ impl App {
         self.start_turn(text, tx);
     }
 
+    /// The keys card, for `?` and `/keys`.
+    fn open_keys(&mut self) {
+        let rows = crate::help::KEYS
+            .iter()
+            .map(|(k, what)| PickItem {
+                label: k.to_string(),
+                value: k.to_string(),
+                desc: what.to_string(),
+                actions: Vec::new(),
+            })
+            .collect();
+        self.pending = Some(Pending::Pick(Picker::new("keys", rows, PickKind::Keys)));
+        self.dirty = true;
+    }
+
     /// Tab: the next agent profile. The worker applies it when free, so a
     /// running turn finishes with the agent it started with.
     fn cycle_agent(&mut self, tx: &Sender<Cmd>) {
@@ -3986,6 +3991,7 @@ impl App {
                 self.push(Role::Info, format!("{RAW}{}", help.replace("\x1b[36m", &accent)))
             }
             "quit" | "exit" => self.quit = true,
+            "keys" => self.open_keys(),
             other if other == "agent" || other.starts_with("agent ") => {
                 let rest = other.strip_prefix("agent").unwrap_or("").trim();
                 match rest {
@@ -6958,6 +6964,16 @@ mod tests {
     }
 
     #[test]
+    fn slash_keys_opens_the_keys_card() {
+        let (tx, _cmds) = channel();
+        let mut a = app();
+        a.run_command("keys", &tx);
+        assert!(matches!(&a.pending, Some(Pending::Pick(p)) if p.kind == PickKind::Keys));
+        let out = strip(&a.frame(80, 30));
+        assert!(out.contains("Ctrl+Q") && out.contains("Shift+Tab"), "{out:?}");
+    }
+
+    #[test]
     fn delete_removes_forward() {
         let (tx, _cmds) = channel();
         let mut a = app();
@@ -8199,7 +8215,7 @@ mod tests {
         let (tx, _cmds) = channel();
         a.run_command("help", &tx);
         let out = a.frame(80, 60);
-        assert!(out.contains("\x1b[1mKeys\x1b[0m"), "{out:?}");
+        assert!(out.contains("\x1b[1mConversation\x1b[0m"), "{out:?}");
         assert!(out.contains(&a.palette.paint(Role::Info, "/compact")), "{out:?}");
         assert!(!out.contains("\x1b[36m"), "terminal cyan left in: {out:?}");
         // Without colour, /help has no escapes.
@@ -9205,13 +9221,13 @@ mod tests {
         let compact = row("/compact");
         let help = row("/help");
         assert!(compact.contains("compact the conversation now"), "{compact}");
-        assert!(help.contains("show keys and commands"), "{help}");
+        assert!(help.contains("show the commands"), "{help}");
         let desc_col = |line: &str, desc: &str| {
             line[..line.find(desc).unwrap()].chars().count()
         };
         assert_eq!(
             desc_col(&compact, "compact the conversation now"),
-            desc_col(&help, "show keys and commands"),
+            desc_col(&help, "show the commands"),
             "descriptions are not aligned:\n{compact}\n{help}"
         );
         assert!(help.contains("▸ /help"), "no marker: {help}");
@@ -9226,6 +9242,7 @@ mod tests {
             .position(|i| i.label == "/goal")
             .expect("/goal");
         picker.index = at;
+        picker.offset = at;
         let lines = picker_lines(&picker, &picker.matches(), 8, 46, true);
         let row: Vec<&String> = lines
             .iter()
@@ -9284,7 +9301,9 @@ mod tests {
             .iter()
             .position(|i| i.label == "/goal")
             .expect("/goal");
+        // Scrolled so the row is in the box, whatever comes before it.
         picker.index = at;
+        picker.offset = at;
         a.pending = Some(Pending::Pick(picker));
         let frame = strip(&a.frame(60, 12));
         assert!(frame.contains("/goal"), "no command row: {frame:?}");

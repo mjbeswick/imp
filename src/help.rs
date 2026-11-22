@@ -2,20 +2,26 @@
 
 /// Keys in the full-screen chat.
 pub const KEYS: &[(&str, &str)] = &[
-    ("Enter", "send"),
-    ("Shift+Enter, Alt+Enter", "newline"),
-    ("Esc", "cancel the turn or close a picker"),
-    ("Ctrl+C", "clear the draft, or quit"),
+    ("Enter", "send; during a turn, steer or queue"),
+    ("Ctrl+Q", "switch Enter between steer and queue"),
+    ("Shift+Enter, Alt+Enter, Ctrl+J", "newline"),
+    ("Esc", "stop the turn or close a picker"),
+    ("Ctrl+C", "clear the draft, else stop the turn; twice to quit"),
+    ("Ctrl+D", "quit, from an empty draft"),
+    ("Tab", "next agent, from an empty draft; complete a command"),
+    ("Shift+Tab", "next mode: normal, strict, yolo"),
+    ("Right", "take the suggestion"),
+    ("Up, Down", "queued messages, then history"),
+    ("Shift+arrows, Shift+Home, Shift+End", "select in the draft"),
+    ("Delete", "delete forward"),
     ("Ctrl+L", "clear the screen"),
-    ("Ctrl+E", "expand the last tool call"),
-    ("Ctrl+V", "paste the last copy"),
+    ("Ctrl+E", "expand the latest turn's tool rows"),
+    ("Ctrl+V", "paste a clipboard image, or the last copy"),
     ("Ctrl+G", "release the mouse to select text"),
     ("Ctrl+O", "next session waiting on you"),
     ("Ctrl+N, Ctrl+P", "next or previous live session"),
-    ("?", "this list, from an empty composer"),
-    ("Up, Down", "history"),
+    ("?", "this list, from an empty draft; also /keys"),
     ("PgUp, PgDn", "scroll"),
-    ("Tab", "complete"),
     ("Picker", "type to filter, Enter choose, Esc cancel"),
 ];
 
@@ -28,11 +34,12 @@ const GROUPS: &[(&str, &[&str])] = &[
     ("Model and agent", &["/model", "/provider", "/agent", "/mode", "/reload"]),
     ("Workspace", &["/cwd", "/cd", "/image", "/shell"]),
     ("Session", &["/sessions", "/next", "/fork", "/rename", "/quit"]),
-    ("Interface", &["/help", "/theme", "/verbosity"]),
+    ("Interface", &["/help", "/keys", "/theme", "/verbosity"]),
 ];
 
 pub const COMMANDS: &[(&str, &str)] = &[
-    ("/help", "show keys and commands"),
+    ("/help", "show the commands"),
+    ("/keys", "show the keys"),
     ("/new", "start another live session"),
     ("/sessions", "pick a session"),
     ("/next", "next session waiting on you"),
@@ -243,7 +250,8 @@ pub fn commands(width: usize, chat: bool, color: bool) -> String {
             .find(|(n, _)| *n == name)
             .map_or("", |(_, d)| *d)
     };
-    let mut sections = vec![("Keys", if chat { KEYS } else { LINE_KEYS }.to_vec())];
+    // The chat's keys have their own card, `?` or `/keys`; line mode has two.
+    let mut sections = if chat { Vec::new() } else { vec![("Keys", LINE_KEYS.to_vec())] };
     for (title, names) in GROUPS {
         sections.push((title, names.iter().map(|n| (*n, desc(n))).collect()));
     }
@@ -252,6 +260,9 @@ pub fn commands(width: usize, chat: bool, color: bool) -> String {
     out.push('\n');
     let note = "Anything else goes to the model. Prefix a line with `!` to run it as a shell command.";
     out.push_str(&wrap(note, width).join("\n"));
+    if chat {
+        out.push_str("\nKeys: ? or /keys");
+    }
     out
 }
 
@@ -406,11 +417,14 @@ mod tests {
     }
 
     #[test]
-    fn keys_are_rows() {
+    fn keys_live_on_their_own_card() {
         let text = commands(80, true, false);
-        assert!(text.contains("Ctrl+C"), "{text}");
-        assert!(text.contains("Shift+Enter"), "{text}");
-        assert!(text.contains("PgUp, PgDn"), "{text}");
+        assert!(!text.contains("Ctrl+C") && !text.contains("\nKeys\n"), "{text}");
+        assert!(text.trim_end().ends_with("Keys: ? or /keys"), "{text}");
+        let keys: Vec<&str> = KEYS.iter().map(|(k, _)| *k).collect();
+        for k in ["Ctrl+Q", "Shift+Tab", "Ctrl+C", "PgUp, PgDn", "Shift+Enter, Alt+Enter, Ctrl+J"] {
+            assert!(keys.contains(&k), "{k} is not on the card");
+        }
     }
 
     #[test]
@@ -425,7 +439,7 @@ mod tests {
 
     #[test]
     fn every_command_sits_in_one_group() {
-        assert_eq!(COMMANDS.len(), 23);
+        assert_eq!(COMMANDS.len(), 24);
         for (name, _) in COMMANDS {
             let n = GROUPS.iter().filter(|(_, g)| g.contains(name)).count();
             assert_eq!(n, 1, "{name} is in {n} groups");

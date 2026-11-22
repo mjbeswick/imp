@@ -91,7 +91,8 @@ one 16 MB output buffer budget.
 ### Commands
 
 ```
-/help      keys and commands     /agent     switch profile
+/help      the commands          /keys      the keys
+/agent     switch profile
 /new       another live session  /reload    re-read instructions and skills
 /sessions  pick a session        /compact   compact now
 /think     thinking toggle       /mode      normal, strict, or yolo
@@ -103,6 +104,10 @@ one 16 MB output buffer budget.
 /rename    rename this session   /quit      leave
 /next      next session waiting on you
 ```
+
+Tab on an empty draft switches agent and Shift+Tab steps the mode through
+normal, strict, and yolo. Ctrl+C clears a draft or stops a turn; idle, a
+second Ctrl+C within two seconds quits.
 
 `/agent`, `/model`, `/theme`, `/verbosity`, `/provider`, and `/sessions` are
 value commands. Bare, each opens a centred picker on the current entry, marked
