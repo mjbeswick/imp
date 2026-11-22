@@ -331,7 +331,7 @@ The system SHALL print the current session id to stderr whenever an exit follows
 
 ### Requirement: Confirmation prompts appear inline
 
-The system SHALL ask before a destructive command or a memory write on one row in the input area, naming the verb alone when the tool row names the command, SHALL show each answer as a chip, a bracketed key then its label, SHALL accept `y` or Enter, `n` or Esc, and `s` and `a` where offered, SHALL show the seconds left at the right edge, and SHALL refuse and stop the turn after 60 seconds without an answer.
+The system SHALL ask before a destructive command or a memory write on one row in the input area, naming the verb alone when the tool row names the command, SHALL show each answer as a chip, a bracketed key then its label, SHALL accept `y` or Enter, `n`, and `s` and `a` where offered, SHALL decline and stop the turn on Esc, returning the prompt, SHALL treat `y` and Enter as the default answer, and SHALL wait until answered, with no deadline and no countdown.
 
 #### Scenario: Declined command
 - **WHEN** the model asks to run `rm -rf build` and the user refuses
@@ -339,31 +339,39 @@ The system SHALL ask before a destructive command or a memory write on one row i
 
 #### Scenario: Ask once
 - **WHEN** a confirmation opens for a command
-- **THEN** the command appears once, in the tool row above, and the prompt reads `run it?   [y] yes  [n] no  [s] session  [a] always` with the seconds left at the right edge
+- **THEN** the command appears once, in the tool row above, and the prompt reads `run it?   [y] yes  [n] no  [s] session  [a] always`
 
 #### Scenario: Long command
 - **WHEN** the command in a confirmation is longer than the row
-- **THEN** the command is cut in the middle in the tool row and the prompt keeps its chips and the seconds left
+- **THEN** the command is cut in the middle in the tool row and the prompt keeps its chips
 
 #### Scenario: Deadline shown
 - **WHEN** a confirmation opens
-- **THEN** its row ends with the seconds left and the count falls with each frame
+- **THEN** its row shows the question and chips and no seconds left
 
 #### Scenario: Unknown verb
 - **WHEN** the action does not start with run, write, save, or delete
-- **THEN** the prompt reads `approve?   [y] yes  [n] no` with the seconds left
+- **THEN** the prompt reads `approve?   [y] yes  [n] no`
 
 #### Scenario: Chip colours
 - **WHEN** a confirmation opens in a colour terminal
-- **THEN** each key letter is bold in the accent colour and the labels and countdown are muted
+- **THEN** each key letter is bold in the accent colour and the labels are muted
 
 #### Scenario: Attention
 - **WHEN** a confirmation opens
 - **THEN** the terminal bell rings once and does not ring again for that prompt
 
 #### Scenario: No answer
-- **WHEN** 60 seconds pass without an answer
-- **THEN** the command does not run, the transcript says the turn stopped for want of an answer, and the turn ends
+- **WHEN** a confirmation has been open for ten minutes
+- **THEN** it is still open, the command has not run, and the turn is still waiting
+
+#### Scenario: Esc stops the turn
+- **WHEN** the user presses Esc on a confirmation
+- **THEN** the command does not run, the turn stops, and the composer is ready for the next message
+
+#### Scenario: Enter approves
+- **WHEN** the user presses Enter on a confirmation
+- **THEN** the command runs as if `y` were pressed
 
 #### Scenario: Interrupt a prompt
 - **WHEN** the user presses Ctrl+C while a confirmation is open
@@ -375,7 +383,7 @@ The system SHALL ask before a destructive command or a memory write on one row i
 
 ### Requirement: Questions are answerable by key or by typing
 
-The system SHALL render an `ask` request as a picker above the input line listing the choices with number keys, SHALL offer a custom-answer row reachable by letter key or arrow, and SHALL show the typed answer before sending it.
+The system SHALL render an `ask` request as a picker above the input line listing the choices with number keys, SHALL offer a custom-answer row reachable by letter key or arrow, SHALL show the typed answer before sending it, and SHALL leave the question unanswered and stop the turn on Esc.
 
 #### Scenario: Pick by number
 - **WHEN** the question offers three choices
@@ -387,7 +395,7 @@ The system SHALL render an `ask` request as a picker above the input line listin
 
 #### Scenario: Dismiss
 - **WHEN** the user presses Esc on a question
-- **THEN** the question closes, the tool result says it was not answered, and the input is ready
+- **THEN** the question closes, the tool result says it was not answered, the turn stops, and the input is ready
 
 ### Requirement: Input history is kept and recalled
 

@@ -41,7 +41,7 @@ The system SHALL move to the next live session with Ctrl+N and the previous with
 
 ### Requirement: Background sessions ask for attention
 
-The system SHALL count sessions out of view that need approval or have replied and show the count in the status line, SHALL ring the bell once when such a session first needs approval, and SHALL NOT apply the confirmation deadline to a session out of view, which waits until answered.
+The system SHALL count sessions out of view that need approval or have replied and show the count in the status line, and SHALL ring the bell once when such a session first needs approval.
 
 #### Scenario: Count
 - **WHEN** two sessions out of view need approval
@@ -53,7 +53,7 @@ The system SHALL count sessions out of view that need approval or have replied a
 
 #### Scenario: Deadline in view
 - **WHEN** the user switches to that session
-- **THEN** the prompt shows and its deadline starts from then
+- **THEN** the prompt shows, still open
 
 ### Requirement: Ctrl+O goes to the next waiting session
 
