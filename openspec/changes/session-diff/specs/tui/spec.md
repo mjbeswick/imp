@@ -29,7 +29,7 @@ The system SHALL provide exactly `/help`, `/keys`, `/diff`, `/new`, `/goal`, `/c
 
 ### Requirement: The session's changes can be shown
 
-The system SHALL show, for `/diff`, each file imp's `edit` and `write` tools changed in the session with its added and removed line counts, followed by its net diff against the version before imp first touched it, SHALL note that shell commands' changes are not tracked, SHALL run `git diff` with the given arguments in the session directory for `/diff git [args]`, and SHALL send neither to the model.
+The system SHALL show, for `/diff`, each file imp's `edit` and `write` tools changed in the session with its added and removed line counts, followed by its net diff against the version before imp first touched it, SHALL style each diff with the syntax rules of `diff-style` by its file's extension, SHALL note that shell commands' changes are not tracked, SHALL run `git diff` with the given arguments in the session directory for `/diff git [args]`, and SHALL send neither to the model.
 
 #### Scenario: Two edits, one change
 - **WHEN** imp edited `calc.py` twice in the session and the user runs `/diff`
@@ -46,3 +46,7 @@ The system SHALL show, for `/diff`, each file imp's `edit` and `write` tools cha
 #### Scenario: Git
 - **WHEN** the user runs `/diff git --staged` in a repository
 - **THEN** the staged changes show as diff rows and the model receives nothing
+
+#### Scenario: Syntax
+- **WHEN** `/diff` or `/diff git` shows a change to `main.rs`
+- **THEN** its rows carry Rust syntax styling, and a change to `notes.txt` in the same output carries none

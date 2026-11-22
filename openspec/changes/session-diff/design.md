@@ -27,6 +27,13 @@ The rows go through the diff painter from `diff-style`. `/diff git` runs
 `git diff --no-color <args>` with the session root as its directory, through
 the same timeout as other local commands, and shows its output as diff rows.
 
+## Syntax
+
+Each file's rows use `diff-style`'s syntax rules for its extension. For
+`/diff`, the path is known. For `/diff git`, each `+++ b/<path>` header sets
+the extension for the rows below it, until the next file. This change needs
+`diff-style` built first.
+
 ## Order
 
 The command list is modified after `keys-and-cycling`; archive after it.
