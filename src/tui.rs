@@ -1395,6 +1395,10 @@ pub struct App {
     onboard: bool,
     /// The latest copy, pasted by Ctrl+V.
     clip: String,
+    /// The command that prints a clipboard image, if this session has one.
+    paste_cmd: Option<String>,
+    /// The "cannot paste images here" note has been shown.
+    paste_noted: bool,
     /// An OSC 52 sequence for the terminal clipboard, written after the next frame.
     osc52: Option<String>,
     /// Ctrl+G handed the mouse to the terminal until the next key.
@@ -2043,6 +2047,9 @@ impl App {
             armed: false,
             onboard: false,
             clip: String::new(),
+            // Tests never read the real clipboard.
+            paste_cmd: if cfg!(test) { None } else { crate::images::clipboard_command() },
+            paste_noted: false,
             osc52: None,
             released: false,
             mouse_seq: None,
@@ -2740,6 +2747,10 @@ impl App {
         }
         if let Some(pending) = self.pending.take() {
             self.answer(pending, key, tx);
+            return;
+        }
+        // A clipboard image comes first; it leaves the draft and selection alone.
+        if matches!(key, Key::Ctrl('v')) && self.paste_image(tx, &crate::images::dir()) {
             return;
         }
         // An edit consumes the selection; anything but a Shift move clears it.
@@ -5190,6 +5201,33 @@ impl App {
         self.cfg.live_permissions() == crate::config::Permissions::Yolo
     }
 
+    /// Attach an image from the system clipboard, if one is there. Says once
+    /// per run when there is no clipboard to read.
+    fn paste_image(&mut self, tx: &Sender<Cmd>, dir: &std::path::Path) -> bool {
+        use crate::images::Clip;
+        let clip = self.paste_cmd.as_deref().map_or(Clip::Unsupported, crate::images::read_clipboard);
+        match clip {
+            Clip::Image(bytes) => {
+                match crate::images::store(bytes, "pasted.png", dir) {
+                    Ok(image) => {
+                        self.push(Role::Thinking, crate::images::marker(&image));
+                        let _ = tx.send(Cmd::Attach(vec![image]));
+                    }
+                    Err(e) => self.push(Role::Error, format!("pasted image: {e}")),
+                }
+                self.follow_tail();
+                true
+            }
+            Clip::Unsupported => {
+                if !std::mem::replace(&mut self.paste_noted, true) {
+                    self.push(Role::Info, "Ctrl+V cannot paste images here: no clipboard tool, or over SSH");
+                }
+                false
+            }
+            Clip::Nothing => false,
+        }
+    }
+
     /// The selected bytes of the draft, start first, when any are selected.
     fn selection(&self) -> Option<(usize, usize)> {
         let anchor = self.anchor?.min(self.input.len());
@@ -6311,6 +6349,39 @@ mod tests {
         }
         let row = strip(&c.frame(54, 10)).lines().find(|l| l.starts_with("> ")).unwrap().trim_end_matches('\r').to_string();
         assert!(row.chars().count() <= 54, "{row:?}");
+    }
+
+    #[test]
+    fn ctrl_v_attaches_a_clipboard_image_or_pastes_the_copy() {
+        let (tx, cmds) = channel();
+        let dir = scratch("paste");
+        let png = dir.join("shot.png");
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(&[0u8; 16]);
+        std::fs::write(&png, &bytes).unwrap();
+        // An image on the clipboard is attached with the usual marker.
+        let mut a = app();
+        a.paste_cmd = Some(format!("cat '{}'", png.display()));
+        a.input = "keep".into();
+        a.cursor = 4;
+        assert!(a.paste_image(&tx, &dir));
+        assert!(a.entries.last().unwrap().text.starts_with("[image pasted.png ·"), "{:?}", a.entries.last().unwrap().text);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Attach(v)) if v.len() == 1 && v[0].name == "pasted.png"));
+        assert_eq!(a.input, "keep", "the draft changed");
+        // Text on the clipboard: Ctrl+V pastes imp's last copy instead.
+        let mut b = app();
+        b.paste_cmd = Some("printf 'some text'".into());
+        b.clip = "copied".into();
+        b.handle_key(Key::Ctrl('v'), &tx);
+        assert_eq!(b.input, "copied");
+        assert!(cmds.try_recv().is_err(), "text was attached");
+        // No clipboard: one note, however often Ctrl+V is pressed.
+        let mut c = app();
+        c.clip = "x".into();
+        c.handle_key(Key::Ctrl('v'), &tx);
+        c.handle_key(Key::Ctrl('v'), &tx);
+        assert_eq!(c.input, "xx");
+        assert_eq!(c.entries.iter().filter(|e| e.text.contains("cannot paste images")).count(), 1);
     }
 
     #[test]
