@@ -5288,6 +5288,35 @@ fn tilde(path: &std::path::Path) -> String {
     }
 }
 
+/// The session directory in at most `room` columns, shortened in steps: the
+/// whole path, parents cut to their first character (a dot folder to two),
+/// the parents as `…`, then the last folder cut from the front when 8 or more
+/// columns are left. `None` when even that does not fit.
+fn fit_path(path: &str, room: usize) -> Option<String> {
+    let width = |s: &str| s.chars().count();
+    if width(path) <= room {
+        return Some(path.to_string());
+    }
+    let (lead, rest) = match path.strip_prefix("~/") {
+        Some(rest) => ("~/", rest),
+        None => path.strip_prefix('/').map_or(("", path), |rest| ("/", rest)),
+    };
+    let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+    let last = *parts.last()?;
+    if parts.len() > 1 {
+        let parents: Vec<String> = parts[..parts.len() - 1]
+            .iter()
+            .map(|p| p.chars().take(if p.starts_with('.') { 2 } else { 1 }).collect())
+            .collect();
+        for short in [format!("{lead}{}/{last}", parents.join("/")), format!("…/{last}")] {
+            if width(&short) <= room {
+                return Some(short);
+            }
+        }
+    }
+    (room >= 8).then(|| tail(last, room))
+}
+
 fn tail(text: &str, width: usize) -> String {
     let count = text.chars().count();
     if count <= width {
@@ -9085,6 +9114,20 @@ mod tests {
         a.handle_key(Key::Ctrl('e'), &tx);
         let text = &a.entries.last().unwrap().text;
         assert!(text.contains("line 19") && !text.contains("line 20\n") && text.contains("… +31 lines"), "{text}");
+    }
+
+    #[test]
+    fn a_long_directory_shortens_in_steps() {
+        let p = "~/Projects/imp/src/providers";
+        assert_eq!(fit_path(p, 40).as_deref(), Some(p));
+        assert_eq!(fit_path(p, 20).as_deref(), Some("~/P/i/s/providers"));
+        assert_eq!(fit_path(p, 12).as_deref(), Some("…/providers"));
+        assert_eq!(fit_path(p, 9).as_deref(), Some("providers"));
+        assert_eq!(fit_path(p, 8).as_deref(), Some("…oviders"));
+        assert_eq!(fit_path(p, 7), None, "below the floor it is left out");
+        assert_eq!(fit_path("~/.config/imp/agents", 16).as_deref(), Some("~/.c/i/agents"));
+        assert_eq!(fit_path("/private/tmp/claude/demo", 16).as_deref(), Some("/p/t/c/demo"));
+        assert_eq!(fit_path("~/averyveryverylongname", 10).as_deref(), Some("…ylongname"));
     }
 
     #[test]
