@@ -2,7 +2,7 @@
 
 ### Requirement: The status line shows the session directory
 
-The system SHALL draw the session directory at the right end of the status line, SHALL shorten the home directory to `~`, SHALL keep at least two spaces between it and the left figures, SHALL, when the whole path does not fit, shorten it in this order and use the first form that fits: every parent cut to its first character with the last folder whole, then the parents as one `…`, then the last folder cut from the front when at least 8 columns are left, and SHALL omit it rather than cut the model name or figures when even that does not fit.
+The system SHALL draw the session directory at the right end of the status line, SHALL shorten the home directory to `~`, SHALL keep two spaces before it, SHALL shorten a path that does not fit in this order and use the first form that fits: parents cut to one character with the last folder whole, then the parents as one `…`, then the last folder cut from the front, and SHALL omit it rather than cut the model name or figures.
 
 #### Scenario: Wide terminal
 - **WHEN** the terminal is 100 columns and the root is the home directory's `Projects/imp`
