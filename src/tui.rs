@@ -1245,6 +1245,21 @@ fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
             text.push_str("\n  ");
             text.push_str(&row.output.lines().take(20).collect::<Vec<_>>().join("\n  "));
         }
+    } else if row.finish == Finish::Exited {
+        // Errors come last, so the tail says more than the head.
+        let mut lines = row.output.lines();
+        let code = lines.next().unwrap_or("");
+        let body: Vec<&str> = lines.filter(|l| !l.trim().is_empty()).collect();
+        let hidden = body.len().saturating_sub(3);
+        text.push('\n');
+        text.push_str(code);
+        if hidden > 0 {
+            text.push_str(&format!(" · {hidden} more above (Ctrl+E)"));
+        }
+        for line in &body[hidden..] {
+            text.push('\n');
+            text.push_str(line);
+        }
     } else if !row.preview.is_empty() && !ok {
         text.push('\n');
         text.push_str(&row.preview);
@@ -8920,6 +8935,25 @@ mod tests {
         assert!(a.entries[0].text.starts_with("! "), "{}", a.entries[0].text);
         assert!(a.entries[0].text.contains("run `false`"));
         assert!(a.entries[0].text.contains("ms"));
+    }
+
+    #[test]
+    fn an_exit_shows_the_tail_of_its_output() {
+        let mut a = app();
+        let end = |a: &mut App, output: &str| {
+            a.entries.clear();
+            a.apply(Ev::ToolStart { name: "bash".into(), summary: "run `make`".into(), args: "{}".into() });
+            a.apply(Ev::ToolEnd { ok: false, preview: String::new(), output: output.into(), detail: String::new(), ms: 1 });
+            strip(&a.frame(54, 14))
+        };
+        let short = end(&mut a, "exit 2\nmake: *** No rule\nto make target");
+        assert!(short.contains("  exit 2\r\n  make: *** No rule\r\n  to make target"), "{short:?}");
+        assert!(!short.contains("more above"), "{short:?}");
+        let ten: String = (1..=10).map(|i| format!("\nline {i}")).collect();
+        let long = end(&mut a, &format!("exit 1{ten}"));
+        assert!(long.contains("  exit 1 · 7 more above (Ctrl+E)\r\n  line 8\r\n  line 9\r\n  line 10"), "{long:?}");
+        assert!(!long.contains("line 7"), "{long:?}");
+        assert!(long.lines().all(|l| l.trim_end_matches('\r').chars().count() <= 54));
     }
 
     #[test]
