@@ -82,7 +82,7 @@ The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a 
 
 ### Requirement: Tool activity is one line each
 
-The system SHALL render each tool call as one row with what it does, its arguments, and elapsed time, SHALL animate the leading spinner at least every 100 ms while it runs, SHALL replace it with a bold mark when it finishes: `✓` when done, `!` in the accent colour when a command ran and exited non-zero, `✗` in the muted colour when the user declined, and `✗` in the error colour for any other failure, SHALL put a preview on indented lines and wrap to that indent, SHALL show the last three output lines of a non-zero exit with their line breaks kept, SHALL show a decline once, as `declined` on its row, SHALL update the row in place, SHALL charge only the tool's work, SHALL show failures with their reason in the error colour, SHALL expand or collapse every tool row of the latest turn on Ctrl+E and one such row on a click, and SHALL show expanded arguments as `$ <command>` for a shell call and as `key: value` lines otherwise.
+The system SHALL render each tool call as one row with what it does, its arguments, and elapsed time, SHALL spin while it runs and then show `✓`, `!` for a non-zero exit, or `✗` for a decline or failure, SHALL put a preview on indented wrapped lines, SHALL show the last three output lines of a non-zero exit, SHALL show a decline once as `declined`, SHALL update the row in place, SHALL charge only the tool's work, and SHALL expand the latest turn's tool rows on Ctrl+E and one row on a click.
 
 #### Scenario: Failed tool
 - **WHEN** a command runs and exits with code 1

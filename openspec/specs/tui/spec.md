@@ -7,7 +7,7 @@ Defines the terminal interface: what the user sees while a turn runs, which keys
 
 ### Requirement: The interface is keyboard first
 
-The system SHALL send on Enter, steer or queue during a turn by the mode, newline on Shift+Enter, Alt+Enter, or Ctrl+J, cancel a turn on Esc, retry on Ctrl+R, toggle tool rows on Ctrl+E, toggle thinking on Ctrl+T and Ctrl+H, clear the view on Ctrl+L, scroll on PgUp and PgDn, stop a turn or clear a draft on Ctrl+C, ask for a second Ctrl+C before quitting, exit on Ctrl+D, decode control bytes and `CSI` sequences alike, and never type escape parameters as text.
+The system SHALL provide Enter to send, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -163,15 +163,15 @@ The system SHALL show reasoning content as a single dim line with its token coun
 
 ### Requirement: Tool activity is one line each
 
-The system SHALL render each tool call as one row with what it does, its arguments, and elapsed time, SHALL animate the leading spinner at least every 100 ms while it runs, SHALL replace it with a bold `✓` or `✗` when it finishes, SHALL put a failure preview on an indented line and wrap to that indent, SHALL update the row in place, SHALL charge only the tool's work, SHALL show failures with their reason in the error colour, and SHALL expand the most recent call on request.
+The system SHALL render each tool call as one row with what it does, its arguments, and elapsed time, SHALL spin while it runs and then show `✓`, `!` for a non-zero exit, or `✗` for a decline or failure, SHALL put a preview on indented wrapped lines, SHALL show the last three output lines of a non-zero exit, SHALL show a decline once as `declined`, SHALL update the row in place, SHALL charge only the tool's work, and SHALL expand the latest turn's tool rows on Ctrl+E and one row on a click.
 
 #### Scenario: Failed tool
-- **WHEN** a tool returns a non-zero exit code
-- **THEN** its row is shown in the error colour and still carries the duration
+- **WHEN** a command runs and exits with code 1
+- **THEN** its row starts with `!` in the accent colour, not `✗`, and still carries the duration
 
 #### Scenario: Bold mark
 - **WHEN** a tool row is drawn
-- **THEN** the leading `✓` or `✗` is bold and the rest of the row keeps its role colour
+- **THEN** the leading mark is bold and the rest of the row keeps its role colour
 
 #### Scenario: Failure detail
 - **WHEN** a command exits non-zero and its first output line is `Changes: render-on-change`
@@ -191,7 +191,7 @@ The system SHALL render each tool call as one row with what it does, its argumen
 
 #### Scenario: When it finishes
 - **WHEN** the call returns
-- **THEN** the same row carries `✓` or `✗`, the result summary, and the time the tool took
+- **THEN** the same row carries its mark, the result summary, and the time the tool took
 
 #### Scenario: Confirmation is not charged
 - **WHEN** a confirmation is left open for 50 seconds and the command runs for 5 ms
@@ -202,8 +202,24 @@ The system SHALL render each tool call as one row with what it does, its argumen
 - **THEN** the row shows `✗` with the reason
 
 #### Scenario: Expand the last call
-- **WHEN** the user presses Ctrl+O
-- **THEN** the most recent call shows its full arguments and output, and pressing it again collapses the row
+- **WHEN** the user presses Ctrl+E after a turn with a `✗` row and then a `✓` row
+- **THEN** both rows show their full arguments and output, and pressing it again collapses them
+
+#### Scenario: Exit tail
+- **WHEN** a command exits 1 after printing ten lines
+- **THEN** the last three lines appear under its row, one per line, below a count of the seven before them
+
+#### Scenario: Expanded arguments
+- **WHEN** a shell call running `python3 calc.py` is expanded
+- **THEN** it shows `$ python3 calc.py` and no JSON
+
+#### Scenario: Click a row
+- **WHEN** the mouse is on and the user clicks one tool row of the latest turn
+- **THEN** only that row expands
+
+#### Scenario: Declined call
+- **WHEN** the user declines a command
+- **THEN** its row shows a muted `✗` and `declined`, and no other row repeats the decline
 
 ### Requirement: Two front-ends share one loop
 
@@ -799,7 +815,7 @@ The system SHALL paint the prompt, tool rows, errors, and information lines with
 
 ### Requirement: Line-mode tool rows are aligned
 
-The system SHALL print a tool start row, then a finish row carrying `✓` or `✗` and the elapsed time, SHALL put a failure preview on its own indented line, SHALL cap the preview at two lines or 240 characters with a marker when cut, and SHALL separate tool blocks from surrounding text with one blank line.
+The system SHALL print a tool start row, then a finish row carrying the same mark as the chat, `✓`, `!`, or `✗`, and the elapsed time, SHALL put a failure preview on its own indented line, SHALL cap the preview at two lines or 240 characters with a marker when cut, and SHALL separate tool blocks from surrounding text with one blank line.
 
 #### Scenario: Success
 - **WHEN** a command finishes successfully
@@ -807,7 +823,11 @@ The system SHALL print a tool start row, then a finish row carrying `✓` or `�
 
 #### Scenario: Failure
 - **WHEN** a command exits non-zero
-- **THEN** a red `✗` row follows and the preview starts on its own indented line
+- **THEN** an accent `!` row follows and the preview starts on its own indented line
+
+#### Scenario: Refusal
+- **WHEN** a write is refused
+- **THEN** a red `✗` row follows with the reason
 
 #### Scenario: Large preview
 - **WHEN** the result has twenty lines
