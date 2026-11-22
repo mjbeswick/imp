@@ -3117,6 +3117,11 @@ impl App {
             // a draft is cleared, a running turn is stopped. Only an idle,
             // empty Ctrl+C asks, and a second within two seconds quits.
             self.dirty = true;
+            if self.queue_at.is_some() {
+                // The editor closes; the message stays queued as it was.
+                self.close_queued(tx);
+                return;
+            }
             if let Some(pending) = self.pending.take() {
                 // A picker typed from the draft goes with its text.
                 let picker = matches!(pending, Pending::Pick(_));
@@ -3232,7 +3237,11 @@ impl App {
                 }
             }
             Key::Ctrl('q') => {
-                self.queue_mode = !self.queue_mode;
+                if self.queue_at.is_some() {
+                    self.send_queued(tx);
+                } else {
+                    self.queue_mode = !self.queue_mode;
+                }
                 self.dirty = true;
             }
             Key::Ctrl('c') => self.quit = true,
@@ -3303,13 +3312,16 @@ impl App {
                     let kept = self.save_queued(tx, false);
                     match kept.unwrap_or(i).checked_sub(1).filter(|&o| o < self.queued.len()) {
                         Some(o) => self.open_queued(o),
-                        None if !self.history.is_empty() => {
-                            let last = self.history.len() - 1;
-                            self.hist_pos = Some(last);
-                            self.input = self.history[last].clone();
-                            self.cursor = self.input.len();
+                        None => {
+                            if !self.history.is_empty() {
+                                let last = self.history.len() - 1;
+                                self.hist_pos = Some(last);
+                                self.input = self.history[last].clone();
+                                self.cursor = self.input.len();
+                            }
+                            // Left the queue: a turn that ended meanwhile goes on.
+                            self.release_queue(tx);
                         }
-                        None => {}
                     }
                 } else if self.input.is_empty() && self.hist_pos.is_none() && !self.queued.is_empty() {
                     self.open_queued(self.queued.len() - 1);
@@ -3368,11 +3380,16 @@ impl App {
                 self.dirty = true;
             }
             Key::Esc => {
+                if self.queue_at.is_some() {
+                    // Leaving the editor does not swallow the stop.
+                    self.close_queued(tx);
+                }
                 if self.status.streaming {
                     self.cancel.store(true, Ordering::Relaxed);
                 }
                 self.dirty = true;
             }
+            Key::Ctrl('x') if self.queue_at.is_some() => self.delete_queued(tx),
             Key::Enter => self.submit(tx),
             Key::Newline => {
                 self.follow_tail();
@@ -3852,6 +3869,10 @@ impl App {
 
     /// Open queued message `i` in the composer and hold the running turn.
     fn open_queued(&mut self, i: usize) {
+        if self.queued.is_empty() {
+            return;
+        }
+        let i = i.min(self.queued.len() - 1);
         self.queue_at = Some(i);
         self.input = self.queued[i].clone();
         self.cursor = self.input.len();
@@ -3868,6 +3889,11 @@ impl App {
         let text = std::mem::take(&mut self.input);
         self.cursor = 0;
         self.dirty = true;
+        if i >= self.queued.len() {
+            // The queue shrank under the editor: there is nothing to save.
+            self.release_queue(tx);
+            return None;
+        }
         let kept = if text.trim().is_empty() {
             self.queued.remove(i);
             None
@@ -3879,6 +3905,65 @@ impl App {
             self.release_queue(tx);
         }
         kept
+    }
+
+    /// Close the editor without writing, and let the queue go on.
+    fn close_queued(&mut self, tx: &Sender<Cmd>) {
+        self.queue_at = None;
+        self.hold.store(false, Ordering::SeqCst);
+        self.dirty = true;
+        self.release_queue(tx);
+    }
+
+    /// Send the open message now: a steer into the running turn, or a turn of
+    /// its own when none runs. It leaves the queue either way.
+    fn send_queued(&mut self, tx: &Sender<Cmd>) {
+        let Some(i) = self.queue_at else { return };
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            self.delete_queued(tx);
+            return;
+        }
+        if i < self.queued.len() {
+            self.queued.remove(i);
+        }
+        self.input.clear();
+        self.cursor = 0;
+        self.queue_at = None;
+        self.hold.store(false, Ordering::SeqCst);
+        self.history.push(text.clone());
+        save_history(&self.history);
+        if self.history.len() > 1000 {
+            self.history.drain(..self.history.len() - 1000);
+        }
+        if self.status.streaming && self.status.goal.is_none() {
+            self.push(Role::User, format!("{text} (steered)"));
+            if let Ok(mut box_) = self.steer.lock() {
+                box_.push(text);
+            }
+        } else {
+            self.start_turn(text, tx);
+        }
+        self.dirty = true;
+        self.release_queue(tx);
+    }
+
+    /// Delete the open message and open the one that follows, or close.
+    fn delete_queued(&mut self, tx: &Sender<Cmd>) {
+        let Some(i) = self.queue_at else { return };
+        if i < self.queued.len() {
+            self.queued.remove(i);
+        }
+        self.hold.store(false, Ordering::SeqCst);
+        self.input.clear();
+        self.cursor = 0;
+        self.dirty = true;
+        if self.queued.is_empty() {
+            self.queue_at = None;
+            self.release_queue(tx);
+            return;
+        }
+        self.open_queued(i.min(self.queued.len() - 1));
     }
 
     /// A turn that ended while a queued message was open hands on now.
@@ -5392,7 +5477,14 @@ impl App {
             };
             // While a turn runs the rule says what Enter will do.
             let label = match (self.queue_at, asking || !self.status.streaming) {
-                (Some(i), _) => format!("editing queued {}/{} · Enter save · ↑↓ move", i + 1, self.queued.len()),
+                (Some(i), _) => {
+                    let key = if self.status.streaming { "^Q steer now" } else { "^Q send now" };
+                    format!(
+                        "editing queued {}/{} · {key} · ^X delete",
+                        i + 1,
+                        self.queued.len()
+                    )
+                }
                 (None, true) => String::new(),
                 (None, false) if self.queue_mode => "queue · ^Q steer".into(),
                 (None, false) => "steer · ^Q queue".into(),
@@ -7362,7 +7454,7 @@ mod tests {
         assert_eq!((a.queue_at, a.input.as_str()), (Some(1), "second"));
         assert!(a.hold.load(Ordering::SeqCst), "the turn is not held");
         let shown = strip(&a.frame(70, 14));
-        assert!(shown.contains("editing queued 2/2 · Enter save · ↑↓ move"), "{shown:?}");
+        assert!(shown.contains("editing queued 2/2 · ^Q steer now · ^X delete"), "{shown:?}");
         assert!(a.status_line(120).contains("paused · editing queue"));
         a.handle_key(Key::Up, &tx);
         assert_eq!((a.queue_at, a.input.as_str()), (Some(0), "first"));
@@ -7420,6 +7512,109 @@ mod tests {
         a.apply(Ev::Done(None));
         assert_eq!(a.queued, vec!["late", "queued"]);
         assert!(cmds.try_recv().is_err());
+    }
+
+    #[test]
+    fn ctrl_q_steers_the_open_queued_message() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.begin_task();
+        a.queued = vec!["first".into(), "second".into()];
+        a.handle_key(Key::Up, &tx);
+        a.input = "second, but terser".into();
+        a.cursor = a.input.len();
+        a.handle_key(Key::Ctrl('q'), &tx);
+        assert_eq!(a.queued, vec!["first"]);
+        assert_eq!(*a.steer.lock().unwrap(), vec!["second, but terser"]);
+        assert_eq!(a.entries.last().unwrap().text, "second, but terser (steered)");
+        assert_eq!(a.queue_at, None);
+        assert!(a.input.is_empty(), "the composer kept the steered text");
+        assert!(!a.hold.load(Ordering::SeqCst), "the hold outlived the edit");
+        assert!(cmds.try_recv().is_err(), "a steered message was sent as a turn");
+    }
+
+    #[test]
+    fn ctrl_q_sends_the_open_message_when_no_turn_runs() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.queued = vec!["only".into()];
+        a.handle_key(Key::Up, &tx);
+        let out = strip(&a.frame(70, 14));
+        assert!(out.contains("^Q send now"), "{out:?}");
+        a.handle_key(Key::Ctrl('q'), &tx);
+        assert!(a.queued.is_empty());
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "only"));
+        assert_eq!(a.queue_at, None);
+        assert!(a.status.streaming, "the turn did not start");
+    }
+
+    #[test]
+    fn ctrl_x_deletes_and_opens_the_next_message() {
+        let (mut a, _cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.queued = vec!["first".into(), "second".into()];
+        a.handle_key(Key::Up, &tx);
+        a.handle_key(Key::Up, &tx);
+        assert_eq!((a.queue_at, a.input.as_str()), (Some(0), "first"));
+        a.handle_key(Key::Ctrl('x'), &tx);
+        assert_eq!(a.queued, vec!["second"]);
+        assert_eq!((a.queue_at, a.input.as_str()), (Some(0), "second"));
+        assert!(a.hold.load(Ordering::SeqCst), "the next message is not held");
+        a.handle_key(Key::Ctrl('x'), &tx);
+        assert!(a.queued.is_empty());
+        assert_eq!(a.queue_at, None);
+        assert!(!a.hold.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn ctrl_c_closes_the_queue_editor_unchanged() {
+        let (mut a, _cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.queued = vec!["keep me".into()];
+        a.handle_key(Key::Up, &tx);
+        a.input = "changed".into();
+        a.handle_key(Key::Ctrl('c'), &tx);
+        assert_eq!(a.queued, vec!["keep me"], "the edit was written or dropped");
+        assert_eq!(a.queue_at, None);
+        assert!(!a.quit, "Ctrl+C quit from the queue editor");
+        assert!(!a.hold.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn leaving_the_editor_by_up_after_the_turn_ends_releases_the_queue() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.history = vec!["old".into()];
+        a.queued = vec!["first".into(), "second".into()];
+        a.handle_key(Key::Up, &tx);
+        assert_eq!(a.queue_at, Some(1));
+        a.apply(Ev::Done(None));
+        assert!(a.queue_due, "the ended turn did not wait for the editor");
+        // Up once reaches the older message; the next Up leaves for history.
+        a.handle_key(Key::Up, &tx);
+        assert_eq!((a.queue_at, a.input.as_str()), (Some(0), "first"));
+        assert!(cmds.try_recv().is_err(), "the queue sent while still editing");
+        a.handle_key(Key::Up, &tx);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "first"));
+        assert_eq!(a.queued, vec!["second"], "the wrong message went");
+        assert!(!a.queue_due);
+    }
+
+    #[test]
+    fn a_stale_queue_index_cannot_panic() {
+        let (mut a, _cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.queued = vec!["one".into()];
+        a.queue_at = Some(5);
+        a.input = "edit".into();
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.queued, vec!["one"], "the queue changed");
+        assert_eq!(a.queue_at, None);
     }
 
     #[test]
