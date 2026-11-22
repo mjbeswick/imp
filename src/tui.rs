@@ -1341,6 +1341,8 @@ pub struct App {
     entries: Vec<Entry>,
     input: String,
     cursor: usize,
+    /// Where a Shift move began; the selection runs from here to the caret.
+    anchor: Option<usize>,
     history: Vec<String>,
     hist_pos: Option<usize>,
     follow: bool,
@@ -1425,6 +1427,8 @@ struct Pane {
     entries: Vec<Entry>,
     input: String,
     cursor: usize,
+    /// Where a Shift move began; the selection runs from here to the caret.
+    anchor: Option<usize>,
     hist_pos: Option<usize>,
     follow: bool,
     top: usize,
@@ -1452,6 +1456,7 @@ impl Pane {
             entries: Vec::new(),
             input: String::new(),
             cursor: 0,
+            anchor: None,
             hist_pos: None,
             follow: true,
             top: 0,
@@ -1991,6 +1996,7 @@ impl App {
             entries: Vec::new(),
             input: String::new(),
             cursor: 0,
+            anchor: None,
             history,
             hist_pos: None,
             follow: true,
@@ -2055,6 +2061,7 @@ impl App {
         swap(&mut self.entries, &mut p.entries);
         swap(&mut self.input, &mut p.input);
         swap(&mut self.cursor, &mut p.cursor);
+        swap(&mut self.anchor, &mut p.anchor);
         swap(&mut self.hist_pos, &mut p.hist_pos);
         swap(&mut self.follow, &mut p.follow);
         swap(&mut self.top, &mut p.top);
@@ -2730,8 +2737,39 @@ impl App {
             self.answer(pending, key, tx);
             return;
         }
+        // An edit consumes the selection; anything but a Shift move clears it.
+        if !matches!(key, Key::Select(_)) {
+            if let Some((from, to)) = self.selection() {
+                let paste = matches!(key, Key::Ctrl('v')) && !self.clip.is_empty();
+                let removes = matches!(key, Key::Backspace | Key::Delete);
+                if removes || paste || matches!(key, Key::Char(_) | Key::Newline) {
+                    self.follow_tail();
+                    self.input.replace_range(from..to, "");
+                    self.cursor = from;
+                    self.anchor = None;
+                    if removes {
+                        self.sync_menu();
+                        self.dirty = true;
+                        return;
+                    }
+                }
+            }
+            self.anchor = None;
+        }
 
         match key {
+            Key::Select(m) => {
+                self.anchor.get_or_insert(self.cursor);
+                self.move_caret(m);
+            }
+            Key::Delete => {
+                if self.cursor < self.input.len() {
+                    self.follow_tail();
+                    let next = next_boundary(&self.input, self.cursor);
+                    self.input.replace_range(self.cursor..next, "");
+                    self.sync_menu();
+                }
+            }
             Key::Ctrl('c') => self.quit = true,
             Key::Ctrl('d') => self.quit = true,
             Key::Ctrl('n') | Key::Ctrl('p') if self.panes.len() > 1 => {
@@ -2770,28 +2808,10 @@ impl App {
                     self.sync_menu();
                 }
             }
-            Key::Left => {
-                self.cursor = previous_boundary(&self.input, self.cursor);
-                self.dirty = true;
-            }
-            Key::Right => {
-                if self.cursor < self.input.len() {
-                    let mut c = self.cursor + 1;
-                    while c < self.input.len() && !self.input.is_char_boundary(c) {
-                        c += 1;
-                    }
-                    self.cursor = c;
-                }
-                self.dirty = true;
-            }
-            Key::Home => {
-                self.cursor = 0;
-                self.dirty = true;
-            }
-            Key::End => {
-                self.cursor = self.input.len();
-                self.dirty = true;
-            }
+            Key::Left => self.move_caret(Move::Left),
+            Key::Right => self.move_caret(Move::Right),
+            Key::Home => self.move_caret(Move::Home),
+            Key::End => self.move_caret(Move::End),
             Key::PageUp => {
                 self.follow = false;
                 self.top = self.top.saturating_sub(self.page());
@@ -5123,6 +5143,29 @@ impl App {
         self.cfg.live_permissions() == crate::config::Permissions::Yolo
     }
 
+    /// The selected bytes of the draft, start first, when any are selected.
+    fn selection(&self) -> Option<(usize, usize)> {
+        let anchor = self.anchor?.min(self.input.len());
+        let (from, to) = (anchor.min(self.cursor), anchor.max(self.cursor));
+        (from < to && self.input.is_char_boundary(from) && self.input.is_char_boundary(to)).then_some((from, to))
+    }
+
+    /// Move the caret within the draft. Up and Down change rows only; the
+    /// plain keys recall history themselves.
+    fn move_caret(&mut self, m: Move) {
+        let (row, col) = self.caret_position();
+        self.cursor = match m {
+            Move::Left => previous_boundary(&self.input, self.cursor),
+            Move::Right => next_boundary(&self.input, self.cursor),
+            Move::Home => 0,
+            Move::End => self.input.len(),
+            Move::Up if row > 0 => self.cursor_at(row - 1, col),
+            Move::Down if row < self.input.matches('\n').count() => self.cursor_at(row + 1, col),
+            Move::Up | Move::Down => self.cursor,
+        };
+        self.dirty = true;
+    }
+
     /// Row and byte column of the caret within the input.
     fn caret_position(&self) -> (usize, usize) {
         let cursor = self.cursor.min(self.input.len());
@@ -5401,6 +5444,11 @@ fn verb(what: &str) -> &'static str {
         "delete" => "delete it?",
         _ => "approve?",
     }
+}
+
+/// The byte after the character at `i`, or the end.
+fn next_boundary(s: &str, i: usize) -> usize {
+    s[i.min(s.len())..].chars().next().map_or(s.len(), |c| i + c.len_utf8())
 }
 
 fn previous_boundary(s: &str, mut i: usize) -> usize {
@@ -6131,6 +6179,71 @@ mod tests {
         let keys = decode(&mut buf);
         assert_eq!(keys.len(), 1);
         assert!(matches!(keys[0], Key::Up));
+    }
+
+    #[test]
+    fn a_selection_is_extended_replaced_and_cleared() {
+        let (tx, _cmds) = channel();
+        let draft = |text: &str| {
+            let mut a = app();
+            a.input = text.into();
+            a.cursor = text.len();
+            a
+        };
+        // Replace a word by typing.
+        let mut a = draft("make it red");
+        for _ in 0..3 {
+            a.handle_key(Key::Select(Move::Left), &tx);
+        }
+        assert_eq!(a.selection(), Some((8, 11)));
+        for c in "blue".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert_eq!((a.input.as_str(), a.cursor), ("make it blue", 12));
+        // Backspace removes it; the caret sits where it began.
+        let mut a = draft("make it red");
+        a.handle_key(Key::Select(Move::Left), &tx);
+        a.handle_key(Key::Select(Move::Left), &tx);
+        a.handle_key(Key::Backspace, &tx);
+        assert_eq!((a.input.as_str(), a.cursor), ("make it r", 9));
+        // A plain move clears it and leaves the text alone.
+        let mut a = draft("make it red");
+        a.handle_key(Key::Select(Move::Home), &tx);
+        a.handle_key(Key::Right, &tx);
+        assert_eq!((a.input.as_str(), a.selection()), ("make it red", None));
+        // Ctrl+V and a newline replace it too.
+        let mut a = draft("make it red");
+        a.clip = "X".into();
+        a.handle_key(Key::Select(Move::Left), &tx);
+        a.handle_key(Key::Ctrl('v'), &tx);
+        assert_eq!(a.input, "make it reX");
+        a.handle_key(Key::Select(Move::Left), &tx);
+        a.handle_key(Key::Newline, &tx);
+        assert_eq!(a.input, "make it re\n");
+        // Across rows, without recalling history.
+        let mut a = draft("ab\ncd");
+        a.history = vec!["old".into()];
+        a.handle_key(Key::Select(Move::Up), &tx);
+        assert_eq!((a.input.as_str(), a.selection()), ("ab\ncd", Some((2, 5))));
+        a.handle_key(Key::Select(Move::Up), &tx);
+        assert_eq!(a.input, "ab\ncd", "Shift+Up recalled history");
+    }
+
+    #[test]
+    fn delete_removes_forward() {
+        let (tx, _cmds) = channel();
+        let mut a = app();
+        a.input = "cat".into();
+        a.cursor = 1;
+        a.handle_key(Key::Delete, &tx);
+        assert_eq!((a.input.as_str(), a.cursor), ("ct", 1));
+        a.cursor = 2;
+        a.handle_key(Key::Delete, &tx);
+        assert_eq!(a.input, "ct", "Delete at the end changed the draft");
+        a.input = "né".into();
+        a.cursor = 1;
+        a.handle_key(Key::Delete, &tx);
+        assert_eq!(a.input, "n", "a multi-byte character was split");
     }
 
     #[test]

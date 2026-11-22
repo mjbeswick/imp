@@ -6,6 +6,6 @@
 
 ## 2. Selection
 
-- [ ] 2.1 The anchor, Shift moves, and clearing on other keys; Delete with no selection; tests
-- [ ] 2.2 Backspace and Delete remove the selection; typing, newline, and Ctrl+V replace it; tests
+- [x] 2.1 The anchor, Shift moves, and clearing on other keys; Delete with no selection; tests
+- [x] 2.2 Backspace and Delete remove the selection; typing, newline, and Ctrl+V replace it; tests
 - [ ] 2.3 Draw the selection reversed across rows; tests at 54 columns and with colour off
