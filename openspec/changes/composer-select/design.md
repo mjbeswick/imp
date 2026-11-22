@@ -37,4 +37,4 @@ and with colour off.
 
 ## Size
 
-Expected: under 1.5 KB.
+Expected: under 1.5 KB. Measured: `__text` +2024, `__cstring` +0, measured with the uncommitted diff-style theme helpers in the build.
