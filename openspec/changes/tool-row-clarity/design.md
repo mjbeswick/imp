@@ -53,7 +53,9 @@ data and do not expand.
 
 Expanded arguments: a shell call shows `$ <command>`. Other tools show one
 `key: value` line per argument, strings unquoted, nested values as compact
-JSON, each wrapped at the indent.
+JSON, each wrapped at the indent. `path` leads; the rest follow in key
+order, as `serde_json` keeps no other. `description` is left out: the row
+already says it.
 
 ## Declines
 

@@ -1185,6 +1185,34 @@ fn echoes(summary: &str, preview: &str) -> bool {
     matches!((summary.split_once(' '), preview.split_once(' ')), (Some((_, a)), Some((_, b))) if a == b)
 }
 
+/// A call's arguments as a person reads them: `$ command` for a shell call,
+/// then `key: value` lines, strings unquoted. The description is the row
+/// itself, so it is left out. Anything but an object stays as it came.
+fn readable_args(args: &str) -> Vec<String> {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str(args) else {
+        return vec![args.to_string()];
+    };
+    let mut lines = Vec::new();
+    if let Some(cmd) = map.get("command").and_then(|v| v.as_str()) {
+        lines.push(format!("$ {cmd}"));
+    }
+    // The path says where; the rest follow in key order.
+    if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
+        lines.push(format!("path: {path}"));
+    }
+    for (key, value) in &map {
+        let shown = matches!(key.as_str(), "command" | "path") && value.is_string();
+        if key == "description" || shown {
+            continue;
+        }
+        match value.as_str() {
+            Some(text) => lines.push(format!("{key}: {text}")),
+            None => lines.push(format!("{key}: {value}")),
+        }
+    }
+    lines
+}
+
 /// How a tool step ended, shared by both front-ends.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Finish {
@@ -1241,8 +1269,10 @@ fn tool_row_text(row: &ToolRow, level: Verbosity) -> String {
     };
     let mut text = format!("{mark} {}{result}{TIME}{}", row.summary, duration(row.ms));
     if row.expanded || level == Verbosity::High {
-        text.push_str("\n  args: ");
-        text.push_str(&row.args);
+        for line in readable_args(&row.args) {
+            text.push_str("\n  ");
+            text.push_str(&line);
+        }
         if !row.output.is_empty() {
             text.push_str("\n  ");
             text.push_str(&row.output.lines().take(20).collect::<Vec<_>>().join("\n  "));
@@ -7045,15 +7075,14 @@ mod tests {
         });
         let (tx, _cmds) = channel();
         a.handle_key(Key::Ctrl('o'), &tx);
-        assert!(!a.entries[0].text.contains("args:"), "Ctrl+O still expands");
+        assert!(!a.entries[0].text.contains("$ ls -la"), "Ctrl+O still expands");
         assert_eq!(a.entries.last().unwrap().text, "nothing waiting");
         a.handle_key(Key::Ctrl('e'), &tx);
         let text = a.entries[0].text.clone();
-        assert!(text.contains("args:"), "{text}");
-        assert!(text.contains("ls -la"), "{text}");
+        assert!(text.contains("\n  $ ls -la"), "{text}");
         assert!(text.contains("total 8"), "{text}");
         a.handle_key(Key::Ctrl('e'), &tx);
-        assert!(!a.entries[0].text.contains("args:"), "it did not collapse");
+        assert!(!a.entries[0].text.contains("$ ls -la"), "it did not collapse");
     }
 
     #[test]
@@ -8652,7 +8681,7 @@ mod tests {
             ms: 4,
         });
         let text = &a.entries[1].text;
-        assert!(text.contains("args:"), "{text:?}");
+        assert!(text.contains("\n  $ ls"), "{text:?}");
         assert!(text.contains("foo"), "{text:?}");
 
         a.run_command("verbosity low", &tx);
@@ -9002,20 +9031,37 @@ mod tests {
         step(&mut a, "false", false, "refused: outside the session");
         step(&mut a, "true", true, "exit 0");
         a.handle_key(Key::Ctrl('e'), &tx);
-        let expanded = a.entries.iter().filter(|e| e.text.contains("args:")).count();
+        let expanded = a.entries.iter().filter(|e| e.text.contains("\n  $ ")).count();
         assert_eq!(expanded, 2, "both rows should expand");
         a.handle_key(Key::Ctrl('e'), &tx);
-        assert!(!a.entries.iter().any(|e| e.text.contains("args:")), "they should collapse");
+        assert!(!a.entries.iter().any(|e| e.text.contains("\n  $ ")), "they should collapse");
         // A new turn leaves the old rows behind.
         a.begin_task();
         step(&mut a, "ls", true, "exit 0");
         a.handle_key(Key::Ctrl('e'), &tx);
-        assert_eq!(a.entries.iter().filter(|e| e.text.contains("args:")).count(), 1);
+        assert_eq!(a.entries.iter().filter(|e| e.text.contains("\n  $ ls")).count(), 1);
         // Clearing the screen drops the rows, so Ctrl+E edits nothing stale.
         a.handle_key(Key::Ctrl('l'), &tx);
         a.push(Role::Assistant, "fresh");
         a.handle_key(Key::Ctrl('e'), &tx);
         assert_eq!(a.entries[0].text, "fresh");
+    }
+
+    #[test]
+    fn expanded_arguments_read_as_a_person_would() {
+        assert_eq!(readable_args(r#"{"command":"python3 calc.py","description":"Run calc.py"}"#), vec!["$ python3 calc.py"]);
+        assert_eq!(
+            readable_args(r#"{"path":"calc.py","old":"a - b","new":"a + b","all":false}"#),
+            vec!["path: calc.py", "all: false", "new: a + b", "old: a - b"]
+        );
+        assert_eq!(readable_args("not json"), vec!["not json"]);
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.apply(Ev::ToolStart { name: "bash".into(), summary: "Run calc.py".into(), args: r#"{"command":"python3 calc.py"}"#.into() });
+        a.apply(Ev::ToolEnd { ok: true, preview: String::new(), output: "exit 0\n5".into(), detail: String::new(), ms: 1 });
+        a.handle_key(Key::Ctrl('e'), &tx);
+        let out = strip(&a.frame(60, 10));
+        assert!(out.contains("    $ python3 calc.py") && !out.contains("{\""), "{out:?}");
     }
 
     #[test]
@@ -9025,19 +9071,20 @@ mod tests {
         let (tx, _cmds) = channel();
         a.begin_task();
         for cmd in ["false", "true"] {
-            a.apply(Ev::ToolStart { name: "bash".into(), summary: format!("run `{cmd}`"), args: "{}".into() });
+            let args = format!("{{\"command\":\"{cmd}\"}}");
+            a.apply(Ev::ToolStart { name: "bash".into(), summary: format!("run `{cmd}`"), args });
             a.apply(Ev::ToolEnd { ok: false, preview: String::new(), output: "exit 1".into(), detail: String::new(), ms: 1 });
         }
         a.frame(80, 14);
         click(&mut a, &tx, |t| matches!(t, Target::Tool(0)));
-        assert!(a.entries[0].text.contains("args:"), "the clicked row did not open");
-        assert!(!a.entries[1].text.contains("args:"), "the other row opened too");
+        assert!(a.entries[0].text.contains("$ false"), "the clicked row did not open");
+        assert!(!a.entries[1].text.contains("$ true"), "the other row opened too");
         a.frame(80, 14);
         click(&mut a, &tx, |t| matches!(t, Target::Tool(1)));
-        assert!(a.entries[1].text.contains("args:"), "the newest row did not open");
+        assert!(a.entries[1].text.contains("$ true"), "the newest row did not open");
         a.frame(80, 20);
         click(&mut a, &tx, |t| matches!(t, Target::Tool(0)));
-        assert!(!a.entries[0].text.contains("args:"), "a second click did not close it");
+        assert!(!a.entries[0].text.contains("$ false"), "a second click did not close it");
         // With the mouse off there is nothing to click.
         a.cfg.mouse = false;
         a.frame(80, 20);
