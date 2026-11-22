@@ -1167,6 +1167,10 @@ impl Hooks for WorkerHooks {
         self.ask_choices(question, &plain, false)
     }
 
+    fn can_foreground(&self) -> bool {
+        true
+    }
+
     fn ask_choices(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<String> {
         let (tx, rx) = channel();
         if self

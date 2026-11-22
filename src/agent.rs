@@ -50,6 +50,12 @@ pub trait Hooks {
     fn run_attached(&mut self, _command: &str) -> Option<i32> {
         None
     }
+
+    /// Whether a command can take over the screen: the chat can; line mode,
+    /// which prints rows, cannot.
+    fn can_foreground(&self) -> bool {
+        false
+    }
 }
 
 pub enum Ui {
@@ -1182,6 +1188,23 @@ impl Session {
                     Decision::Allow if mode != Permissions::Yolo && perm::leaves_dir(cmd, &self.tools.root) => Decision::Ask,
                     other => other,
                 };
+                // In the foreground: the deny list holds, and it always asks
+                // unless the mode is yolo, whatever is allowed.
+                if args.get("foreground").and_then(Value::as_bool).unwrap_or(false) {
+                    if let Decision::Deny(why) = decision {
+                        return (false, why);
+                    }
+                    if !hooks.can_foreground() {
+                        return (false, "refused: foreground needs the chat interface".into());
+                    }
+                    if mode != Permissions::Yolo && !hooks.confirm(&format!("run `{cmd}`")) {
+                        return (false, "refused: the user declined to run this command".into());
+                    }
+                    return match hooks.run_attached(&in_dir(&self.tools.root, cmd)) {
+                        Some(code) => (code == 0, format!("exit {code}\n(ran in the foreground; output not captured)")),
+                        None => (false, "refused: foreground needs the chat interface".into()),
+                    };
+                }
                 // A plain curl GET shares the per-host fetch approval.
                 // Without a scratch folder `$IMP_TMP` is empty, and the target would be `/`.
                 let scratch = || crate::tools::scratch().and_then(|_| perm::scratch_download(cmd));
@@ -2738,6 +2761,59 @@ mod tests {
         let args = json!({"question": "which?", "options": [{"label": "Rust", "description": "fast"}, "Go"]});
         assert_eq!(s.run_tool("ask", &args, &mut hooks), (true, "Rust".to_string()));
         assert_eq!(hooks.0, vec!["Rust", "Go"]);
+    }
+
+    #[test]
+    fn a_foreground_command_asks_then_takes_the_terminal() {
+        struct Screen {
+            asked: usize,
+            yes: bool,
+            ran: Option<String>,
+            chat: bool,
+        }
+        impl Hooks for Screen {
+            fn ui(&mut self, _: Ui) {}
+            fn confirm(&mut self, _: &str) -> bool {
+                self.asked += 1;
+                self.yes
+            }
+            fn confirm_always(&mut self, what: &str) -> Answer {
+                if self.confirm(what) { Answer::Yes } else { Answer::No }
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+            fn run_attached(&mut self, command: &str) -> Option<i32> {
+                self.ran = Some(command.to_string());
+                Some(0)
+            }
+            fn can_foreground(&self) -> bool {
+                self.chat
+            }
+        }
+        let run = |mode: Permissions, yes: bool, chat: bool, cmd: &str| {
+            let (mut s, _fake) = scripted(vec![]);
+            s.cfg.set_permissions(mode);
+            let mut h = Screen { asked: 0, yes, ran: None, chat };
+            let out = s.run_tool("bash", &json!({"command": cmd, "foreground": true}), &mut h);
+            (out, h.asked, h.ran)
+        };
+        // Asks even for a safe command, then hands over and reports the code.
+        let ((ok, text), asked, ran) = run(Permissions::Normal, true, true, "ls");
+        assert!(ok && text == "exit 0\n(ran in the foreground; output not captured)", "{text}");
+        assert_eq!(asked, 1);
+        assert!(ran.unwrap().contains("ls"));
+        // Strict asks too; yolo does not.
+        assert_eq!(run(Permissions::Strict, true, true, "htop").1, 1);
+        assert_eq!(run(Permissions::Yolo, false, true, "htop").1, 0);
+        // Declined: nothing runs.
+        let ((ok, text), _, ran) = run(Permissions::Normal, false, true, "htop");
+        assert!(!ok && text.starts_with("refused: the user declined") && ran.is_none());
+        // The deny list still holds; line mode refuses.
+        let ((ok, _), asked, _) = run(Permissions::Normal, true, true, "shutdown now");
+        assert!(!ok && asked == 0);
+        let ((ok, text), _, ran) = run(Permissions::Normal, true, false, "htop");
+        assert!(!ok && text == "refused: foreground needs the chat interface" && ran.is_none());
     }
 
     #[test]
