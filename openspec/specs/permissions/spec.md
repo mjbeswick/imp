@@ -452,7 +452,7 @@ The system SHALL run `git ls-files` with any arguments without asking, alone or 
 
 ### Requirement: Allows can be listed and revoked from the mode picker
 
-The system SHALL list, in the `/mode` picker below the modes, every allow for the session, each marked `session` or `always`, SHALL remove the highlighted allow on `d`, deleting an `always` allow's `allow` line from the config and leaving the rest of the file unchanged, and SHALL ask again the next time a revoked shape runs.
+The system SHALL list every allow below the modes in the `/mode` picker, marked `session` or `always`, SHALL remove the highlighted allow on `d`, deleting its `allow` line and leaving the rest alone, SHALL ask again when a revoked shape runs, SHALL end the list with an `a` add row that saves a typed shape as an always allow, and SHALL list the shapes asked this session that are not allowed, newest first and at most five, marked `allowed` or `declined`, saving one on `a`.
 
 #### Scenario: Listed
 - **WHEN** `npm test` was allowed for the session and `cargo test` always, and the user runs `/mode`
@@ -471,5 +471,25 @@ The system SHALL list, in the `/mode` picker below the modes, every allow for th
 - **THEN** nothing changes
 
 #### Scenario: Nothing allowed
-- **WHEN** there are no allows
-- **THEN** the picker shows only the three modes
+- **WHEN** there are no allows and nothing was asked
+- **THEN** the picker shows the three modes and the add row
+
+#### Scenario: Add a rule
+- **WHEN** the user presses `a` on the add row and types `cargo test`
+- **THEN** the config gains `allow = cargo test` and the picker lists it as `always`
+
+#### Scenario: Empty rule
+- **WHEN** the user presses Enter on an empty rule prompt
+- **THEN** nothing is saved and the prompt stays open
+
+#### Scenario: Recent ask
+- **WHEN** `npm test` asked this session and was declined
+- **THEN** the picker lists it as `npm test · declined`
+
+#### Scenario: Save an ask
+- **WHEN** the user presses `a` on `npm test · declined`
+- **THEN** the config gains `allow = npm test` and the next `npm test` runs without asking
+
+#### Scenario: Already allowed
+- **WHEN** a shape is allowed and was also asked
+- **THEN** it is listed once, as an allow, not among the asks
