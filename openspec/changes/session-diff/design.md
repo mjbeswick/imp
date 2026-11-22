@@ -45,4 +45,4 @@ The command list is modified after `keys-and-cycling`; archive after it.
 
 ## Size
 
-Expected: 1.5 to 2.5 KB.
+Expected: 1.5 to 2.5 KB. Measured: `__text` +7928, `__cstring` +136; well over the estimate.
