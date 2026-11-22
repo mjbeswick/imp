@@ -2,7 +2,7 @@
 
 ### Requirement: Safe-listed commands run unprompted
 
-The system SHALL run a command without confirmation in `normal` only when every pipeline, alone or joined by `;`, `&&`, or `||`, starts with a safe-listed read-only program, SHALL ask for a lone `&`, a substitution, or a redirect that writes a file, SHALL treat quoted text as an argument except `$(` and backticks inside double quotes, SHALL ask when a safe program gets a flag that writes files or runs commands, and SHALL judge every program run by a `find -exec` or `find -execdir` clause by the same rule, asking when a clause has no `;` or `+` terminator.
+The system SHALL run a command without confirmation in `normal` only when every pipeline, alone or joined by `;`, `&&`, or `||`, starts with a safe-listed read-only program, SHALL ask for a lone `&`, a substitution, or a write redirect, SHALL treat quoted text as an argument except `$(` and backticks in double quotes, SHALL ask when a safe program gets a flag that writes or runs, and SHALL judge every `find -exec` or `-execdir` clause by the same rule, asking when it has no terminator.
 
 #### Scenario: Inspection command
 - **WHEN** the model runs `ls -la`, `rg TODO`, or `git diff`
@@ -79,7 +79,7 @@ The system SHALL run a command without confirmation in `normal` only when every 
 
 ### Requirement: Always approves a command shape for the session
 
-The system SHALL offer `s` and `a` only on a confirmation for one simple, unprivileged command in `normal`, or one piped only into safe filters, which is judged by its first command, SHALL NOT offer either for a command that runs another program through `-exec`, `-execdir`, `-ok`, `-okdir`, `--exec`, or `xargs`, SHALL on `s` skip the prompt for the same program and first non-flag argument for the rest of the session, SHALL on `a` append `allow = <shape>` to the config and skip it in every session, SHALL NOT apply `allow` lines outside `normal`, and SHALL forget `s` approvals on `/new` and on exit.
+The system SHALL offer `s` and `a` only on a confirmation for one simple, unprivileged command in `normal`, or one piped into safe filters, judged by its first command, SHALL NOT offer either for a command that runs another program through `-exec`, `-execdir`, `--exec`, or `xargs`, SHALL on `s` skip that program and its first argument for the session, SHALL on `a` save an `allow` line for all sessions, SHALL apply `allow` only in `normal`, and SHALL forget `s` approvals on `/new` and on exit.
 
 #### Scenario: Always npm test
 - **WHEN** the user answers `s` to `npm test`
