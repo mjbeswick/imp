@@ -65,4 +65,4 @@ This change modifies "The interface is keyboard first" from
 
 ## Size
 
-Expected: 2.5 to 3.5 KB.
+Expected: 2.5 to 3.5 KB. Measured: `__text` +3832, `__cstring` +208.
