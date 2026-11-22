@@ -757,9 +757,18 @@ impl Session {
 
         let max_steps = self.cfg.max_steps.max(1);
         for step in 0..max_steps {
+            // The chat holds the turn while the user edits a queued message.
+            while self.hold.load(std::sync::atomic::Ordering::SeqCst) && !self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
             if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 hooks.ui(Ui::Info("cancelled".into()));
                 return Ok(());
+            }
+            // Messages the user steered in join before the next request.
+            let steered = self.steer.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default();
+            for text in steered {
+                self.say(Message::user(&text));
             }
             self.prune(hooks);
             if crate::api::estimate_tokens(&self.history) >= self.cfg.compact_at as u64 {
@@ -2446,6 +2455,45 @@ mod tests {
         assert_eq!(clean_suggestion("Should I commit this.").as_deref(), Some("Should I commit this?"));
         assert_eq!(clean_suggestion("what next?").as_deref(), Some("what next?"));
         assert_eq!(clean_suggestion("run the tests").as_deref(), Some("run the tests"));
+    }
+
+    #[test]
+    fn steered_messages_join_the_turn_before_the_next_request() {
+        let (mut s, _fake) = scripted(vec![Script::Ok(text_reply("done"))]);
+        s.steer.lock().unwrap().push("use pnpm, not npm".into());
+        s.turn("install it", &mut Null).unwrap();
+        let users: Vec<&str> = s.history.iter().filter(|m| m.role == crate::api::Role::User).map(|m| m.content.as_str()).collect();
+        assert_eq!(users, vec!["install it", "use pnpm, not npm"]);
+        assert!(s.steer.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_held_turn_makes_no_request_until_released_or_stopped() {
+        // No scripted reply: any request would fail the turn.
+        let (mut s, _fake) = scripted(vec![]);
+        s.hold.store(true, std::sync::atomic::Ordering::SeqCst);
+        let cancel = s.cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        struct Notes(Vec<String>);
+        impl Hooks for Notes {
+            fn ui(&mut self, event: Ui) {
+                if let Ui::Info(t) | Ui::Error(t) = event {
+                    self.0.push(t);
+                }
+            }
+            fn confirm(&mut self, _: &str) -> bool {
+                false
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+        }
+        let mut hooks = Notes(Vec::new());
+        s.turn("go", &mut hooks).unwrap();
+        assert_eq!(hooks.0, vec!["cancelled".to_string()]);
     }
 
     #[test]

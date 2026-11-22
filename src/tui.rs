@@ -2659,6 +2659,20 @@ impl App {
                 // The next queued message starts, unless one is being edited or
                 // the user stopped the turn: then the queue waits.
                 let stopped = self.cancel.load(Ordering::Relaxed);
+                // Steered too late for the turn: it starts the next one, ahead
+                // of the queue. Its row is already in the transcript.
+                let late: Vec<String> = self.steer.lock().map(|mut b| std::mem::take(&mut *b)).unwrap_or_default();
+                if !late.is_empty() && stopped {
+                    // Stopped: kept at the front of the queue, not lost.
+                    self.queued.splice(0..0, late);
+                } else if !late.is_empty() {
+                    if let Some(tx) = self.worker.as_ref().map(|w| w.0.clone()) {
+                        self.status.streaming = true;
+                        self.begin_task();
+                        let _ = tx.send(Cmd::Prompt(late.join("\n\n")));
+                        return;
+                    }
+                }
                 // Ended while a queued message is open: it goes on when closed.
                 self.queue_due = self.queue_at.is_some() && !stopped;
                 if self.queue_at.is_none() && !stopped && !self.queued.is_empty() {
@@ -3410,8 +3424,16 @@ impl App {
         }
         // During a turn, queue mode holds the message for the turn's end. A
         // goal ends on any message, as before.
-        if self.status.streaming && self.queue_mode && self.status.goal.is_none() {
-            self.queued.push(text);
+        if self.status.streaming && self.status.goal.is_none() {
+            if self.queue_mode {
+                self.queued.push(text);
+            } else {
+                // Steer: the running turn takes it before its next step.
+                self.push(Role::User, format!("{text} (steered)"));
+                if let Ok(mut box_) = self.steer.lock() {
+                    box_.push(text);
+                }
+            }
             self.dirty = true;
             return;
         }
@@ -6765,6 +6787,30 @@ mod tests {
         assert!(cmds.try_recv().is_err(), "sent while being edited");
         a.handle_key(Key::Enter, &tx);
         assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "first"));
+    }
+
+    #[test]
+    fn enter_steers_a_running_turn() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.status.streaming = true;
+        a.input = "use pnpm, not npm".into();
+        a.cursor = a.input.len();
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(a.entries.last().unwrap().text, "use pnpm, not npm (steered)");
+        assert_eq!(*a.steer.lock().unwrap(), vec!["use pnpm, not npm".to_string()]);
+        assert!(cmds.try_recv().is_err(), "a steered message was sent as a turn");
+        // Steered too late: the next turn carries it.
+        a.apply(Ev::Done(None));
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "use pnpm, not npm"));
+        assert!(a.status.streaming && a.steer.lock().unwrap().is_empty());
+        // After a stop it waits at the front of the queue.
+        a.queued = vec!["queued".into()];
+        a.steer.lock().unwrap().push("late".into());
+        a.cancel.store(true, Ordering::Relaxed);
+        a.apply(Ev::Done(None));
+        assert_eq!(a.queued, vec!["late", "queued"]);
+        assert!(cmds.try_recv().is_err());
     }
 
     #[test]

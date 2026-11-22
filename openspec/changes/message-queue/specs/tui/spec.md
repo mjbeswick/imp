@@ -132,6 +132,10 @@ The system SHALL keep a per-session send mode, steer by default, SHALL toggle it
 - **WHEN** a turn is running a tool in steer mode and the user types `use pnpm, not npm` and presses Enter
 - **THEN** the model's next request carries it and the turn goes on
 
+#### Scenario: Steered too late
+- **WHEN** the user steers a message while the model writes its final reply
+- **THEN** the message starts the next turn as soon as this one ends, or waits at the front of the queue if the user stopped the turn
+
 #### Scenario: Toggle
 - **WHEN** a turn is running in steer mode and the user presses Ctrl+Q
 - **THEN** the rule reads `queue · ^Q steer`, the prompt glyph is `»`, and the next Enter queues

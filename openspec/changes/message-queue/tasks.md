@@ -12,5 +12,5 @@
 
 ## 3. Steer and pause
 
-- [ ] 3.1 Enter during a turn steers before the next step; agent and chat tests
+- [x] 3.1 Enter during a turn steers before the next step; agent and chat tests
 - [ ] 3.2 An open queued message holds the turn before its next step; Esc still stops it; tests
