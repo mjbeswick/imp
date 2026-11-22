@@ -1652,6 +1652,8 @@ pub struct App {
     ask_descs: Vec<String>,
     ask_multiple: bool,
     ask_marked: Vec<bool>,
+    /// The caret in a typed answer to the open question.
+    ask_caret: usize,
     /// Enter during a turn queues rather than steers.
     queue_mode: bool,
     /// Messages waiting for the running turn to end, oldest first.
@@ -2391,6 +2393,7 @@ impl App {
             ask_descs: Vec::new(),
             ask_multiple: false,
             ask_marked: Vec::new(),
+            ask_caret: 0,
             queue_mode: false,
             queued: Vec::new(),
             queue_at: None,
@@ -5315,8 +5318,11 @@ impl App {
                         self.dirty = true;
                     }
                     // Typing starts the answer, keeping the key typed.
-                    Key::Char(c) if !c.is_whitespace() => {
-                        typed.push(c);
+                    Key::Char(c) => {
+                        if c != ' ' {
+                            typed.push(c);
+                        }
+                        self.ask_caret = typed.len();
                         self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Custom, typed });
                         self.dirty = true;
                     }
@@ -5343,36 +5349,11 @@ impl App {
                         let _ = reply.send(Some(typed.clone()));
                         self.dirty = true;
                     }
-                    Key::Char(c) => {
-                        typed.push(c);
-                        self.pending = Some(Pending::Question {
-                            q,
-                            opts,
-                            reply,
-                            mode: AskMode::Custom,
-                            typed,
-                        });
-                        self.dirty = true;
-                    }
-                    Key::Backspace => {
-                        typed.pop();
-                        self.pending = Some(Pending::Question {
-                            q,
-                            opts,
-                            reply,
-                            mode: AskMode::Custom,
-                            typed,
-                        });
-                        self.dirty = true;
-                    }
-                    _ => {
-                        self.pending = Some(Pending::Question {
-                            q,
-                            opts,
-                            reply,
-                            mode: AskMode::Custom,
-                            typed,
-                        });
+                    key => {
+                        if edit_line(&mut typed, &mut self.ask_caret, &key, &self.clip) {
+                            self.dirty = true;
+                        }
+                        self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Custom, typed });
                     }
                 },
             },
@@ -6099,7 +6080,10 @@ impl App {
         parts.push(match mode {
             AskMode::Choose if self.ask_multiple => (format!("type to answer   Esc stop   1-{} mark   Enter send", opts.len()), 2, false),
             AskMode::Choose => ("type to answer   Esc stop".to_string(), 2, false),
-            AskMode::Custom => (format!("> {typed}{CARET}"), 4, false),
+            AskMode::Custom => {
+                let (before, after) = typed.split_at(self.ask_caret.min(typed.len()));
+                (format!("> {before}{CARET}{after}"), 4, false)
+            }
         });
         let mut rows: Vec<(String, bool)> = Vec::new();
         for (text, indent, muted) in parts {
@@ -10281,6 +10265,53 @@ mod tests {
         a.handle_key(Key::Enter, &cmd_tx);
         assert!(rx.try_recv().is_err(), "an empty answer was sent");
         assert!(matches!(a.pending, Some(Pending::Question { mode: AskMode::Custom, .. })));
+    }
+
+    /// An open three-choice question and the channel its answer arrives on.
+    fn asked(a: &mut App) -> Receiver<Option<String>> {
+        let (tx, rx) = channel();
+        a.pending = Some(Pending::Question {
+            q: "which?".into(),
+            opts: vec!["A".into(), "B".into(), "C".into()],
+            reply: tx,
+            mode: AskMode::Choose,
+            typed: String::new(),
+        });
+        rx
+    }
+
+    #[test]
+    fn the_answer_row_edits_like_the_composer() {
+        let mut a = app();
+        let rx = asked(&mut a);
+        let (tx, _cmds) = channel();
+        for c in "use the old parser".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Ctrl('w'), &tx);
+        a.handle_key(Key::Word(Move::Left), &tx);
+        a.handle_key(Key::Char('x'), &tx);
+        a.clip = "new ".into();
+        a.handle_key(Key::Home, &tx);
+        a.handle_key(Key::Ctrl('v'), &tx);
+        let shown = strip(&a.frame(60, 20));
+        assert!(shown.contains("> new  use the xold"), "the caret is not after the paste: {shown}");
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(rx.recv().unwrap().as_deref(), Some("new use the xold "));
+    }
+
+    #[test]
+    fn space_starts_an_answer_with_a_digit() {
+        let mut a = app();
+        let rx = asked(&mut a);
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Char(' '), &tx);
+        for c in "3 files".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert!(rx.try_recv().is_err(), "a digit picked a choice");
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(rx.recv().unwrap().as_deref(), Some("3 files"));
     }
 
     #[test]
