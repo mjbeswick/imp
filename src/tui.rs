@@ -990,6 +990,8 @@ fn utf8_len(b: u8) -> usize {
 
 pub enum Cmd {
     Prompt(String),
+    /// Send the last user message again, dropping its reply.
+    Retry,
     Attach(Vec<crate::api::Image>),
     /// Drop the last unsent attachment.
     Detach,
@@ -6988,7 +6990,18 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         let _ = ev_tx.send(Ev::Info(format!("removed {}", crate::images::marker(&image))));
                     }
                 }
-                Ok(Cmd::Prompt(text)) => {
+                Ok(cmd @ (Cmd::Prompt(_) | Cmd::Retry)) => {
+                    let text = match cmd {
+                        Cmd::Prompt(text) => text,
+                        _ => match worker_session.retry() {
+                            Some(text) => text,
+                            None => {
+                                let _ = ev_tx.send(Ev::Info("nothing to retry".into()));
+                                let _ = ev_tx.send(Ev::Done(None));
+                                continue;
+                            }
+                        },
+                    };
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
                         waited: Duration::ZERO,

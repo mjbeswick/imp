@@ -490,6 +490,13 @@ impl Log {
             let Ok(v) = serde_json::from_str::<Value>(line) else {
                 continue;
             };
+            if v["t"].as_str() == Some("retry") {
+                // A retry drops the last user message and all after it.
+                if let Some(i) = out.iter().rposition(|m| m.role == Role::User) {
+                    out.truncate(i);
+                }
+                continue;
+            }
             if v["t"].as_str() != Some("msg") {
                 continue;
             }
