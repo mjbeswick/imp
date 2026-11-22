@@ -60,12 +60,16 @@ fn attach_in(raw: &str, base: &Path, dir: &Path) -> Result<Image, String> {
         ));
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mime = mime(&bytes).ok_or_else(|| {
-        format!(
-            "{}: only PNG, JPEG, GIF, and WebP are supported",
-            path.display()
-        )
-    })?;
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    store(bytes, &name, dir).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Keep image bytes in `dir`, named by their hash, and return the record.
+pub fn store(bytes: Vec<u8>, name: &str, dir: &Path) -> Result<Image, String> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(format!("{} MB is over the 10 MB limit", bytes.len() / (1024 * 1024)));
+    }
+    let mime = mime(&bytes).ok_or("only PNG, JPEG, GIF, and WebP are supported")?;
     let ext = match mime {
         "image/png" => "png",
         "image/jpeg" => "jpg",
@@ -80,13 +84,85 @@ fn attach_in(raw: &str, base: &Path, dir: &Path) -> Result<Image, String> {
     }
     Ok(Image {
         file,
-        name: path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default(),
+        name: name.to_string(),
         mime: mime.to_string(),
         bytes: bytes.len() as u64,
     })
+}
+
+/// macOS: write the clipboard's PNG to a temporary file and print it.
+const MAC_PASTE: &str = r#"f=$(mktemp) && osascript -e "write (the clipboard as «class PNGf») to (open for access POSIX file \"$f\" with write permission)" >/dev/null 2>&1; cat "$f"; rm -f "$f""#;
+
+/// The command that prints a clipboard image, or `None` where there is no
+/// clipboard to read: over SSH it belongs to another machine.
+pub fn clipboard_command() -> Option<String> {
+    command_for(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()), cfg!(target_os = "macos"))
+}
+
+fn command_for(set: impl Fn(&str) -> bool, mac: bool) -> Option<String> {
+    if set("SSH_CONNECTION") {
+        return None;
+    }
+    if mac {
+        Some(MAC_PASTE.into())
+    } else if set("WAYLAND_DISPLAY") {
+        Some("wl-paste --no-newline --type image/png".into())
+    } else if set("DISPLAY") {
+        Some("xclip -selection clipboard -t image/png -o".into())
+    } else {
+        None
+    }
+}
+
+/// What a clipboard read found.
+#[derive(Debug, PartialEq)]
+pub enum Clip {
+    Image(Vec<u8>),
+    /// Text, nothing, or an image the tool would not give.
+    Nothing,
+    /// No tool to ask, or it took longer than two seconds.
+    Unsupported,
+}
+
+/// Run the clipboard command for at most two seconds.
+pub fn read_clipboard(command: &str) -> Clip {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Clip::Unsupported;
+    };
+    let Some(mut out) = child.stdout.take() else { return Clip::Unsupported };
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = out.by_ref().take(MAX_BYTES + 1).read_to_end(&mut bytes);
+        bytes
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Clip::Unsupported;
+            }
+        }
+    };
+    let bytes = reader.join().unwrap_or_default();
+    match status.code() {
+        // The shell's "command not found".
+        Some(127) => Clip::Unsupported,
+        _ if mime(&bytes).is_some() => Clip::Image(bytes),
+        _ => Clip::Nothing,
+    }
 }
 
 pub fn size_label(bytes: u64) -> String {
@@ -153,6 +229,34 @@ mod tests {
         file.set_len(MAX_BYTES + 1).unwrap();
         let err = attach_in("big.png", &base, &out).unwrap_err();
         assert!(err.contains("10 MB"), "{err}");
+    }
+
+    #[test]
+    fn the_clipboard_gives_an_image_nothing_or_no_answer() {
+        let dir = tmp();
+        let png_path = dir.join("p.png");
+        std::fs::write(&png_path, png()).unwrap();
+        let image = read_clipboard(&format!("cat '{}'", png_path.display()));
+        assert_eq!(image, Clip::Image(png()));
+        assert_eq!(read_clipboard("printf 'just text'"), Clip::Nothing);
+        assert_eq!(read_clipboard("exit 1"), Clip::Nothing);
+        assert_eq!(read_clipboard("imp-no-such-clipboard-tool"), Clip::Unsupported);
+        let start = std::time::Instant::now();
+        assert_eq!(read_clipboard("sleep 5"), Clip::Unsupported);
+        assert!(start.elapsed() < std::time::Duration::from_secs(4), "the limit did not hold");
+        let stored = store(png(), "pasted.png", &dir).unwrap();
+        assert_eq!((stored.name.as_str(), stored.mime.as_str()), ("pasted.png", "image/png"));
+        assert!(store(b"text".to_vec(), "x", &dir).unwrap_err().contains("only PNG"));
+    }
+
+    #[test]
+    fn the_clipboard_tool_follows_the_session() {
+        let env = |vars: &'static [&'static str]| move |v: &str| vars.contains(&v);
+        assert!(command_for(env(&[]), true).unwrap().contains("osascript"));
+        assert!(command_for(env(&["WAYLAND_DISPLAY", "DISPLAY"]), false).unwrap().starts_with("wl-paste"));
+        assert!(command_for(env(&["DISPLAY"]), false).unwrap().starts_with("xclip"));
+        assert_eq!(command_for(env(&[]), false), None, "a bare console has no clipboard");
+        assert_eq!(command_for(env(&["SSH_CONNECTION", "DISPLAY"]), true), None, "over SSH");
     }
 
     #[test]
