@@ -411,7 +411,7 @@ The system SHALL persist submitted prompts to a history file, SHALL recall them 
 
 ### Requirement: Help is grouped, aligned, and shared
 
-The system SHALL print help in named sections, SHALL show defaults as `(default: X)`, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, and SHALL use the same command table for `--help`, `/help`, and line mode.
+The system SHALL print help in named sections, SHALL show defaults as `(default: X)` on their own row, SHALL indent long-only flags past the short-flag column, SHALL put each example's description above its command, SHALL describe every subcommand listed under usage, SHALL show only keys that work in the current front-end, SHALL keep chat-only input such as `!cmd` out of the shell examples, SHALL colour `--help` only on a terminal without `NO_COLOR`, and SHALL use the same command table for `--help`, `/help`, and line mode.
 
 #### Scenario: Aligned sections
 - **WHEN** the user runs `imp --help`
@@ -432,6 +432,22 @@ The system SHALL print help in named sections, SHALL show defaults as `(default:
 #### Scenario: Narrow terminal
 - **WHEN** the width is 60 columns
 - **THEN** no help row is wider than 60 and no flag name is cut
+
+#### Scenario: Hackberry width
+- **WHEN** the width is 54 or 40 columns
+- **THEN** no help row is wider than the screen, and at 40 each description sits under its cell
+
+#### Scenario: Default row
+- **WHEN** a flag has a default
+- **THEN** `(default: X)` is on its own row at the description column and is never split
+
+#### Scenario: Example note
+- **WHEN** `imp --help` lists `imp "why is the build failing?"`
+- **THEN** the row above it reads `# one request, then exit`
+
+#### Scenario: Colour
+- **WHEN** `imp --help` prints to a pipe or with `NO_COLOR` set
+- **THEN** it contains no escape sequences
 
 #### Scenario: Flag help
 - **WHEN** the user runs `imp --help` in an 80-column terminal
