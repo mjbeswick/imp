@@ -9,7 +9,7 @@
 ## 2. Copy
 
 - [x] 2.1 Copy labels on replies and fenced blocks; tests for both, 40-column fit, and `mouse=off`
-- [ ] 2.2 Copy buffer, Ctrl+V paste, and OSC 52 output; tests for paste, empty buffer, and the sequence
+- [x] 2.2 Copy buffer, Ctrl+V paste, and OSC 52 output; tests for paste, empty buffer, and the sequence
 - [ ] 2.3 `/copy` and `/copy code`, added to help under Conversation; tests for reply, code, and nothing yet
 
 ## 3. Release

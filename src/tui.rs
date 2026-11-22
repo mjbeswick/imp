@@ -1194,6 +1194,8 @@ pub struct App {
     armed: bool,
     /// The latest copy, pasted by Ctrl+V.
     clip: String,
+    /// An OSC 52 sequence for the terminal clipboard, written after the next frame.
+    osc52: Option<String>,
     tool: Option<ToolRow>,
     /// The worker for the session in view; `None` in tests.
     worker: Option<Worker>,
@@ -1760,6 +1762,7 @@ impl App {
             targets: Vec::new(),
             armed: false,
             clip: String::new(),
+            osc52: None,
             tool: None,
             worker: None,
             touched: Instant::now(),
@@ -2028,6 +2031,7 @@ impl App {
     /// Keep `text` for Ctrl+V and say how much was copied.
     fn copy(&mut self, text: String) {
         let n = text.chars().count();
+        self.osc52 = Some(format!("\x1b]52;c;{}\x07", crate::api::base64(text.as_bytes())));
         self.clip = text;
         self.push(Role::Info, format!("copied {n} characters"));
     }
@@ -2476,6 +2480,13 @@ impl App {
             Key::Ctrl('e') => {
                 self.toggle_tool();
                 self.dirty = true;
+            }
+            Key::Ctrl('v') if !self.clip.is_empty() => {
+                self.follow_tail();
+                let clip = self.clip.clone();
+                self.input.insert_str(self.cursor, &clip);
+                self.cursor += clip.len();
+                self.sync_menu();
             }
             Key::Ctrl('l') => {
                 self.entries.clear();
@@ -4029,6 +4040,9 @@ impl App {
         let screen = self.frame(cols, rows);
         let mut out = std::io::stdout();
         out.write_all(screen.as_bytes()).ok();
+        if let Some(seq) = self.osc52.take() {
+            out.write_all(seq.as_bytes()).ok();
+        }
         out.flush().ok();
         self.bell_pending = false;
         self.dirty = false;
@@ -6252,6 +6266,19 @@ mod tests {
         click(&mut a, &tx, |t| matches!(t, Target::Copy(_, None)));
         assert_eq!(a.clip, reply);
         assert!(a.entries.iter().any(|e| e.text == format!("copied {} characters", reply.len())));
+    }
+
+    #[test]
+    fn ctrl_v_pastes_the_copy_and_osc52_carries_it() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.handle_key(Key::Ctrl('v'), &tx);
+        assert_eq!(a.input, "", "an empty buffer changed the composer");
+        a.handle_key(Key::Char('>'), &tx);
+        a.copy("a\nb".into());
+        assert_eq!(a.osc52.as_deref(), Some("\x1b]52;c;YQpi\x07"));
+        a.handle_key(Key::Ctrl('v'), &tx);
+        assert_eq!(a.input, ">a\nb");
     }
 
     #[test]
