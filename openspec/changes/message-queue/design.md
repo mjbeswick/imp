@@ -47,6 +47,11 @@ The chat sets `hold` while a queued message is open. A reply already
 streaming or a tool already running finishes first; the status line shows
 `paused · editing queue`.
 
+The chat draws a steered message as a user row marked `(steered)`. One
+steered while the model writes its final reply is never read by that turn;
+when the turn ends the chat sends what is left as the next turn, ahead of the
+queue, or after a stop puts it at the front of the queue.
+
 ## `/queue`
 
 `/queue` lists, `pop n` loads into the draft and removes, `delete n`
