@@ -914,9 +914,6 @@ pub enum Ev {
     GoalEnd(String),
 }
 
-/// How long a confirmation waits before it gives up and stops the turn.
-const CONFIRM_WAIT: Duration = Duration::from_secs(60);
-
 struct WorkerHooks {
     tx: Sender<Ev>,
     waited: Duration,
@@ -1988,30 +1985,6 @@ impl App {
         self.swap_pane(&mut p);
         self.panes[index] = Some(p);
         self.bell_pending |= ring;
-    }
-
-    /// Refuse a prompt that has been in view for the whole deadline.
-    fn expire(&mut self) {
-        let due = self.pending_since.is_some_and(|t| t.elapsed() >= CONFIRM_WAIT);
-        if !due {
-            return;
-        }
-        match self.pending.take() {
-            Some(Pending::Confirm { reply, .. }) => {
-                let _ = reply.send(Answer::No);
-            }
-            Some(Pending::Question { reply, .. }) => {
-                let _ = reply.send(None);
-            }
-            other => {
-                self.pending = other;
-                return;
-            }
-        }
-        self.apply(Ev::Stop(format!(
-            "no answer within {}s; nothing ran and the turn stopped",
-            CONFIRM_WAIT.as_secs()
-        )));
     }
 
     /// Sessions out of view waiting on the user, longest wait first.
@@ -4627,28 +4600,24 @@ impl App {
         out
     }
 
-    /// The confirmation row: question, key chips, and the countdown at the
-    /// right edge. Keys are bold accent, labels and countdown muted.
+    /// The confirmation row: question and key chips. Keys are bold accent,
+    /// labels muted. It waits until answered.
     fn confirm_row(&self, what: &str, always: bool, cols: usize) -> String {
         let chips: &[(&str, &str)] = if always { &ALL_CHIPS } else { &ALL_CHIPS[..2] };
         let keys = chip_text(chips);
-        let secs = format!("{}s", self.seconds_left());
-        // "▌ " + question + "   " + chips + at least one space + countdown.
-        let fixed = 2 + 3 + keys.chars().count() + 1 + secs.len();
         // The command is on screen, in its tool row or above this one.
         let ask = verb(what).to_string();
         let bell = if self.bell_pending { "\u{7}" } else { "" };
-        let used = fixed - 1 + ask.chars().count();
+        // "▌ " + question + "   " + chips.
+        let used = 2 + ask.chars().count() + 3 + keys.chars().count();
         let p = &self.palette;
-        if used + 1 > cols {
+        if used > cols {
             // Too narrow for chips: one plain accent line, cut at the edge.
-            let plain = format!("▌ {ask}   {keys} {secs}");
+            let plain = format!("▌ {ask}   {keys}");
             return format!("{bell}{}", p.paint(Role::Info, &fit(&plain, cols)));
         }
         let mut row = format!("{bell}{}   ", p.paint(Role::Info, &format!("▌ {ask}")));
         row.push_str(&self.paint_chips(chips));
-        row.push_str(&" ".repeat(cols - used));
-        row.push_str(&p.paint(Role::Thinking, &secs));
         row
     }
 
@@ -4979,12 +4948,6 @@ impl App {
         let row = upto.matches('\n').count();
         let col = upto.rfind('\n').map(|i| i + 1).unwrap_or(0);
         (row, cursor - col)
-    }
-
-    /// Seconds left before an open confirmation gives up.
-    fn seconds_left(&self) -> u64 {
-        let spent = self.pending_since.map(|t| t.elapsed()).unwrap_or_default();
-        CONFIRM_WAIT.saturating_sub(spent).as_secs()
     }
 
     /// Byte offset of a row and column, clamped to what the row holds.
@@ -5796,7 +5759,6 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
         if redraw {
             busy = Instant::now();
         }
-        app.expire();
 
         // A resize has to be noticed without repainting on a timer.
         let (cols, rows) = size();
@@ -6317,15 +6279,10 @@ mod tests {
         assert!(a.status_line(120).contains(" · 2 waiting"), "{}", a.status_line(120));
         assert!(a.bell_pending, "no bell for a session out of view");
         assert!(!a.panes[0].as_ref().unwrap().bell_pending, "the bell would ring again on switching");
-        // Out of view, the prompt never expires, however old.
-        a.panes[0].as_mut().unwrap().pending_since = Some(Instant::now() - CONFIRM_WAIT * 10);
-        a.expire();
-        assert!(answers.try_recv().is_err(), "a prompt out of view expired");
-        // In view, its deadline starts from now.
+        // Brought into view, the prompt is still open.
         a.show(0);
-        assert!(a.seconds_left() >= 59, "{}", a.seconds_left());
-        a.expire();
-        assert!(answers.try_recv().is_err(), "expired as soon as it was shown");
+        assert!(matches!(a.pending, Some(Pending::Confirm { .. })));
+        assert!(answers.try_recv().is_err(), "a prompt was answered by switching");
         assert!(a.status_line(120).contains(" · 1 waiting"), "{}", a.status_line(120));
     }
 
@@ -6529,41 +6486,16 @@ mod tests {
     }
 
     #[test]
-    fn the_confirm_row_counts_down() {
+    fn the_confirm_row_has_no_countdown_and_enter_approves() {
         let mut a = app();
-        let (reply, _rx) = channel();
-        a.apply(Ev::Confirm {
-            what: "run `rm -rf build`".into(),
-            reply,
-            always: false,
-        });
-        let first = countdown(&a.frame(80, 12));
-        a.pending_since = Some(a.pending_since.expect("pending") - Duration::from_secs(10));
-        let second = countdown(&a.frame(80, 12));
-        assert!(first <= 60 && first >= 59, "deadline starts at {first}");
-        assert!(
-            second <= first - 9,
-            "countdown did not fall: {first} then {second}"
-        );
-    }
-
-    fn countdown(frame: &str) -> u64 {
-        let frame = strip(frame);
-        let row = frame.lines().find(|l| l.contains("[y] yes")).expect("the prompt row");
-        let last = row.trim_end().rsplit(' ').next().expect("countdown");
-        last.strip_suffix('s').expect("seconds marker").parse().expect("seconds")
-    }
-
-    #[test]
-    fn the_countdown_sits_at_the_right_edge() {
-        let mut a = app();
-        let (reply, _rx) = channel();
+        let (tx, _cmds) = channel();
+        let (reply, answers) = channel();
         a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
         let frame = strip(&a.frame(80, 12));
         let row = frame.lines().find(|l| l.contains("[a] always")).expect("chips");
-        assert!(row.contains("[y] yes  [n] no  [s] session  [a] always"), "{row}");
-        assert_eq!(row.chars().filter(|c| *c != '\u{7}').count(), 80, "countdown not at the edge: {row:?}");
-        assert!(row.ends_with("0s") || row.ends_with("9s"), "{row:?}");
+        assert_eq!(row.trim_end().trim_start_matches('\u{7}'), "▌ run it?   [y] yes  [n] no  [s] session  [a] always");
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Answer::Yes));
     }
 
     /// Click the middle of the first target that matches.
@@ -6755,19 +6687,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unanswered_prompt_in_view_stops_the_turn() {
+    fn an_unanswered_prompt_waits() {
         let mut a = app();
         let (reply, answers) = channel();
         a.status.streaming = true;
         a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
-        a.expire();
-        assert!(a.pending.is_some(), "expired at once");
-        a.pending_since = Some(Instant::now() - CONFIRM_WAIT);
-        a.expire();
-        assert_eq!(answers.try_recv().ok(), Some(Answer::No));
-        assert!(a.pending.is_none() && !a.status.streaming);
-        assert!(a.cancel.load(Ordering::Relaxed), "the turn was not cancelled");
-        assert!(a.entries.last().unwrap().text.starts_with("no answer within 60s"));
+        a.pending_since = Some(Instant::now() - Duration::from_secs(600));
+        a.frame(80, 12);
+        assert!(a.pending.is_some() && a.status.streaming, "the prompt gave up");
+        assert!(answers.try_recv().is_err());
+        assert!(!a.cancel.load(Ordering::Relaxed), "the turn was cancelled");
     }
 
     #[test]
@@ -7245,14 +7174,11 @@ mod tests {
     }
 
     #[test]
-    fn a_countdown_tick_writes_one_row() {
+    fn a_status_change_writes_one_row() {
         let mut a = app();
-        let (tx, _rx) = channel();
         a.push(Role::Assistant, "hello there");
-        a.pending = Some(Pending::Confirm { what: "run `ls`".into(), reply: tx, always: false });
-        a.pending_since = Some(Instant::now());
         a.frame_changes(60, 12);
-        a.pending_since = Some(Instant::now() - Duration::from_secs(2));
+        a.status.tokens = 1234;
         let tick = a.frame_changes(60, 12);
         assert_eq!(tick.matches(";1H").count(), 1, "{tick:?}");
         assert!(!tick.contains("hello there"), "an unchanged row was written: {tick:?}");

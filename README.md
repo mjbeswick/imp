@@ -84,7 +84,7 @@ approval, a question, or a reply that finished out of view. Pressing it again
 counts the reply as read and moves on; an approval is never answered that way,
 it goes to the back of the queue. With `auto_next=on`, the default, sending a
 message or answering a prompt moves you to the next waiting session, and a
-line such as `→ 2/3 fix the parser · replied` says where you are. A prompt out of view waits; its 60 second deadline starts when you see it.
+line such as `→ 2/3 fix the parser · replied` says where you are. A prompt waits until you answer it, in view or out.
 Approvals (except `a`), modes, and buffers belong to each session, and all sessions share
 one 16 MB output buffer budget.
 
