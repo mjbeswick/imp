@@ -513,7 +513,84 @@ extern "C" {
     fn isatty(fd: c_int) -> c_int;
 }
 
-#[derive(Debug, Clone)]
+/// What a click does: replay a key, or choose a picker match by index.
+#[derive(Debug, Clone, PartialEq)]
+enum Target {
+    Key(Key),
+    Row(usize),
+}
+
+/// Text without colour codes or control bytes, so columns match the screen.
+fn unpaint(s: &str) -> String {
+    let mut out = String::new();
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c == '\x1b' {
+            for n in it.by_ref() {
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else if !c.is_control() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Click targets in one drawn row: each `[k] label` chip replays `k`, and
+/// `Esc skip` replays Esc. A chip runs to the next double space.
+fn chip_targets(row: usize, text: &str) -> Vec<(usize, usize, usize, Target)> {
+    let chars: Vec<char> = text.chars().collect();
+    let end_of = |from: usize| {
+        let mut j = from;
+        while j < chars.len() && !(chars[j] == ' ' && chars.get(j + 1) == Some(&' ')) {
+            j += 1;
+        }
+        j
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '[' && chars.get(i + 2) == Some(&']') && chars[i + 1].is_ascii_alphanumeric() {
+            let end = end_of(i);
+            out.push((row, i + 1, end, Target::Key(Key::Char(chars[i + 1]))));
+            i = end;
+        } else if chars[i..].starts_with(&['E', 's', 'c', ' ']) {
+            let end = end_of(i);
+            out.push((row, i + 1, end, Target::Key(Key::Esc)));
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Click targets in a picker footer such as `Enter choose · Esc close`,
+/// which starts at column `x`: each hint replays its key.
+fn footer_targets(row: usize, x: usize, text: &str) -> Vec<(usize, usize, usize, Target)> {
+    let mut out = Vec::new();
+    let mut col = x;
+    for part in text.split(" · ") {
+        let len = part.chars().count();
+        let key = match part.split(' ').next().unwrap_or("") {
+            "Enter" => Some(Key::Enter),
+            "Esc" => Some(Key::Esc),
+            "Tab/→" => Some(Key::Tab),
+            "←" => Some(Key::Left),
+            k if k.chars().count() == 1 => k.chars().next().map(Key::Char),
+            _ => None,
+        };
+        if let Some(key) = key {
+            out.push((row, col, col + len - 1, Target::Key(key)));
+        }
+        col += len + 3;
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Key {
     Char(char),
     Enter,
@@ -1105,6 +1182,9 @@ pub struct App {
     spinner: usize,
     /// Rendered rows per entry, keyed by a hash of what shapes them.
     drawn: Vec<(u64, Vec<(Role, Line)>)>,
+    /// What a click on the last frame lands on: row, first and last column
+    /// (1-based, inclusive), and the target.
+    targets: Vec<(usize, usize, usize, Target)>,
     tool: Option<ToolRow>,
     /// The worker for the session in view; `None` in tests.
     worker: Option<Worker>,
@@ -1668,6 +1748,7 @@ impl App {
             quit: false,
             spinner: 0,
             drawn: Vec::new(),
+            targets: Vec::new(),
             tool: None,
             worker: None,
             touched: Instant::now(),
@@ -2246,7 +2327,23 @@ impl App {
     }
 
     fn handle_key_inner(&mut self, key: Key, tx: &Sender<Cmd>) {
-        // Clicks and unknown sequences do nothing, and must not answer a prompt.
+        // A click replays what it lands on; anywhere else it does nothing.
+        if let Key::Click(x, y) = key {
+            let (x, y) = (x as usize, y as usize);
+            let hit = self.targets.iter().find(|t| t.0 == y && (t.1..=t.2).contains(&x));
+            match hit.map(|t| t.3.clone()) {
+                Some(Target::Key(k)) => self.handle_key_inner(k, tx),
+                Some(Target::Row(i)) => {
+                    if let Some(Pending::Pick(picker)) = &mut self.pending {
+                        picker.index = i;
+                        self.handle_key_inner(Key::Enter, tx);
+                    }
+                }
+                None => {}
+            }
+            return;
+        }
+        // Unknown sequences do nothing, and must not answer a prompt.
         if matches!(key, Key::Unknown) {
             return;
         }
@@ -3985,17 +4082,23 @@ impl App {
             screen.push_str(&self.palette.paint(tone, &"─".repeat(cols)));
             screen.push_str("\r\n");
         }
-        for row in &composer {
+        self.targets.clear();
+        let first = body_rows + rule + 1;
+        for (i, row) in composer.iter().enumerate() {
             screen.push_str("\x1b[2K");
             screen.push_str(row);
             screen.push_str("\r\n");
+            if matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. })) {
+                self.targets.extend(chip_targets(first + i, &unpaint(row)));
+            }
         }
 
         screen.push_str("\x1b[2K\x1b[J");
         screen.push_str(&self.palette.paint(Role::Thinking, &self.status_line(cols)));
         screen.push_str("\x1b[?7h");
 
-        if let Some((overlay, cursor_x, cursor_y)) = self.overlay(cols, rows) {
+        if let Some((overlay, cursor_x, cursor_y, targets)) = self.overlay(cols, rows) {
+            self.targets.extend(targets);
             screen.push_str("\x1b[?7l");
             screen.push_str(&overlay);
             if matches!(self.pending, Some(Pending::Pick(_))) {
@@ -4150,7 +4253,8 @@ impl App {
     ///
     /// Absolute cursor addressing paints the rectangle without disturbing the
     /// transcript, and the next full frame replaces it, leaving no residue.
-    fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize)> {
+    #[allow(clippy::type_complexity)]
+    fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
         let picker = match &self.pending {
             Some(Pending::Pick(picker)) => picker,
             Some(Pending::ConfirmDelete { picker, .. }) => &**picker,
@@ -4229,7 +4333,18 @@ impl App {
             out.push_str(&format!("\x1b[{};{}H{line}", y + i, x));
         }
         let cursor = (x + 1 + filter.chars().count()).min(x + width - 2);
-        Some((out, cursor, y + 1))
+        // Only an open picker takes clicks; a delete confirmation keeps to keys.
+        let mut targets = Vec::new();
+        if matches!(self.pending, Some(Pending::Pick(_))) {
+            if !matches.is_empty() {
+                for row in 0..visible.min(matches.len() - picker.offset.min(matches.len())) {
+                    targets.push((y + 3 + row, x + 1, x + inner, Target::Row(picker.offset + row)));
+                }
+            }
+            let footer = fit(&picker.footer(), inner.saturating_sub(4));
+            targets.extend(footer_targets(y + 3 + visible, x + 3, &footer));
+        }
+        Some((out, cursor, y + 1, targets))
     }
 
     /// Fit one row of text to the interior width and pad it with spaces.
@@ -5959,6 +6074,61 @@ mod tests {
         assert!(row.contains("[y] yes  [n] no  [s] session  [a] always"), "{row}");
         assert_eq!(row.chars().filter(|c| *c != '\u{7}').count(), 80, "countdown not at the edge: {row:?}");
         assert!(row.ends_with("0s") || row.ends_with("9s"), "{row:?}");
+    }
+
+    /// Click the middle of the first target that matches.
+    fn click(a: &mut App, tx: &Sender<Cmd>, want: impl Fn(&Target) -> bool) {
+        let t = a.targets.iter().find(|t| want(&t.3)).cloned().expect("no such target");
+        a.handle_key(Key::Click(((t.1 + t.2) / 2) as u16, t.0 as u16), tx);
+    }
+
+    #[test]
+    fn a_click_on_a_chip_answers_like_its_key() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        a.frame(80, 12);
+        click(&mut a, &tx, |t| matches!(t, Target::Key(Key::Char('n'))));
+        assert_eq!(rx.try_recv().ok(), Some(Answer::No));
+    }
+
+    #[test]
+    fn a_click_on_an_option_answers_the_question() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let (reply, rx) = channel();
+        a.apply(Ev::Question { q: "which?".into(), opts: vec!["red".into(), "blue".into()], reply });
+        a.frame(80, 16);
+        click(&mut a, &tx, |t| matches!(t, Target::Key(Key::Char('2'))));
+        assert_eq!(rx.try_recv().ok(), Some(Some("blue".to_string())));
+    }
+
+    #[test]
+    fn a_click_on_a_picker_row_chooses_it_and_a_hint_runs_its_key() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.run_command("mode", &tx);
+        a.frame(100, 30);
+        click(&mut a, &tx, |t| matches!(t, Target::Row(2)));
+        assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Yolo);
+
+        a.run_command("mode", &tx);
+        a.frame(100, 30);
+        click(&mut a, &tx, |t| matches!(t, Target::Key(Key::Esc)));
+        assert!(a.pending.is_none(), "Esc close did not close the picker");
+    }
+
+    #[test]
+    fn a_click_elsewhere_does_nothing() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: false });
+        a.frame(80, 12);
+        a.handle_key(Key::Click(1, 1), &tx);
+        assert!(rx.try_recv().is_err());
+        assert!(a.pending.is_some());
     }
 
     #[test]
@@ -8340,7 +8510,7 @@ mod tests {
         open_many(&mut a, 3);
         let (tx, _rx) = channel();
         a.handle_key(Key::Char('r'), &tx);
-        let (_, x, y) = a.overlay(100, 30).expect("overlay");
+        let (_, x, y, _) = a.overlay(100, 30).expect("overlay");
         // Box at column 15 (72 wide in 100): wall, " › ", then `r`.
         assert_eq!(x, 15 + 1 + 3 + 1);
         assert!(y >= 1);
