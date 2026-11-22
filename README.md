@@ -4,12 +4,15 @@ A small terminal agent for DeepSeek, OpenAI, Anthropic, Gemini, and local
 models. One binary, a chat interface, and a deliberately short list of tools.
 
 ```
-950 KB binary · 4 ms cold start · 6.8 MB idle RSS · libcurl the only runtime dependency
+                 binary   cold start   idle RSS
+M1 MacBook Air   950 KB         4 ms     6.8 MB
+Pi Zero 2 W      1.1 MB        45 ms     8.3 MB
 ```
 
-Measured on an M1 MacBook Air, release profile `lto = "fat"`, `opt-level = "z"`,
-`panic = "abort"`, stripped. Cold start is the median of 30 runs of `imp
---version`; RSS is the full-screen interface idle for two seconds.
+libcurl is the only runtime dependency. Release profile `lto = "fat"`,
+`opt-level = "z"`, `panic = "abort"`, stripped. Cold start is the median of
+30 runs of `imp --version`; RSS is the full-screen interface idle for two
+seconds. `scripts/measure.sh [host]` takes these figures.
 
 ## Install
 
