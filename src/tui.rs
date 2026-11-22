@@ -2092,7 +2092,6 @@ const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
     ("keys card", "?", "keys"),
     ("stop the turn", "Esc", "stop"),
     ("expand tools", "Ctrl+E", "expand"),
-    ("thinking on or off", "Ctrl+T", "thinking"),
     ("clear the view", "Ctrl+L", "clear"),
     ("scroll up", "PgUp", "page-up"),
     ("scroll down", "PgDn", "page-down"),
@@ -3298,7 +3297,7 @@ impl App {
                 self.dirty = true;
             }
             Key::Ctrl('c') => self.quit = true,
-            Key::Ctrl('d') => self.quit = true,
+            Key::Ctrl('d') if self.input.is_empty() => self.quit = true,
             Key::Ctrl('p') => {
                 self.pending = Some(Pending::Pick(Picker::new(
                     "palette",
@@ -3596,7 +3595,6 @@ impl App {
             "keys" => self.open_keys(),
             "stop" => self.handle_key_inner(Key::Esc, tx),
             "expand" => self.handle_key_inner(Key::Ctrl('e'), tx),
-            "thinking" => self.handle_key_inner(Key::Ctrl('t'), tx),
             "clear" => self.handle_key_inner(Key::Ctrl('l'), tx),
             "page-up" => self.handle_key_inner(Key::PageUp, tx),
             "page-down" => self.handle_key_inner(Key::PageDown, tx),
@@ -8631,6 +8629,28 @@ mod tests {
         a.handle_key(Key::Enter, &tx);
         assert!(a.entries.is_empty(), "the key did not replay");
         assert!(a.pending.is_none());
+    }
+
+    #[test]
+    fn ctrl_d_keeps_a_draft() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        a.input = "half a thought".into();
+        a.cursor = a.input.len();
+        a.handle_key(Key::Ctrl('d'), &tx);
+        assert!(!a.quit, "Ctrl+D quit with a draft");
+        assert_eq!(a.input, "half a thought");
+        a.input.clear();
+        a.cursor = 0;
+        a.handle_key(Key::Ctrl('d'), &tx);
+        assert!(a.quit, "Ctrl+D did not quit from an empty draft");
+    }
+
+    #[test]
+    fn every_palette_action_has_a_handler() {
+        let a = app();
+        let actions: Vec<String> = a.palette_items().into_iter().filter_map(|i| i.value.strip_prefix("key:").map(String::from)).collect();
+        assert!(!actions.iter().any(|v| v == "thinking"), "/think is already a palette row");
     }
 
     #[test]
