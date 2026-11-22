@@ -48,4 +48,4 @@ The command list is modified after `message-queue`; archive after it.
 
 ## Size
 
-Expected: about 1 KB.
+Expected: about 1 KB. Measured: `__text` +1212, `__cstring` +50.
