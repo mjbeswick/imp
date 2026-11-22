@@ -2,7 +2,7 @@
 
 ## 1. Measure
 
-- [ ] 1.1 `scripts/measure.sh [host]` prints size, cold start and idle RSS
+- [x] 1.1 `scripts/measure.sh [host]` prints size, cold start and idle RSS
 - [ ] 1.2 README shows M1 and Pi Zero 2 W figures
 
 ## 2. Cross-build
