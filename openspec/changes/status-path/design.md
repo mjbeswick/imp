@@ -25,4 +25,4 @@ step 4. Widths count characters, as the rest of the status line does.
 
 ## Size
 
-Expected: under 1 KB.
+Expected: under 1 KB. Measured: `__text` +1032, `__cstring` +13.
