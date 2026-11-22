@@ -1409,6 +1409,16 @@ pub struct App {
     cursor: usize,
     /// Where a Shift move began; the selection runs from here to the caret.
     anchor: Option<usize>,
+    /// Enter during a turn queues rather than steers.
+    queue_mode: bool,
+    /// Messages waiting for the running turn to end, oldest first.
+    queued: Vec<String>,
+    /// The queued message open in the composer, while one is.
+    queue_at: Option<usize>,
+    /// Shared with the session: messages that join the running turn, and
+    /// the flag that holds it while a queued message is edited.
+    steer: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    hold: std::sync::Arc<std::sync::atomic::AtomicBool>,
     history: Vec<String>,
     hist_pos: Option<usize>,
     follow: bool,
@@ -1499,6 +1509,16 @@ struct Pane {
     cursor: usize,
     /// Where a Shift move began; the selection runs from here to the caret.
     anchor: Option<usize>,
+    /// Enter during a turn queues rather than steers.
+    queue_mode: bool,
+    /// Messages waiting for the running turn to end, oldest first.
+    queued: Vec<String>,
+    /// The queued message open in the composer, while one is.
+    queue_at: Option<usize>,
+    /// Shared with the session: messages that join the running turn, and
+    /// the flag that holds it while a queued message is edited.
+    steer: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    hold: std::sync::Arc<std::sync::atomic::AtomicBool>,
     hist_pos: Option<usize>,
     follow: bool,
     top: usize,
@@ -1520,6 +1540,7 @@ struct Pane {
 
 impl Pane {
     fn new(session: &Session, worker: Option<Worker>) -> Self {
+        let (session_steer, session_hold) = (session.steer.clone(), session.hold.clone());
         Self {
             cfg: session.cfg.clone(),
             cancel: session.cancel.clone(),
@@ -1527,6 +1548,11 @@ impl Pane {
             input: String::new(),
             cursor: 0,
             anchor: None,
+            queue_mode: false,
+            queued: Vec::new(),
+            queue_at: None,
+            steer: session_steer.clone(),
+            hold: session_hold.clone(),
             hist_pos: None,
             follow: true,
             top: 0,
@@ -2058,6 +2084,9 @@ impl App {
             .map(|a| (a.name, a.description))
             .collect();
         let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
+        // Handed to the session when its worker starts.
+        let session_steer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let session_hold = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         Self {
             cfg,
             cancel,
@@ -2067,6 +2096,11 @@ impl App {
             input: String::new(),
             cursor: 0,
             anchor: None,
+            queue_mode: false,
+            queued: Vec::new(),
+            queue_at: None,
+            steer: session_steer.clone(),
+            hold: session_hold.clone(),
             history,
             hist_pos: None,
             follow: true,
@@ -2135,6 +2169,11 @@ impl App {
         swap(&mut self.input, &mut p.input);
         swap(&mut self.cursor, &mut p.cursor);
         swap(&mut self.anchor, &mut p.anchor);
+        swap(&mut self.queue_mode, &mut p.queue_mode);
+        swap(&mut self.queued, &mut p.queued);
+        swap(&mut self.queue_at, &mut p.queue_at);
+        swap(&mut self.steer, &mut p.steer);
+        swap(&mut self.hold, &mut p.hold);
         swap(&mut self.hist_pos, &mut p.hist_pos);
         swap(&mut self.follow, &mut p.follow);
         swap(&mut self.top, &mut p.top);
@@ -2846,6 +2885,10 @@ impl App {
                     self.input.replace_range(self.cursor..next, "");
                     self.sync_menu();
                 }
+            }
+            Key::Ctrl('q') => {
+                self.queue_mode = !self.queue_mode;
+                self.dirty = true;
             }
             Key::Ctrl('c') => self.quit = true,
             Key::Ctrl('d') => self.quit = true,
@@ -4751,7 +4794,19 @@ impl App {
             } else {
                 Role::Border
             };
-            screen.push(self.palette.paint(tone, &"─".repeat(cols)));
+            // While a turn runs the rule says what Enter will do.
+            let label = match (self.queue_at, asking || !self.status.streaming) {
+                (Some(i), _) => format!("editing queued {}/{} · Enter save · ↑↓ move", i + 1, self.queued.len()),
+                (None, true) => String::new(),
+                (None, false) if self.queue_mode => "queue · ^Q steer".into(),
+                (None, false) => "steer · ^Q queue".into(),
+            };
+            let rule = if label.is_empty() || cols < label.chars().count() + 6 {
+                "─".repeat(cols)
+            } else {
+                format!("── {label} {}", "─".repeat(cols - label.chars().count() - 4))
+            };
+            screen.push(self.palette.paint(tone, &rule));
         }
         let first = body_rows + rule + 1;
         for (i, row) in composer.iter().enumerate() {
@@ -5220,6 +5275,8 @@ impl App {
                 "  "
             } else if shell {
                 "$ "
+            } else if self.status.streaming && self.queue_mode {
+                "» "
             } else {
                 "> "
             };
@@ -5238,8 +5295,9 @@ impl App {
 
     /// Paint one composer row, keeping the tail when it is wider than the screen.
     fn paint_composer_row(&self, row: &str, cols: usize) -> String {
-        let prefix = row.get(..2).unwrap_or(row);
-        let body = row.get(2..).unwrap_or("");
+        // The prompt glyph and its space; `»` is two bytes.
+        let cut = row.char_indices().nth(2).map_or(row.len(), |(i, _)| i);
+        let (prefix, body) = row.split_at(cut);
         // ponytail: the zero-width selection marks count toward the width, so
         // a selected long row is cut two columns early.
         let fitted = tail(body, cols.saturating_sub(2));
@@ -5256,7 +5314,14 @@ impl App {
         } else {
             fitted
         };
-        let tone = if self.yolo() { Role::Error } else { Role::User };
+        let tone = if self.yolo() {
+            Role::Error
+        } else if prefix.starts_with('»') {
+            // Queue mode: the glyph is muted.
+            Role::Thinking
+        } else {
+            Role::User
+        };
         self.palette.paint(tone, prefix) + &fitted
     }
 
@@ -6116,6 +6181,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
     );
 
     let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
+    let mut session = session;
+    session.steer = app.steer.clone();
+    session.hold = app.hold.clone();
     app.worker = Some(spawn_worker(session, sessions_dir));
     app.fresh = Some(fresh);
     if let Some(var) = missing_key {
@@ -6451,6 +6519,29 @@ mod tests {
         c.handle_key(Key::Ctrl('v'), &tx);
         assert_eq!(c.input, "xx");
         assert_eq!(c.entries.iter().filter(|e| e.text.contains("cannot paste images")).count(), 1);
+    }
+
+    #[test]
+    fn ctrl_q_toggles_steer_and_queue_shown_in_the_rule() {
+        let (tx, _cmds) = channel();
+        let mut b = Vec::from(&b"\x11"[..]);
+        assert_eq!(decode(&mut b), vec![Key::Ctrl('q')]);
+        let mut a = app();
+        // Idle: a plain rule and the usual glyph.
+        let idle = strip(&a.frame(60, 10));
+        assert!(!idle.contains("steer") && idle.contains("\r\n> "), "{idle:?}");
+        a.status.streaming = true;
+        let steer = strip(&a.frame(60, 10));
+        assert!(steer.contains("── steer · ^Q queue ─"), "{steer:?}");
+        a.handle_key(Key::Ctrl('q'), &tx);
+        let queue = strip(&a.frame(60, 10));
+        assert!(queue.contains("── queue · ^Q steer ─") && queue.contains("\r\n» "), "{queue:?}");
+        let rule = queue.lines().find(|l| l.contains("queue · ^Q")).unwrap().trim_end_matches('\r');
+        assert_eq!(rule.chars().count(), 60, "{rule:?}");
+        // The mode stays when the turn ends; the label goes.
+        a.status.streaming = false;
+        let done = strip(&a.frame(60, 10));
+        assert!(a.queue_mode && !done.contains("^Q"), "{done:?}");
     }
 
     #[test]

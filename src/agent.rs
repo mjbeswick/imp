@@ -228,6 +228,11 @@ pub struct Session {
     declined: bool,
     pub last_model: Option<String>,
     pub attachments: Vec<Image>,
+    /// Messages the user steered into the running turn, taken between steps.
+    pub steer: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// Set by the chat while a queued message is edited: the turn waits
+    /// before its next step.
+    pub hold: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub transport: Box<dyn Transport>,
     pub memory: Memory,
     pub skills: Vec<Skill>,
@@ -282,6 +287,8 @@ impl Session {
             declined: false,
             last_model: None,
             attachments: Vec::new(),
+            steer: Default::default(),
+            hold: Default::default(),
             transport: Box::new(Live),
             memory,
             skills,
