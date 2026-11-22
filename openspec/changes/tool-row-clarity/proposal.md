@@ -33,8 +33,8 @@ A hands-on review turned up four problems with tool rows and declines:
 
 ## Keyboard and resources
 
-No new keys. The latest turn's rows keep their arguments and up to 20 lines
-of output each, replaced when the next turn starts.
+No new keys. The latest turn's rows keep their arguments and the output the
+model saw, which tools already cap, until the next turn starts.
 
 ## Capabilities
 

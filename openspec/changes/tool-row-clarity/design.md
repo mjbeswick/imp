@@ -36,7 +36,9 @@ beats the head. A failed row keeps its one reason line. A declined row reads
 
 ## Expansion
 
-`App.tool` becomes `App.tools: Vec<ToolRow>`, cleared when a turn starts.
+`App.tool` stays the newest row and `App.done` holds the latest turn's
+earlier ones. `begin_task` clears both, and so does every transcript clear,
+through `clear_entries`, so no row points at a stale entry.
 Ctrl+E expands every row in it when any is collapsed, otherwise collapses
 them all. With the mouse on, each of those rows is a click target that
 toggles only itself. Rows from earlier turns and replayed sessions keep no

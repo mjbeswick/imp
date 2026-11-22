@@ -1329,7 +1329,9 @@ pub struct App {
     released: bool,
     /// Mouse reporting to switch on or off with the next frame.
     mouse_seq: Option<&'static str>,
+    /// The newest tool row; `done` holds the latest turn's earlier ones.
     tool: Option<ToolRow>,
+    done: Vec<ToolRow>,
     /// The worker for the session in view; `None` in tests.
     worker: Option<Worker>,
     /// When the session in view last did anything, to pick one to close.
@@ -1368,6 +1370,7 @@ struct Pane {
     bell_pending: bool,
     status: Status,
     tool: Option<ToolRow>,
+    done: Vec<ToolRow>,
     root: std::path::PathBuf,
     agent: String,
     worker: Option<Worker>,
@@ -1394,6 +1397,7 @@ impl Pane {
             bell_pending: false,
             status: Status::default(),
             tool: None,
+            done: Vec::new(),
             root: session.tools.root.clone(),
             agent: session.agent.name.clone(),
             worker,
@@ -1967,6 +1971,7 @@ impl App {
             released: false,
             mouse_seq: None,
             tool: None,
+            done: Vec::new(),
             worker: None,
             touched: Instant::now(),
             replied: false,
@@ -1995,6 +2000,7 @@ impl App {
         swap(&mut self.bell_pending, &mut p.bell_pending);
         swap(&mut self.status, &mut p.status);
         swap(&mut self.tool, &mut p.tool);
+        swap(&mut self.done, &mut p.done);
         swap(&mut self.root, &mut p.root);
         swap(&mut self.agent, &mut p.agent);
         swap(&mut self.worker, &mut p.worker);
@@ -2162,7 +2168,7 @@ impl App {
     fn new_session(&mut self, tx: &Sender<Cmd>) {
         let Some(fresh) = &self.fresh else {
             let _ = tx.send(Cmd::Reset);
-            self.entries.clear();
+            self.clear_entries();
             self.push(Role::Info, "new conversation");
             return;
         };
@@ -2179,14 +2185,14 @@ impl App {
             return self.new_session(tx);
         }
         let _ = tx.send(Cmd::NewSession);
-        self.entries.clear();
+        self.clear_entries();
         self.push(Role::Info, "new conversation");
     }
 
     /// Resume a stored session in another live pane, or in this one.
     fn resume(&mut self, id: String, tx: &Sender<Cmd>) {
         let Some(fresh) = &self.fresh else {
-            self.entries.clear();
+            self.clear_entries();
             self.push(Role::Info, format!("resuming {id}"));
             let _ = tx.send(Cmd::Resume(id));
             return;
@@ -2200,6 +2206,13 @@ impl App {
             }
             Err(e) => self.push(Role::Error, e),
         }
+    }
+
+    /// Empty the transcript, and the tool rows that point into it.
+    fn clear_entries(&mut self) {
+        self.entries.clear();
+        self.tool = None;
+        self.done.clear();
     }
 
     /// Keep `text` for Ctrl+V and say how much was copied.
@@ -2306,6 +2319,7 @@ impl App {
                 args,
             } => {
                 let _ = name;
+                self.done.extend(self.tool.take());
                 self.tool = Some(ToolRow {
                     index: self.entries.len(),
                     summary: summary.clone(),
@@ -2388,8 +2402,7 @@ impl App {
                 self.dirty = true;
             }
             Ev::Replay(rows) => {
-                self.entries.clear();
-                self.tool = None;
+                self.clear_entries();
                 for (role, text) in rows {
                     self.push(role, text);
                 }
@@ -2671,7 +2684,7 @@ impl App {
                 self.sync_menu();
             }
             Key::Ctrl('l') => {
-                self.entries.clear();
+                self.clear_entries();
                 self.follow_tail();
                 self.dirty = true;
             }
@@ -2777,11 +2790,20 @@ impl App {
     }
 
     /// Show or hide the full arguments and output of the last tool call.
+    /// Expand every tool row of the latest turn, or collapse them all when
+    /// none is collapsed.
     fn toggle_tool(&mut self) {
+        let expand = self.done.iter().chain(&self.tool).any(|r| !r.expanded);
+        for row in &mut self.done {
+            row.expanded = expand;
+            if let Some(entry) = self.entries.get_mut(row.index) {
+                entry.text = tool_row_text(row, self.verbosity);
+            }
+        }
         let Some(mut row) = self.tool.take() else {
             return;
         };
-        row.expanded = !row.expanded;
+        row.expanded = expand;
         let text = tool_row_text(&row, self.verbosity);
         if let Some(entry) = self.entries.get_mut(row.index) {
             entry.text = text;
@@ -4284,6 +4306,9 @@ impl App {
 
     /// Start counting a task: its time, steps, and tokens.
     fn begin_task(&mut self) {
+        // Ctrl+E reaches the rows of the latest turn only.
+        self.tool = None;
+        self.done.clear();
         let now = Instant::now();
         let s = &mut self.status;
         (s.task_start, s.steps, s.chars, s.task_usage, s.quiet_since) = (Some(now), 0, 0, (0, 0, 0), Some(now));
@@ -8935,6 +8960,34 @@ mod tests {
         assert!(a.entries[0].text.starts_with("! "), "{}", a.entries[0].text);
         assert!(a.entries[0].text.contains("run `false`"));
         assert!(a.entries[0].text.contains("ms"));
+    }
+
+    #[test]
+    fn ctrl_e_toggles_every_row_of_the_latest_turn() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let step = |a: &mut App, cmd: &str, ok: bool, output: &str| {
+            a.apply(Ev::ToolStart { name: "bash".into(), summary: format!("run `{cmd}`"), args: format!("{{\"command\":\"{cmd}\"}}") });
+            a.apply(Ev::ToolEnd { ok, preview: String::new(), output: output.into(), detail: String::new(), ms: 1 });
+        };
+        a.begin_task();
+        step(&mut a, "false", false, "refused: outside the session");
+        step(&mut a, "true", true, "exit 0");
+        a.handle_key(Key::Ctrl('e'), &tx);
+        let expanded = a.entries.iter().filter(|e| e.text.contains("args:")).count();
+        assert_eq!(expanded, 2, "both rows should expand");
+        a.handle_key(Key::Ctrl('e'), &tx);
+        assert!(!a.entries.iter().any(|e| e.text.contains("args:")), "they should collapse");
+        // A new turn leaves the old rows behind.
+        a.begin_task();
+        step(&mut a, "ls", true, "exit 0");
+        a.handle_key(Key::Ctrl('e'), &tx);
+        assert_eq!(a.entries.iter().filter(|e| e.text.contains("args:")).count(), 1);
+        // Clearing the screen drops the rows, so Ctrl+E edits nothing stale.
+        a.handle_key(Key::Ctrl('l'), &tx);
+        a.push(Role::Assistant, "fresh");
+        a.handle_key(Key::Ctrl('e'), &tx);
+        assert_eq!(a.entries[0].text, "fresh");
     }
 
     #[test]
