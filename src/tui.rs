@@ -990,8 +990,8 @@ fn utf8_len(b: u8) -> usize {
 
 pub enum Cmd {
     Prompt(String),
-    /// Send the last user message again, dropping its reply.
-    Retry,
+    /// Send this typed message again, dropping what followed it.
+    Retry(String),
     Attach(Vec<crate::api::Image>),
     /// Drop the last unsent attachment.
     Detach,
@@ -1653,6 +1653,8 @@ pub struct App {
     ask_multiple: bool,
     ask_marked: Vec<bool>,
     /// The caret in a typed answer to the open question.
+    // ponytail: one for the app, not saved per session; clamped where used,
+    // so a switch mid-answer moves the caret, never past the text.
     ask_caret: usize,
     /// Enter during a turn queues rather than steers.
     queue_mode: bool,
@@ -2712,16 +2714,22 @@ impl App {
         if self.status.streaming {
             return self.push(Role::Info, "a turn is running");
         }
-        let Some(i) = self.entries.iter().rposition(|e| e.role == Role::User) else {
+        // Only what the user typed: `!cmd` rows never reach the agent, and a
+        // goal's later rounds are messages the chat does not show.
+        let typed = |e: &Entry| e.role == Role::User && !e.text.starts_with('!') && !e.text.starts_with("/goal ");
+        let Some(i) = self.entries.iter().rposition(typed) else {
             return self.push(Role::Info, "nothing to retry");
         };
+        let text = self.entries[i].text.trim_end_matches(" (steered)").to_string();
+        // ponytail: rows drop before the agent confirms; if compaction took the
+        // message, the view is shorter than the history until the next turn.
         self.entries.truncate(i + 1);
         self.tool = None;
         self.done.retain(|r| r.index <= i);
         self.follow_tail();
         self.status.streaming = true;
         self.begin_task();
-        let _ = tx.send(Cmd::Retry);
+        let _ = tx.send(Cmd::Retry(text));
     }
 
     fn clear_entries(&mut self) {
@@ -6996,17 +7004,15 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         let _ = ev_tx.send(Ev::Info(format!("removed {}", crate::images::marker(&image))));
                     }
                 }
-                Ok(cmd @ (Cmd::Prompt(_) | Cmd::Retry)) => {
+                Ok(cmd @ (Cmd::Prompt(_) | Cmd::Retry(_))) => {
                     let text = match cmd {
-                        Cmd::Prompt(text) => text,
-                        _ => match worker_session.retry() {
-                            Some(text) => text,
-                            None => {
-                                let _ = ev_tx.send(Ev::Info("nothing to retry".into()));
-                                let _ = ev_tx.send(Ev::Done(None));
-                                continue;
-                            }
-                        },
+                        Cmd::Retry(text) if !worker_session.retry(&text) => {
+                            let _ = ev_tx.send(Ev::Info("nothing to retry".into()));
+                            let _ = ev_tx.send(Ev::Done(None));
+                            continue;
+                        }
+                        Cmd::Prompt(text) | Cmd::Retry(text) => text,
+                        _ => unreachable!(),
                     };
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),

@@ -413,17 +413,20 @@ impl Session {
         Ok((new_id, source.id))
     }
 
-    /// Cut the history back to before the last user message, so a turn can
-    /// send it again. Its images go back to the attachments.
-    pub fn retry(&mut self) -> Option<String> {
-        let i = self.history.iter().rposition(|m| m.role == crate::api::Role::User)?;
+    /// Cut the history back to before the last user message reading `text`,
+    /// so a turn can send it again. Its images go back to the attachments.
+    /// False when no such message is left, for example after compaction.
+    pub fn retry(&mut self, text: &str) -> bool {
+        let Some(i) = self.history.iter().rposition(|m| m.role == crate::api::Role::User && m.content == text) else {
+            return false;
+        };
         let message = self.history.remove(i);
         self.history.truncate(i);
         if let Some(log) = &self.log {
-            log.event("retry", "");
+            log.event("retry", text);
         }
         self.attachments.splice(0..0, message.images);
-        Some(message.content)
+        true
     }
 
     /// Clear the conversation, keeping the system prompt.
@@ -1985,22 +1988,25 @@ mod tests {
     }
 
     #[test]
-    fn retry_cuts_the_history_back_to_the_last_message() {
+    fn retry_cuts_the_history_at_the_typed_message() {
         let mut s = session(crate::config::Config::default());
-        assert_eq!(s.retry(), None, "retried with nothing sent");
+        assert!(!s.retry("first"), "retried with nothing sent");
         let log = crate::store::Log::create(&tmp(), &s.tools.root, "deepseek-flash");
         s.attach_log(log.clone());
         s.say(Message::user("first"));
         s.say(Message::assistant("one"));
-        s.say(Message::user("second"));
+        s.say(Message::user("fix it"));
+        s.say(Message::assistant("round one"));
+        // A goal round's nudge is a user message the chat never shows.
+        s.say(Message::user("keep going: round 2"));
         s.say(Message::assistant("a bad answer"));
-        let before = s.history.len();
-        assert_eq!(s.retry().as_deref(), Some("second"));
-        assert_eq!(s.history.len(), before - 2, "the message and its reply stay");
-        assert_eq!(s.history.last().unwrap().content, "one");
+        assert!(s.retry("fix it"));
+        let kept: Vec<&str> = s.history.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(kept, vec!["first", "one"], "the cut missed the typed message");
         // A resumed session drops the same messages.
         let loaded: Vec<String> = log.load().into_iter().map(|m| m.content).collect();
         assert_eq!(loaded, vec!["first", "one"]);
+        assert!(!s.retry("never sent"), "retried a message that is not there");
     }
 
     #[test]

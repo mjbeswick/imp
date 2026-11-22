@@ -491,8 +491,9 @@ impl Log {
                 continue;
             };
             if v["t"].as_str() == Some("retry") {
-                // A retry drops the last user message and all after it.
-                if let Some(i) = out.iter().rposition(|m| m.role == Role::User) {
+                // A retry drops the user message it names and all after it.
+                let text = v["d"].as_str().unwrap_or_default();
+                if let Some(i) = out.iter().rposition(|m| m.role == Role::User && m.content == text) {
                     out.truncate(i);
                 }
                 continue;

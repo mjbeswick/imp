@@ -1324,7 +1324,23 @@ fn retry_drops_the_reply_and_sends_again() {
     assert_eq!(texts, vec!["first", "one", "second"], "the old reply stayed");
     assert!(a.done.is_empty() && a.tool.is_none(), "a tool row of the old reply stayed");
     assert!(a.status.streaming, "the retry did not start a turn");
-    assert!(matches!(rx.try_recv(), Ok(Cmd::Retry)));
+    assert!(matches!(rx.try_recv(), Ok(Cmd::Retry(t)) if t == "second"));
+}
+
+#[test]
+fn retry_skips_shell_and_goal_rows() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    a.push(Role::User, "fix it (steered)");
+    a.push(Role::Assistant, "done");
+    a.push(Role::User, "/goal tests pass");
+    a.push(Role::Assistant, "round one");
+    a.push(Role::User, "!ls");
+    a.push(Role::Info, "Cargo.toml");
+    a.handle_key(Key::Ctrl('r'), &tx);
+    assert!(matches!(rx.try_recv(), Ok(Cmd::Retry(t)) if t == "fix it"), "retried a row the agent never saw");
+    let texts: Vec<&str> = a.entries.iter().map(|e| e.text.as_str()).collect();
+    assert_eq!(texts, vec!["fix it (steered)"]);
 }
 
 #[test]
