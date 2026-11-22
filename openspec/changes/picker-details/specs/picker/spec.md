@@ -17,7 +17,7 @@ The system SHALL align a picker's right column across its rows, SHALL keep the r
 - **THEN** every right column starts in the same column
 
 #### Scenario: Description continues
-- **WHEN** the command picker highlights `/goal` at 64 columns
+- **WHEN** the command picker highlights `/goal` at 60 columns
 - **THEN** its description continues on a second line under the description column and is not cut
 
 #### Scenario: Other rows stay tight

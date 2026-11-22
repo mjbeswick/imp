@@ -1458,35 +1458,71 @@ fn mark_current(current: bool, about: &str) -> String {
     }
 }
 
-fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize) -> String {
+/// One list row as drawn lines: mark, label, and an aligned description when
+/// the picker has any. A wrapped row continues its description on a second
+/// line under the description column; every other row is cut with `…`.
+fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool) -> Vec<String> {
     let item = &picker.items[index];
     let marker = if at == picker.index { "▸" } else { " " };
-    if picker.items.iter().any(|item| !item.desc.is_empty()) {
-        let mut left = picker
-            .items
-            .iter()
-            .map(|item| item.label.chars().count())
-            .max()
-            .unwrap_or(0)
-            .max(10)
-            + 2;
-        let mut label = item.label.clone();
-        let mut desc = item.desc.clone();
-        if picker.kind != PickKind::Command {
-            // The right column stays whole, one space off the wall; the
-            // label gives way.
-            let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
-            left = left.min(inner.saturating_sub(2 + 2 + wide + 1)).max(4);
-            label = fit(&label, left);
-            if picker.kind == PickKind::Session {
-                // Counts line up on their last digit.
-                desc = format!("{desc:>wide$}");
-            }
-        }
-        format!("{marker} {label:<left$}  {desc}")
-    } else {
-        format!("{marker} {}", item.label)
+    if !picker.items.iter().any(|item| !item.desc.is_empty()) {
+        return vec![format!("{marker} {}", item.label)];
     }
+    let mut left = picker
+        .items
+        .iter()
+        .map(|item| item.label.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(10)
+        + 2;
+    let mut label = item.label.clone();
+    let mut desc = item.desc.clone();
+    if picker.kind != PickKind::Command {
+        // The right column stays whole, one space off the wall; the
+        // label gives way.
+        let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+        left = left.min(inner.saturating_sub(2 + 2 + wide + 1)).max(4);
+        label = fit(&label, left);
+        if picker.kind == PickKind::Session {
+            // Counts line up on their last digit.
+            desc = format!("{desc:>wide$}");
+        }
+    }
+    let start = 2 + left + 2;
+    let room = inner.saturating_sub(start);
+    if more && room >= 8 && picker.kind != PickKind::Session && desc.chars().count() > room {
+        let mut parts = wrap(&desc, room);
+        if parts.len() > 2 {
+            // Two lines are all a row may take; the rest is cut.
+            let tail = parts[2..].join(" ");
+            parts.truncate(2);
+            parts[1] = fit(&format!("{} {}", parts[1], tail), room);
+        }
+        if let [first, rest] = parts.as_slice() {
+            return vec![
+                format!("{marker} {label:<left$}  {first}"),
+                format!("{}{}", " ".repeat(start), rest),
+            ];
+        }
+    }
+    vec![format!("{marker} {label:<left$}  {desc}")]
+}
+
+/// The visible list as drawn lines, each with its item index and highlight.
+fn picker_lines(picker: &Picker, matches: &[usize], visible: usize, inner: usize, wrap: bool) -> Vec<(String, usize, bool)> {
+    if matches.is_empty() {
+        return vec![("  no matches".into(), 0, false)];
+    }
+    let mut out = Vec::new();
+    for row in 0..visible {
+        let at = picker.offset + row;
+        let Some(&index) = matches.get(at) else { break };
+        let selected = at == picker.index;
+        for line in picker_row(picker, at, index, inner, wrap && selected) {
+            out.push((line, at, selected));
+        }
+    }
+    out
 }
 
 /// Commands whose argument is typed rather than picked.
@@ -4466,7 +4502,12 @@ impl App {
         let inner = width.saturating_sub(2);
         let matches = picker.matches();
         let visible = matches.len().min(PICK_ROWS).max(1);
-        let height = visible + 4;
+        let mut lines = picker_lines(picker, &matches, visible, inner, true);
+        // The second line costs height; a short screen keeps the one-line cut.
+        if lines.len() + 4 > rows.saturating_sub(1) {
+            lines = picker_lines(picker, &matches, visible, inner, false);
+        }
+        let height = lines.len() + 4;
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
@@ -4509,20 +4550,10 @@ impl App {
                 .paint(Role::Border, &format!("├{}┤", "─".repeat(inner))),
         );
 
-        for row in 0..visible {
-            let at = picker.offset + row;
-            let text = if matches.is_empty() {
-                "  no matches".to_string()
-            } else {
-                match matches.get(at) {
-                    Some(&item) => picker_row(picker, at, item, inner),
-                    None => String::new(),
-                }
-            };
-            let selected = !matches.is_empty() && at == picker.index;
+        for (text, _, selected) in &lines {
             block.push(format!(
                 "{wall}{}{wall}",
-                self.boxed(&text, inner, selected)
+                self.boxed(text, inner, *selected)
             ));
         }
         block.push(edge('╰', '╯', &picker.footer(), "", Role::Thinking));
@@ -4536,12 +4567,12 @@ impl App {
         let mut targets = Vec::new();
         if matches!(self.pending, Some(Pending::Pick(_))) {
             if !matches.is_empty() {
-                for row in 0..visible.min(matches.len() - picker.offset.min(matches.len())) {
-                    targets.push((y + 3 + row, x + 1, x + inner, Target::Row(picker.offset + row)));
+                for (row, (_, at, _)) in lines.iter().enumerate() {
+                    targets.push((y + 3 + row, x + 1, x + inner, Target::Row(*at)));
                 }
             }
             let footer = fit(&picker.footer(), inner.saturating_sub(4));
-            targets.extend(footer_targets(y + 3 + visible, x + 3, &footer));
+            targets.extend(footer_targets(y + 3 + lines.len(), x + 3, &footer));
         }
         Some((out, cursor, y + 1, targets))
     }
@@ -7689,8 +7720,8 @@ mod tests {
             })
             .collect();
         let picker = Picker::new("sessions", items, PickKind::Session);
-        let short = picker_row(&picker, 0, 0, 50);
-        let long = picker_row(&picker, 1, 1, 50);
+        let short = picker_row(&picker, 0, 0, 50, false).remove(0);
+        let long = picker_row(&picker, 1, 1, 50, false).remove(0);
         assert!(long.contains('…') && long.ends_with("60 msgs"), "{long}");
         assert!(long.chars().count() <= 50, "{long}");
         assert_eq!(short.find("10 msgs"), long.find("60 msgs"), "{short}\n{long}");
@@ -7705,7 +7736,7 @@ mod tests {
                 .iter()
                 .position(|item| item.label == label)
                 .unwrap_or_else(|| panic!("no row {label}"));
-            picker_row(&picker, at, at, 70)
+            picker_row(&picker, at, at, 70, false).remove(0)
         };
         let compact = row("/compact");
         let help = row("/help");
@@ -7720,6 +7751,100 @@ mod tests {
             "descriptions are not aligned:\n{compact}\n{help}"
         );
         assert!(help.contains("▸ /help"), "no marker: {help}");
+    }
+
+    #[test]
+    fn the_highlighted_command_description_wraps() {
+        let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+        let at = picker
+            .items
+            .iter()
+            .position(|i| i.label == "/goal")
+            .expect("/goal");
+        picker.index = at;
+        let lines = picker_lines(&picker, &picker.matches(), 8, 46, true);
+        let row: Vec<&String> = lines
+            .iter()
+            .filter(|(_, i, _)| *i == at)
+            .map(|(l, _, _)| l)
+            .collect();
+        assert_eq!(row.len(), 2, "{row:?}");
+        assert!(row[1].contains("off to stop"), "description cut: {:?}", row[1]);
+        assert_eq!(
+            row[1].chars().take_while(|c| *c == ' ').count(),
+            16,
+            "no hanging indent: {:?}",
+            row[1]
+        );
+        // Rows that are not highlighted keep one line, so only the
+        // highlighted item adds a row.
+        assert_eq!(lines.len(), 9, "another row wrapped: {lines:?}");
+    }
+
+    #[test]
+    fn a_description_too_long_for_two_lines_ends_in_an_ellipsis() {
+        let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+        let at = picker
+            .items
+            .iter()
+            .position(|i| i.label == "/goal")
+            .expect("/goal");
+        picker.index = at;
+        let row = picker_row(&picker, at, at, 38, true);
+        assert_eq!(row.len(), 2, "{row:?}");
+        assert!(row[1].ends_with('…'), "{:?}", row[1]);
+        assert!(
+            row.iter().all(|l| l.chars().count() <= 38),
+            "a line is wider than the box: {row:?}"
+        );
+    }
+
+    #[test]
+    fn the_command_picker_shows_the_whole_description() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        for c in "/goal".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        let frame = strip(&a.frame(60, 20));
+        assert!(frame.contains("/goal"), "no command row: {frame:?}");
+        assert!(frame.contains("off to stop"), "description cut: {frame:?}");
+    }
+
+    #[test]
+    fn a_short_screen_cuts_the_description_on_one_line() {
+        let mut a = app();
+        let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+        let at = picker
+            .items
+            .iter()
+            .position(|i| i.label == "/goal")
+            .expect("/goal");
+        picker.index = at;
+        a.pending = Some(Pending::Pick(picker));
+        let frame = strip(&a.frame(60, 12));
+        assert!(frame.contains("/goal"), "no command row: {frame:?}");
+        assert!(!frame.contains("off to stop"), "the box grew: {frame:?}");
+    }
+
+    #[test]
+    fn a_wrapped_line_carries_the_same_click_target() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        for c in "/goal".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.frame(60, 20);
+        let hits: Vec<usize> = a
+            .targets
+            .iter()
+            .filter_map(|t| match t.3 {
+                Target::Row(0) => Some(t.0),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(hits.len(), 2, "the second line has no target: {:?}", a.targets);
+        assert_eq!(hits[1], hits[0] + 1, "{hits:?}");
     }
 
     #[test]
