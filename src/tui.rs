@@ -1006,6 +1006,7 @@ pub enum Cmd {
         key_env: String,
     },
     RevokeAllow { shape: String, always: bool },
+    AllowAlways(String),
     SetRoot(std::path::PathBuf),
     Compact,
     /// Work across turns until the goal is met.
@@ -1048,6 +1049,8 @@ pub enum Ev {
     Models(Vec<String>),
     /// A command shape the user allowed, for this session or for good.
     Allow { shape: String, always: bool },
+    /// A command shape a confirmation was shown for, and how it was answered.
+    ShapeAsked { shape: String, allowed: bool },
     Usage {
         /// The context estimate, when this event carries one.
         tokens: Option<u64>,
@@ -1092,6 +1095,13 @@ impl Hooks for WorkerHooks {
         let _ = self.tx.send(Ev::Allow {
             shape: shape.to_string(),
             always,
+        });
+    }
+
+    fn answered(&mut self, shape: &str, answer: Answer) {
+        let _ = self.tx.send(Ev::ShapeAsked {
+            shape: shape.to_string(),
+            allowed: matches!(answer, Answer::Yes | Answer::Session | Answer::Always),
         });
     }
 
@@ -1696,6 +1706,8 @@ pub struct App {
     armed: bool,
     /// Command shapes allowed here, with whether each is saved for good.
     allows: Vec<(String, bool)>,
+    /// Shapes a confirmation was shown for, with whether they were allowed.
+    recent: Vec<(String, bool)>,
     /// First run: a missing key is being entered, so Esc quits.
     onboard: bool,
     /// The latest copy, pasted by Ctrl+V.
@@ -1779,6 +1791,7 @@ struct Pane {
     replied: bool,
     since: Instant,
     allows: Vec<(String, bool)>,
+    recent: Vec<(String, bool)>,
 }
 
 impl Pane {
@@ -1819,6 +1832,7 @@ impl Pane {
             replied: false,
             since: Instant::now(),
             allows,
+            recent: Vec::new(),
         }
     }
 
@@ -1852,6 +1866,10 @@ enum Pending {
         name: String,
         fields: Vec<(String, String)>,
         at: usize,
+    },
+    /// A typed command shape for an `allow` line.
+    AllowRule {
+        value: String,
     },
     /// A first-run key: masked while typed, then checked before it is saved.
     KeyEntry {
@@ -2396,6 +2414,7 @@ impl App {
             targets: Vec::new(),
             armed: false,
             allows,
+            recent: Vec::new(),
             onboard: false,
             clip: String::new(),
             // Tests never read the real clipboard.
@@ -2452,6 +2471,7 @@ impl App {
         swap(&mut self.replied, &mut p.replied);
         swap(&mut self.since, &mut p.since);
         swap(&mut self.allows, &mut p.allows);
+        swap(&mut self.recent, &mut p.recent);
     }
 
     /// Bring the pane at `index` into view and park the current one.
@@ -2838,7 +2858,16 @@ impl App {
             Ev::Info(t) => self.push(Role::Info, t),
             Ev::Allow { shape, always } => {
                 if !self.allows.iter().any(|(s, _)| s == &shape) {
-                    self.allows.push((shape, always));
+                    self.allows.push((shape.clone(), always));
+                }
+                self.recent.retain(|(s, _)| s != &shape);
+                self.dirty = true;
+            }
+            Ev::ShapeAsked { shape, allowed } => {
+                self.recent.retain(|(s, _)| s != &shape);
+                self.recent.push((shape, allowed));
+                if self.recent.len() > 10 {
+                    self.recent.remove(0);
                 }
                 self.dirty = true;
             }
@@ -3526,6 +3555,25 @@ impl App {
             desc: if *always { "always" } else { "session" }.into(),
             actions: vec![('d', "revoke")],
         }))
+        .chain(std::iter::once(PickItem {
+            label: "add a rule".into(),
+            value: "add-rule".into(),
+            desc: "a".into(),
+            actions: vec![('a', "add")],
+        }))
+        .chain(
+            self.recent
+                .iter()
+                .rev()
+                .filter(|(s, _)| !self.allows.iter().any(|(a, _)| a == s))
+                .take(5)
+                .map(|(shape, allowed)| PickItem {
+                    label: shape.clone(),
+                    value: format!("asked:{shape}"),
+                    desc: if *allowed { "asked · allowed" } else { "asked · declined" }.into(),
+                    actions: vec![('a', "allow")],
+                }),
+        )
         .collect()
     }
 
@@ -4277,6 +4325,17 @@ impl App {
         Ok(())
     }
 
+    /// Save a shape as an always allow; the worker appends the line and
+    /// reports back, so a failed write never shows as a live allow.
+    fn save_rule(&mut self, shape: &str, tx: &Sender<Cmd>) {
+        let shape = shape.trim();
+        if self.allows.iter().any(|(s, _)| s == shape) {
+            self.push(Role::Info, format!("{shape} is already allowed"));
+            return;
+        }
+        let _ = tx.send(Cmd::AllowAlways(shape.to_string()));
+    }
+
     /// The variable a provider's key lives in, or none when it needs no key.
     fn provider_key_var(&self, name: &str) -> Option<String> {
         if let Ok(provider) = crate::providers::Provider::parse(name) {
@@ -4729,6 +4788,40 @@ impl App {
                 }
                 return;
             }
+            Pending::AllowRule { mut value } => {
+                match key {
+                    Key::Esc => {
+                        self.pending = None;
+                        self.push(Role::Info, "allow cancelled");
+                        self.dirty = true;
+                    }
+                    Key::Enter => {
+                        let shape = value.trim().to_string();
+                        if shape.is_empty() {
+                            self.push(Role::Error, "allow: a shape is needed");
+                            self.pending = Some(Pending::AllowRule { value });
+                        } else {
+                            self.pending = None;
+                            self.save_rule(&shape, tx);
+                        }
+                        self.dirty = true;
+                    }
+                    Key::Char(c) if !c.is_control() => {
+                        value.push(c);
+                        self.pending = Some(Pending::AllowRule { value });
+                        self.dirty = true;
+                    }
+                    Key::Backspace => {
+                        value.pop();
+                        self.pending = Some(Pending::AllowRule { value });
+                        self.dirty = true;
+                    }
+                    _ => {
+                        self.pending = Some(Pending::AllowRule { value });
+                    }
+                }
+                return;
+            }
             Pending::KeyEntry {
                 provider,
                 var,
@@ -4877,6 +4970,18 @@ impl App {
                                     });
                                 }
                             }
+                            Some("add") => {
+                                self.pending = Some(Pending::AllowRule { value: String::new() });
+                            }
+                            Some("allow") => {
+                                if let Some(choice) = picker.selected() {
+                                    let shape = choice.value.trim_start_matches("asked:").to_string();
+                                    self.save_rule(&shape, tx);
+                                    picker.items = self.mode_items();
+                                    picker.offset = picker.offset.min(picker.index);
+                                }
+                                self.pending = Some(Pending::Pick(picker));
+                            }
                             Some("revoke") => {
                                 if let Some(choice) = picker.selected() {
                                     let value = choice.value.clone();
@@ -4986,6 +5091,17 @@ impl App {
                             PickKind::Session => self.resume(choice.value, tx),
                             PickKind::Model => {
                                 self.set_model(&choice.value, tx);
+                            }
+                            PickKind::Mode if choice.value == "add-rule" => {
+                                self.pending = Some(Pending::AllowRule { value: String::new() });
+                                self.dirty = true;
+                                return;
+                            }
+                            PickKind::Mode if choice.value.starts_with("asked:") => {
+                                let shape = choice.value.trim_start_matches("asked:").to_string();
+                                self.pending = Some(Pending::AllowRule { value: shape });
+                                self.dirty = true;
+                                return;
                             }
                             PickKind::Mode if choice.value.starts_with("allow:") => {
                                 // An allow row is not a mode; choosing it does nothing.
@@ -5727,6 +5843,9 @@ impl App {
                         .cloned()
                         .unwrap_or_else(|| ("field".into(), String::new()));
                     format!("provider {name} · {label}: {value}{CARET}  (Enter next · Esc cancel)")
+                }
+                Pending::AllowRule { value } => {
+                    format!("allow = {value}{CARET}  (Enter save · Esc cancel)")
                 }
                 Pending::KeyEntry { provider, var, value, status } => {
                     let stars = "*".repeat(value.chars().count());
@@ -6922,6 +7041,15 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         let _ = ev_tx.send(Ev::Error(e));
                     }
                 }
+                Ok(Cmd::AllowAlways(shape)) => match worker_session.cfg.allow_always(&shape) {
+                    Ok(()) => {
+                        let _ = ev_tx.send(Ev::Allow { shape: shape.clone(), always: true });
+                        let _ = ev_tx.send(Ev::Info(format!("allow = {shape}")));
+                    }
+                    Err(e) => {
+                        let _ = ev_tx.send(Ev::Error(e));
+                    }
+                },
                 Ok(Cmd::Reload) => {
                     match worker_session.reload() {
                         Ok(()) => {
@@ -9961,7 +10089,10 @@ mod tests {
         a.cfg.set_permissions(crate::config::Permissions::Strict);
         a.run_command("mode", &tx);
         let Some(Pending::Pick(p)) = &a.pending else { panic!("no picker") };
-        assert_eq!(p.items.iter().map(|i| i.value.as_str()).collect::<Vec<_>>(), ["normal", "strict", "yolo"]);
+        assert_eq!(
+            p.items.iter().map(|i| i.value.as_str()).collect::<Vec<_>>(),
+            ["normal", "strict", "yolo", "add-rule"]
+        );
         assert_eq!(p.items[p.index].value, "strict");
         assert!(p.items[1].desc.starts_with("current"), "{}", p.items[1].desc);
         assert!(!p.items[0].desc.contains("current"));
@@ -10565,7 +10696,7 @@ mod tests {
         a.allows = vec![("npm test".into(), false), ("cargo test".into(), true)];
         a.run_command("mode", &tx);
         let picker = open_picker(&a);
-        assert_eq!(picker.items.len(), 5, "modes and allows");
+        assert_eq!(picker.items.len(), 6, "modes, allows, and the add row");
         assert_eq!(picker.items[3].label, "npm test");
         assert_eq!(picker.items[3].desc, "session");
         assert_eq!(picker.items[4].desc, "always");
@@ -10577,7 +10708,95 @@ mod tests {
         let mut a = app();
         let (tx, _cmds) = channel();
         a.run_command("mode", &tx);
-        assert_eq!(open_picker(&a).items.len(), 3);
+        assert_eq!(open_picker(&a).items.len(), 4, "three modes and the add row");
+    }
+
+    #[test]
+    fn the_mode_picker_adds_a_rule() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.run_command("mode", &tx);
+        let at = open_picker(&a)
+            .items
+            .iter()
+            .position(|i| i.value == "add-rule")
+            .expect("the add row");
+        if let Some(Pending::Pick(p)) = &mut a.pending {
+            p.index = at;
+        }
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(a.pending, Some(Pending::AllowRule { .. })), "no rule prompt");
+        for c in "cargo test".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::AllowAlways(s)) if s == "cargo test"));
+        a.apply(Ev::Allow { shape: "cargo test".into(), always: true });
+        assert!(a.allows.contains(&("cargo test".to_string(), true)), "not listed");
+        a.run_command("mode", &tx);
+        let row = open_picker(&a)
+            .items
+            .iter()
+            .find(|i| i.label == "cargo test")
+            .cloned()
+            .expect("the saved rule");
+        assert_eq!(row.desc, "always");
+    }
+
+    #[test]
+    fn an_empty_rule_stays_open_and_saves_nothing() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.pending = Some(Pending::AllowRule { value: String::new() });
+        a.handle_key(Key::Enter, &tx);
+        assert!(matches!(a.pending, Some(Pending::AllowRule { .. })), "the prompt closed");
+        assert!(a.allows.is_empty());
+        assert!(cmds.try_recv().is_err(), "an empty rule reached the worker");
+    }
+
+    #[test]
+    fn a_declined_shape_is_listed_and_one_key_allows_it() {
+        let (mut a, cmds, _ev) = worker_app();
+        let tx = a.worker.as_ref().unwrap().0.clone();
+        a.apply(Ev::ShapeAsked { shape: "npm test".into(), allowed: false });
+        a.run_command("mode", &tx);
+        let at = open_picker(&a)
+            .items
+            .iter()
+            .position(|i| i.label == "npm test")
+            .expect("the ask row");
+        assert_eq!(open_picker(&a).items[at].desc, "asked · declined");
+        if let Some(Pending::Pick(p)) = &mut a.pending {
+            p.index = at;
+        }
+        a.handle_key(Key::Char('a'), &tx);
+        assert!(matches!(cmds.try_recv(), Ok(Cmd::AllowAlways(s)) if s == "npm test"));
+        a.apply(Ev::Allow { shape: "npm test".into(), always: true });
+        assert!(a.allows.contains(&("npm test".to_string(), true)), "not allowed");
+        a.run_command("mode", &tx);
+        let picker = open_picker(&a);
+        assert_eq!(
+            picker.items.iter().filter(|i| i.label == "npm test").count(),
+            1,
+            "listed as both an allow and an ask"
+        );
+    }
+
+    #[test]
+    fn at_most_five_asks_are_listed_newest_first() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        for n in 0..7 {
+            a.apply(Ev::ShapeAsked { shape: format!("cmd {n}"), allowed: n % 2 == 0 });
+        }
+        a.run_command("mode", &tx);
+        let asks: Vec<String> = open_picker(&a)
+            .items
+            .iter()
+            .filter(|i| i.value.starts_with("asked:"))
+            .map(|i| i.label.clone())
+            .collect();
+        assert_eq!(asks, ["cmd 6", "cmd 5", "cmd 4", "cmd 3", "cmd 2"]);
     }
 
     #[test]
@@ -10612,7 +10831,7 @@ mod tests {
             _ => panic!("no revoke command"),
         }
         let picker = open_picker(&a);
-        assert_eq!(picker.items.len(), 4, "the row stayed in the list");
+        assert_eq!(picker.items.len(), 5, "the row stayed in the list");
         assert!(picker.items.iter().all(|i| i.label != "npm test"));
     }
 

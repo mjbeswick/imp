@@ -33,6 +33,9 @@ pub trait Hooks {
 
     /// A command shape the user allowed, for this session or for good.
     fn allowed(&mut self, _shape: &str, _always: bool) {}
+
+    /// The answer given for one command shape, for the permissions review.
+    fn answered(&mut self, _shape: &str, _answer: Answer) {}
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String>;
 
     /// A question whose options carry descriptions, and may allow several
@@ -1243,6 +1246,9 @@ impl Session {
                                 None if hooks.confirm(&what) => Answer::Yes,
                                 None => Answer::No,
                             };
+                            if let Some(k) = &shape {
+                                hooks.answered(k, answer);
+                            }
                             match (answer, shape) {
                                 (Answer::No, _) => {
                                     return (false, "refused: the user declined to run this command".into())
