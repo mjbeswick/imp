@@ -1185,6 +1185,8 @@ pub struct App {
     /// What a click on the last frame lands on: row, first and last column
     /// (1-based, inclusive), and the target.
     targets: Vec<(usize, usize, usize, Target)>,
+    /// `[a] always` was clicked once; a second click on it applies.
+    armed: bool,
     tool: Option<ToolRow>,
     /// The worker for the session in view; `None` in tests.
     worker: Option<Worker>,
@@ -1749,6 +1751,7 @@ impl App {
             spinner: 0,
             drawn: Vec::new(),
             targets: Vec::new(),
+            armed: false,
             tool: None,
             worker: None,
             touched: Instant::now(),
@@ -2328,10 +2331,21 @@ impl App {
 
     fn handle_key_inner(&mut self, key: Key, tx: &Sender<Cmd>) {
         // A click replays what it lands on; anywhere else it does nothing.
+        let armed = std::mem::take(&mut self.armed);
+        if armed {
+            self.dirty = true;
+        }
         if let Key::Click(x, y) = key {
             let (x, y) = (x as usize, y as usize);
             let hit = self.targets.iter().find(|t| t.0 == y && (t.1..=t.2).contains(&x));
             match hit.map(|t| t.3.clone()) {
+                // A stray click must not allow a command for good.
+                Some(Target::Key(Key::Char('a')))
+                    if !armed && matches!(self.pending, Some(Pending::Confirm { .. })) =>
+                {
+                    self.armed = true;
+                    self.dirty = true;
+                }
                 Some(Target::Key(k)) => self.handle_key_inner(k, tx),
                 Some(Target::Row(i)) => {
                     if let Some(Pending::Pick(picker)) = &mut self.pending {
@@ -4203,6 +4217,11 @@ impl App {
         for (i, (k, l)) in chips.iter().enumerate() {
             if i > 0 {
                 row.push_str("  ");
+            }
+            if self.armed && *k == "a" {
+                // Marked by a first click: reversed, waiting for the second.
+                row.push_str(&p.select(&format!("[{k}] {l}")));
+                continue;
             }
             let key = p.paint(Role::Info, k);
             let key = if p.on { format!("\x1b[1m{key}") } else { key };
@@ -6117,6 +6136,38 @@ mod tests {
         a.frame(100, 30);
         click(&mut a, &tx, |t| matches!(t, Target::Key(Key::Esc)));
         assert!(a.pending.is_none(), "Esc close did not close the picker");
+    }
+
+    #[test]
+    fn always_takes_two_clicks_but_one_key() {
+        let mut a = app();
+        let (tx, _cmds) = channel();
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        a.frame(80, 12);
+        let always = |t: &Target| matches!(t, Target::Key(Key::Char('a')));
+        click(&mut a, &tx, always);
+        assert!(rx.try_recv().is_err(), "one click applied always");
+        assert!(a.armed);
+        a.frame(80, 12);
+        click(&mut a, &tx, always);
+        assert_eq!(rx.try_recv().ok(), Some(Answer::Always));
+
+        // Anything else in between clears the mark.
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        a.frame(80, 12);
+        click(&mut a, &tx, always);
+        a.handle_key(Key::Click(1, 1), &tx);
+        assert!(!a.armed);
+        a.frame(80, 12);
+        click(&mut a, &tx, always);
+        assert!(rx.try_recv().is_err(), "the mark survived another click");
+
+        let (reply, rx) = channel();
+        a.apply(Ev::Confirm { what: "run `npm test`".into(), reply, always: true });
+        a.handle_key(Key::Char('a'), &tx);
+        assert_eq!(rx.try_recv().ok(), Some(Answer::Always));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 - [x] 1.1 Decode a left press as a click; a test feeds `CSI <0;5;3M` and gets the cell
 - [x] 1.2 Record click targets per frame for picker rows, footer hints, confirm chips, and question options; tests click each
-- [ ] 1.3 `always` needs a second click; tests for one click, two clicks, and the `a` key
+- [x] 1.3 `always` needs a second click; tests for one click, two clicks, and the `a` key
 
 ## 2. Copy
 
