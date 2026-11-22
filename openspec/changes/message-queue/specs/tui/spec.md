@@ -2,7 +2,7 @@
 
 ### Requirement: The interface is keyboard first
 
-The system SHALL provide Enter to send, or to steer a running turn, Alt+Enter or Ctrl+Q to queue the draft, Shift+Enter or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
+The system SHALL provide Enter to send, or during a turn to steer or queue by the mode, Ctrl+Q to toggle that mode, Shift+Enter, Alt+Enter, or Ctrl+J for a newline, Esc to cancel a turn, Ctrl+R to retry, Ctrl+E to expand or collapse the latest turn's tool rows, Ctrl+T and Ctrl+H to show or hide thinking, Ctrl+L to clear the view, PgUp/PgDn to scroll, and Ctrl+C to clear a non-empty composer or exit when it is empty, SHALL decode those keys whether the terminal sends control bytes or disambiguated `CSI` sequences, and SHALL NOT type escape parameters as text.
 
 #### Scenario: Send a message
 - **WHEN** the user types text and presses Enter
@@ -61,7 +61,7 @@ The system SHALL provide Enter to send, or to steer a running turn, Alt+Enter or
 - **THEN** the latest turn's tool rows expand, and Ctrl+O goes to the next waiting session instead
 
 #### Scenario: Newline keys
-- **WHEN** the terminal reports Shift+Enter, or the user presses Ctrl+J
+- **WHEN** the user presses Alt+Enter or Ctrl+J, or the terminal reports Shift+Enter
 - **THEN** a newline is inserted and nothing is sent
 
 ### Requirement: Twenty-three slash commands, no more
@@ -94,19 +94,11 @@ The system SHALL provide exactly `/help`, `/new`, `/goal`, `/copy`, `/sessions`,
 
 ### Requirement: Messages wait in a queue
 
-The system SHALL add the draft to a session queue on Alt+Enter or Ctrl+Q, SHALL draw queued messages dim above the composer, SHALL send the oldest when a turn ends unless a queued message is open, SHALL NOT restart the running turn's meter for a queued message, and SHALL list, pop, delete, and clear queued messages with `/queue`.
+The system SHALL add the draft to a session queue on Enter while a turn runs in queue mode, SHALL draw queued messages dim above the composer, SHALL send the oldest when a turn ends unless a queued message is open, SHALL NOT restart the running turn's meter for a queued message, and SHALL list, pop, delete, and clear queued messages with `/queue`.
 
 #### Scenario: Queue during a turn
-- **WHEN** a turn is running and the user presses Alt+Enter on `also add tests`
+- **WHEN** a turn is running in queue mode and the user sends `also add tests`
 - **THEN** it shows above the composer, not in the transcript, and is sent when the turn ends
-
-#### Scenario: Fallback key
-- **WHEN** the terminal does not send Alt+Enter and the user presses Ctrl+Q
-- **THEN** the draft is queued the same way
-
-#### Scenario: Idle queue
-- **WHEN** nothing is running and the user queues two messages
-- **THEN** both wait, and neither is sent until a turn ends
 
 #### Scenario: Pop
 - **WHEN** the user runs `/queue pop 1`
@@ -128,10 +120,18 @@ The system SHALL walk from an empty draft through queued messages, newest first,
 - **WHEN** the user clears the open message and presses Enter
 - **THEN** it is gone from the queue
 
-### Requirement: Enter steers a running turn
+### Requirement: Enter steers or queues by a visible mode
 
-The system SHALL, on Enter while a turn runs, give the draft to that turn before the model's next step and draw it as a user row marked `(steered)`.
+The system SHALL keep a per-session send mode, steer by default, SHALL toggle it on Ctrl+Q, SHALL show it while a turn runs as `>` for steer and `»` for queue in the prompt glyph and as `steer` or `queue` in the status line, SHALL on Enter in steer mode give the draft to the running turn before the model's next step and draw it as a user row marked `(steered)`, and SHALL send on Enter when no turn runs, whatever the mode.
 
 #### Scenario: Steer
-- **WHEN** a turn is running a tool and the user types `use pnpm, not npm` and presses Enter
+- **WHEN** a turn is running a tool in steer mode and the user types `use pnpm, not npm` and presses Enter
 - **THEN** the model's next request carries it and the turn goes on
+
+#### Scenario: Toggle
+- **WHEN** a turn is running in steer mode and the user presses Ctrl+Q
+- **THEN** the prompt glyph is `»`, the status line says `queue`, and the next Enter queues
+
+#### Scenario: Idle
+- **WHEN** no turn runs and the mode is queue
+- **THEN** Enter sends the message and the glyph is `>`

@@ -2,19 +2,24 @@
 
 ## Approaches
 
-- **Enter steers, Alt+Enter queues (chosen).** The user's choice: typing
-  during a turn is usually a correction.
+- **Enter sends; Ctrl+Q toggles steer and queue (chosen).** One send key,
+  a key that works in every terminal, and Alt+Enter stays a newline for
+  terminals without the kitty protocol. The cost is a mode to forget, so it
+  shows where the user types.
+- **Enter steers, Alt+Enter queues.** Takes the most portable newline key,
+  and macOS terminals send Option+Enter as Enter by default. Rejected.
 - **Ctrl+Enter to queue.** Most terminals, tmux, and the Hackberry console
   send it as Enter. Rejected.
-- **Ctrl+Q alone.** Works everywhere but is not where hands go. Kept as the
-  fallback shown beside Alt+Enter.
 - **Keep `/stash` beside the queue.** Two lists for one job. Rejected.
 
 ## Queue
 
 `App.queue: Vec<String>` per session, kept with the draft on a switch.
-Enter during a turn steers; Alt+Enter or Ctrl+Q appends to the queue at any
-time. When a turn ends and no queued message is open, the oldest is sent.
+`App.queue_mode: bool` per session, default off (steer). Enter during a
+turn steers, or appends to the queue when `queue_mode` is on; Ctrl+Q flips
+it and writes nothing to the transcript. While a turn runs the prompt glyph
+is `>` for steer and `»` for queue, and the status line says `steer` or
+`queue`. When idle, Enter sends and the glyph is `>`. When a turn ends and no queued message is open, the oldest is sent.
 Rows above the composer: `⋯ <text>`, one row each, at most three, then
 `+N more`; the open one is highlighted.
 

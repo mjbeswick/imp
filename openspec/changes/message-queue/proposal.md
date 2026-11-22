@@ -9,10 +9,14 @@ second list for the same job.
 
 ## What Changes
 
-- Enter sends when idle and steers a running turn: the message joins the
-  turn before the model's next step.
-- Alt+Enter, or Ctrl+Q in any terminal, queues the draft. Queued messages
-  show dim above the composer and are sent in order as turns end.
+- Enter always sends. When idle it sends; during a turn it steers or queues,
+  by a mode that Ctrl+Q toggles. Steer gives the message to the turn before
+  the model's next step; queue holds it until the turn ends.
+- The mode shows while a turn runs: `>` steer, `»` queue, in the prompt glyph
+  and the status line. Steer is the default; the last choice holds for the
+  session.
+- Queued messages show dim above the composer and are sent in order as turns
+  end.
 - ↑/↓ from an empty draft move through queued messages, then history. A
   queued message opens in the composer for editing; Enter saves it in its
   place, and saving it empty deletes it.
@@ -20,15 +24,12 @@ second list for the same job.
   step and carries on when it is saved or left.
 - `/queue` replaces `/stash`: list, `pop n`, `delete n`, `clear`. A queue
   with nothing running is what the stash was.
-- Shift+Enter, or Ctrl+J in any terminal, inserts a newline; Alt+Enter no
-  longer does.
 - A message sent during a turn no longer resets the turn's meter.
 
 ## Keyboard and resources
 
-Ctrl+Q reaches imp because raw mode clears flow control. Alt+Enter needs
-"Option as Meta" on macOS terminals, so Ctrl+Q is shown beside it. Shift+Enter
-needs the kitty keyboard protocol, so Ctrl+J is shown beside it.
+Ctrl+Q reaches imp in every terminal because raw mode clears flow control.
+Newline keys are unchanged: Shift+Enter, Alt+Enter, and Ctrl+J.
 
 ## Capabilities
 

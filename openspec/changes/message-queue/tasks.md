@@ -2,7 +2,7 @@
 
 ## 1. Keys
 
-- [ ] 1.1 Decode Alt+Enter and Ctrl+Q as queue; Shift+Enter and Ctrl+J stay newline; tests
+- [ ] 1.1 Ctrl+Q toggles steer and queue; the glyph and status line show it while a turn runs; tests
 
 ## 2. Queue
 
