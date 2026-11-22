@@ -8669,6 +8669,130 @@ mod tests {
         assert_eq!(a.entries.last().unwrap().text, "one session");
     }
 
+    /// The keys a keys card row names. A row missing here fails the test.
+    fn card_keys(label: &str) -> Option<Vec<Key>> {
+        use Move::*;
+        Some(match label {
+            "Enter" => vec![Key::Enter],
+            "Shift+Enter, Alt+Enter, Ctrl+J" => vec![Key::Newline],
+            "Esc" => vec![Key::Esc],
+            "Tab" => vec![Key::Tab],
+            "Shift+Tab" => vec![Key::BackTab],
+            "Right" => vec![Key::Right],
+            "Up, Down" => vec![Key::Up, Key::Down],
+            "Shift+arrows, Shift+Home, Shift+End" => [Up, Down, Left, Right, Home, End].map(Key::Select).to_vec(),
+            "Delete" => vec![Key::Delete],
+            "Option+Left, Option+Right" => vec![Key::Word(Left), Key::Word(Right)],
+            "Option+Backspace, Ctrl+W" => vec![Key::DeleteWord(false), Key::Ctrl('w')],
+            "Option+Delete, Alt+D" => vec![Key::DeleteWord(true)],
+            "Shift+Option+Left, Shift+Option+Right" => vec![Key::SelectWord(Left), Key::SelectWord(Right)],
+            "Ctrl+U, Ctrl+K" => vec![Key::Ctrl('u'), Key::Ctrl('k')],
+            "?" => vec![Key::Char('?')],
+            "PgUp, PgDn" => vec![Key::PageUp, Key::PageDown],
+            "PgUp" => vec![Key::PageUp],
+            "PgDn" => vec![Key::PageDown],
+            "Picker" => vec![Key::Char('z'), Key::Enter, Key::Esc],
+            l => match l.strip_prefix("Ctrl+") {
+                Some(c) if c.len() == 1 => vec![Key::Ctrl(c.to_ascii_lowercase().chars().next()?)],
+                _ => return None,
+            },
+        })
+    }
+
+    /// An app in the state where `key` acts; `picker` opens the palette first.
+    fn key_state(key: &Key, picker: bool) -> App {
+        let mut a = if *key == Key::Ctrl('n') { multi_app("card-keys") } else { app() };
+        let (tx, _rx) = channel();
+        if picker {
+            a.handle_key(Key::Ctrl('p'), &tx);
+            return a;
+        }
+        let draft = |a: &mut App, text: &str, at_end: bool| {
+            a.input = text.into();
+            a.cursor = if at_end { text.len() } else { 0 };
+        };
+        match key {
+            Key::Enter | Key::Newline | Key::Ctrl('c') => draft(&mut a, "hello", true),
+            Key::Delete | Key::DeleteWord(true) | Key::Ctrl('k') => draft(&mut a, "hello world", false),
+            Key::Select(Move::Down | Move::Right | Move::End) | Key::Word(Move::Right) | Key::SelectWord(Move::Right) => {
+                draft(&mut a, "hello world\nsecond", false)
+            }
+            Key::Select(_) | Key::Word(_) | Key::SelectWord(_) | Key::DeleteWord(false) | Key::Ctrl('w' | 'a' | 'u') => {
+                draft(&mut a, "hello world\nsecond", true)
+            }
+            Key::Esc => a.status.streaming = true,
+            Key::Tab => a.agents = vec![("build".into(), String::new()), ("review".into(), String::new())],
+            Key::Right => a.status.suggestion = Some("run the tests".into()),
+            Key::Up | Key::Down => {
+                a.history = vec!["older".into(), "newer".into()];
+                if *key == Key::Down {
+                    a.handle_key(Key::Up, &tx);
+                }
+            }
+            Key::Ctrl('x') => {
+                a.queued = vec!["first".into(), "second".into()];
+                a.status.streaming = true;
+                a.handle_key(Key::Up, &tx);
+            }
+            Key::Ctrl('l') => a.push(Role::User, "something to clear"),
+            Key::Ctrl('e') => {
+                a.apply(Ev::ToolStart { name: "bash".into(), summary: "run `ls`".into(), args: "{\"command\":\"ls\"}".into() });
+                a.apply(Ev::ToolEnd { ok: true, preview: "exit 0".into(), output: "a\nb".into(), detail: String::new(), ms: 1 });
+            }
+            Key::Ctrl('v') => a.clip = "pasted".into(),
+            Key::Ctrl('g') => a.cfg.mouse = true,
+            Key::Ctrl('n') => a.run_command("new", &tx),
+            Key::PageUp | Key::PageDown => {
+                for i in 0..200 {
+                    a.push(Role::Info, format!("line {i}"));
+                }
+                if *key == Key::PageDown {
+                    a.handle_key(Key::PageUp, &tx);
+                }
+            }
+            _ => {}
+        }
+        a
+    }
+
+    /// What a key can change: the drawn screen and the state it does not draw.
+    fn fingerprint(a: &mut App) -> String {
+        format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            a.frame(80, 20),
+            a.input,
+            a.cursor,
+            a.quit,
+            a.at,
+            a.queue_mode,
+            a.released,
+            a.agent,
+            a.cancel.load(Ordering::Relaxed)
+        )
+    }
+
+    #[test]
+    fn every_listed_key_acts() {
+        for (label, _) in crate::help::KEYS {
+            let keys = card_keys(label).unwrap_or_else(|| panic!("keys card row {label:?} has no key mapping"));
+            for key in keys {
+                let mut a = key_state(&key, *label == "Picker");
+                let before = fingerprint(&mut a);
+                let (tx, _rx) = channel();
+                a.handle_key(key.clone(), &tx);
+                assert_ne!(before, fingerprint(&mut a), "{label}: {key:?} did nothing");
+            }
+        }
+        for (label, key, action) in PALETTE_ACTIONS {
+            let keys = card_keys(key).unwrap_or_else(|| panic!("palette row {label:?} names {key:?}, not a key"));
+            let mut a = key_state(&keys[0], false);
+            let before = fingerprint(&mut a);
+            let (tx, _rx) = channel();
+            a.palette_action(action, &tx);
+            assert_ne!(before, fingerprint(&mut a), "palette {label} did nothing");
+        }
+    }
+
     #[test]
     fn ctrl_n_and_p_switch_sessions_and_keep_drafts() {
         let mut a = multi_app("switch");
