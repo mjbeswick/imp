@@ -4951,20 +4951,40 @@ impl App {
                         let _ = reply.send(None);
                         self.dirty = true;
                     }
-                    Key::Char('y') | Key::Char('Y') if opts.len() == 2 => {
+                    Key::Char('y') | Key::Char('Y') if opts.len() == 2 && !self.ask_multiple => {
                         let _ = reply.send(Some(opts[0].clone()));
                         self.dirty = true;
                     }
-                    Key::Char('n') | Key::Char('N') if opts.len() == 2 => {
+                    Key::Char('n') | Key::Char('N') if opts.len() == 2 && !self.ask_multiple => {
                         let _ = reply.send(Some(opts[1].clone()));
                         self.dirty = true;
                     }
                     Key::Char(c) if c.is_ascii_digit() => {
                         let n = c.to_digit(10).unwrap_or(0) as usize;
-                        if n >= 1 && n <= opts.len() {
+                        let valid = n >= 1 && n <= opts.len();
+                        if valid && !self.ask_multiple {
                             let _ = reply.send(Some(opts[n - 1].clone()));
-                            self.dirty = true;
+                        } else {
+                            // Several picks: the key marks or unmarks. Out of
+                            // range: the question stays open.
+                            if valid {
+                                if let Some(m) = self.ask_marked.get_mut(n - 1) {
+                                    *m = !*m;
+                                }
+                            }
+                            self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Choose, typed });
                         }
+                        self.dirty = true;
+                    }
+                    Key::Enter if self.ask_multiple => {
+                        let picked: Vec<String> =
+                            opts.iter().zip(&self.ask_marked).filter(|(_, m)| **m).map(|(o, _)| o.clone()).collect();
+                        if picked.is_empty() {
+                            self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Choose, typed });
+                        } else {
+                            let _ = reply.send(Some(picked.join(", ")));
+                        }
+                        self.dirty = true;
                     }
                     _ => {
                         self.pending = Some(Pending::Question {
@@ -4978,6 +4998,7 @@ impl App {
                 },
                 AskMode::Custom => match key {
                     Key::Esc => {
+                        self.cancel.store(true, Ordering::Relaxed);
                         let _ = reply.send(None);
                         self.dirty = true;
                     }
@@ -5705,20 +5726,30 @@ impl App {
         let Some(Pending::Question { q, opts, mode, typed, .. }) = &self.pending else {
             return None;
         };
-        let mut parts = vec![(q.clone(), 2)];
+        // Each part: its text, the indent its rows wrap to, and whether it is
+        // a muted description, which sits wholly under its option's label.
+        let mut parts = vec![(q.clone(), 2, false)];
         for (i, o) in opts.iter().enumerate() {
-            parts.push((format!("[{}] {o}", i + 1), 6));
+            let key = match (self.ask_multiple, self.ask_marked.get(i).copied().unwrap_or(false)) {
+                (true, true) => "[x]".to_string(),
+                _ => format!("[{}]", i + 1),
+            };
+            parts.push((format!("{key} {o}"), 6, false));
+            if let Some(about) = self.ask_descs.get(i).filter(|d| !d.is_empty()) {
+                parts.push((about.clone(), 6, true));
+            }
         }
         parts.push(match mode {
-            AskMode::Choose => ("[e] answer   Esc stop".to_string(), 2),
-            AskMode::Custom => (format!("> {typed}{CARET}"), 4),
+            AskMode::Choose if self.ask_multiple => (format!("[e] answer   Esc stop   1-{} mark   Enter send", opts.len()), 2, false),
+            AskMode::Choose => ("[e] answer   Esc stop".to_string(), 2, false),
+            AskMode::Custom => (format!("> {typed}{CARET}"), 4, false),
         });
-        let mut rows = Vec::new();
-        for (text, indent) in parts {
+        let mut rows: Vec<(String, bool)> = Vec::new();
+        for (text, indent, muted) in parts {
             // Continuation rows sit under the text, past the key.
             for (j, line) in wrap(&text, cols.saturating_sub(indent)).into_iter().enumerate() {
-                let pad = if j == 0 { 0 } else { indent - 2 };
-                rows.push(format!("▌ {}{line}", " ".repeat(pad)));
+                let pad = if j == 0 && !muted { 0 } else { indent - 2 };
+                rows.push((format!("{}{line}", " ".repeat(pad)), muted));
             }
         }
         // ponytail: a question taller than the screen loses its middle rows; the keys stay.
@@ -5732,8 +5763,14 @@ impl App {
         Some(
             rows.iter()
                 .enumerate()
-                .map(|(i, r)| {
-                    let painted = self.palette.paint(Role::Info, &fit(r, cols));
+                .map(|(i, (r, muted))| {
+                    let text = fit(&format!("▌ {r}"), cols);
+                    let painted = if *muted {
+                        let body = text.strip_prefix("▌ ").unwrap_or(&text);
+                        self.palette.paint(Role::Info, "▌ ") + &self.palette.paint(Role::Thinking, body)
+                    } else {
+                        self.palette.paint(Role::Info, &text)
+                    };
                     let row = painted.replace(CARET, "\x1b[7m \x1b[27m");
                     if i == 0 { format!("{bell}{row}") } else { row }
                 })
@@ -7503,6 +7540,38 @@ mod tests {
         a.cursor = a.input.len();
         a.handle_key(Key::Ctrl('u'), &tx);
         assert_eq!((a.input.as_str(), a.cursor), ("first\n", 6));
+    }
+
+    #[test]
+    fn question_options_show_descriptions_and_take_several_picks() {
+        let (tx, _cmds) = channel();
+        let (reply, answers) = channel();
+        let mut a = colour_app();
+        a.apply(Ev::Question {
+            q: "which languages?".into(),
+            opts: vec!["Rust (Recommended)".into(), "Go".into(), "Zig".into()],
+            descs: vec!["fast, safe, and the one imp is written in".into(), String::new(), "small".into()],
+            multiple: true,
+            reply,
+        });
+        let out = strip(&a.frame(54, 24));
+        assert!(out.contains("▌     fast, safe, and the one imp is written in") || out.contains("▌     fast, safe, and the one imp is written"), "{out:?}");
+        assert!(out.contains("1-3 mark   Enter send"), "{out:?}");
+        assert!(out.lines().all(|l| l.trim_end_matches('\r').chars().count() <= 54));
+        let muted = a.palette.paint(Role::Thinking, "    small");
+        assert!(a.frame(54, 24).contains(&muted), "the description is not muted");
+        // Enter with nothing marked keeps the question; marks toggle.
+        a.handle_key(Key::Enter, &tx);
+        assert!(answers.try_recv().is_err() && a.pending.is_some());
+        a.handle_key(Key::Char('1'), &tx);
+        a.handle_key(Key::Char('3'), &tx);
+        a.handle_key(Key::Char('2'), &tx);
+        a.handle_key(Key::Char('2'), &tx);
+        assert!(strip(&a.frame(54, 24)).contains("[x] Rust"));
+        a.handle_key(Key::Char('9'), &tx);
+        assert!(a.pending.is_some(), "an out-of-range key dropped the question");
+        a.handle_key(Key::Enter, &tx);
+        assert_eq!(answers.try_recv().ok(), Some(Some("Rust (Recommended), Zig".into())));
     }
 
     #[test]

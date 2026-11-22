@@ -30,3 +30,9 @@ joined by `, `, in option order. A typed answer returns the text.
 ## Size
 
 Expected: about 1.5 KB.
+
+## Fixes found on the way
+
+A number key outside the options took the question away without an answer;
+it now leaves the question open. Esc while typing a custom answer did not
+stop the turn, unlike Esc on the choices; now both do.
