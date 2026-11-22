@@ -72,4 +72,4 @@ continuation starts under the code.
 
 ## Size
 
-Expected: 3 to 5 KB.
+Expected: 3 to 5 KB. Measured: `__text` +7768 (+92 for the bands, +7676 for words and syntax), `__cstring` +84; over the estimate, mostly the word diff, the token pass, and the run painter.
