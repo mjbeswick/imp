@@ -4637,7 +4637,7 @@ impl App {
         }
         if let (Some(s), true, None) = (&self.status.suggestion, self.input.is_empty(), &self.pending) {
             let tone = if self.yolo() { Role::Error } else { Role::User };
-            let hint = fit(&format!("{s}  Tab"), cols.saturating_sub(3));
+            let hint = fit(s, cols.saturating_sub(3));
             return vec![format!(
                 "{}\x1b[7m \x1b[0m{}",
                 self.palette.paint(tone, "> "),
@@ -7035,7 +7035,9 @@ mod tests {
         let mut a = app();
         let (tx, _rx) = channel();
         a.apply(Ev::Suggest("run the tests".into()));
-        assert!(strip(&a.frame(60, 10)).contains(">  run the tests  Tab"), "not drawn");
+        let shown = strip(&a.frame(60, 10));
+        assert!(shown.contains(">  run the tests"), "not drawn");
+        assert!(!shown.contains("run the tests  Tab"), "the key hint is back: {shown:?}");
         a.handle_key(Key::Tab, &tx);
         assert_eq!(a.input, "run the tests");
         assert_eq!(a.cursor, a.input.len());
