@@ -27,4 +27,4 @@ status line writes one row.
 
 ## Size
 
-Expected: a few hundred bytes smaller.
+Expected: a few hundred bytes smaller. Measured: `__text` -596, `__cstring` -59.
