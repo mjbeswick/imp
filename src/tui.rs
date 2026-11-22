@@ -3099,10 +3099,10 @@ impl App {
             return;
         }
         // An edit consumes the selection; anything but a Shift move clears it.
-        if !matches!(key, Key::Select(_)) {
+        if !matches!(key, Key::Select(_) | Key::SelectWord(_)) {
             if let Some((from, to)) = self.selection() {
                 let paste = matches!(key, Key::Ctrl('v')) && !self.clip.is_empty();
-                let removes = matches!(key, Key::Backspace | Key::Delete);
+                let removes = matches!(key, Key::Backspace | Key::Delete | Key::DeleteWord(_) | Key::Ctrl('w'));
                 if removes || paste || matches!(key, Key::Char(_) | Key::Newline) {
                     self.follow_tail();
                     self.input.replace_range(from..to, "");
@@ -3122,6 +3122,27 @@ impl App {
             Key::Select(m) => {
                 self.anchor.get_or_insert(self.cursor);
                 self.move_caret(m);
+            }
+            Key::Word(m) => {
+                self.cursor = word_edge(&self.input, self.cursor, m == Move::Right);
+                self.dirty = true;
+            }
+            Key::SelectWord(m) => {
+                self.anchor.get_or_insert(self.cursor);
+                self.cursor = word_edge(&self.input, self.cursor, m == Move::Right);
+                self.dirty = true;
+            }
+            Key::DeleteWord(_) | Key::Ctrl('w') => {
+                let forward = matches!(key, Key::DeleteWord(true));
+                let edge = word_edge(&self.input, self.cursor, forward);
+                let (from, to) = if forward { (self.cursor, edge) } else { (edge, self.cursor) };
+                if from < to {
+                    self.follow_tail();
+                    self.input.replace_range(from..to, "");
+                    self.cursor = from;
+                    self.sync_menu();
+                }
+                self.dirty = true;
             }
             Key::Delete => {
                 if self.cursor < self.input.len() {
@@ -6154,6 +6175,29 @@ fn verb(what: &str) -> &'static str {
     }
 }
 
+/// The byte where the word after (`forward`) or before the caret at `i`
+/// ends: spaces and punctuation are skipped first, as readline does. A word
+/// is letters, digits, and `_`.
+fn word_edge(s: &str, i: usize, forward: bool) -> usize {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    if forward {
+        let rest = &s[i..];
+        let start = rest.char_indices().find(|(_, c)| word(*c)).map_or(rest.len(), |(k, _)| k);
+        let end = rest[start..].char_indices().find(|(_, c)| !word(*c)).map_or(rest.len() - start, |(k, _)| k);
+        i + start + end
+    } else {
+        let before: Vec<(usize, char)> = s[..i].char_indices().collect();
+        let mut k = before.len();
+        while k > 0 && !word(before[k - 1].1) {
+            k -= 1;
+        }
+        while k > 0 && word(before[k - 1].1) {
+            k -= 1;
+        }
+        before.get(k).map_or(i, |(at, _)| *at)
+    }
+}
+
 /// The byte after the character at `i`, or the end.
 fn next_boundary(s: &str, i: usize) -> usize {
     s[i.min(s.len())..].chars().next().map_or(s.len(), |c| i + c.len_utf8())
@@ -7354,6 +7398,46 @@ mod tests {
         assert_eq!(shown, 200, "the cap did not hold");
         assert!(b.entries.iter().any(|e| e.text == "… 52 more lines"));
         assert!(b.entries.last().unwrap().text.contains("not tracked"));
+    }
+
+    #[test]
+    fn words_move_delete_and_select() {
+        let (tx, _cmds) = channel();
+        let draft = |text: &str, at: usize| {
+            let mut a = app();
+            a.input = text.into();
+            a.cursor = at;
+            a
+        };
+        // Delete the word before the caret, either key.
+        for key in [Key::DeleteWord(false), Key::Ctrl('w')] {
+            let mut a = draft("run the tests", 13);
+            a.handle_key(key, &tx);
+            assert_eq!((a.input.as_str(), a.cursor), ("run the ", 8));
+        }
+        // Moves skip punctuation and spaces.
+        let mut a = draft("foo(bar, baz)", 13);
+        a.handle_key(Key::Word(Move::Left), &tx);
+        assert_eq!(a.cursor, 9);
+        a.handle_key(Key::Word(Move::Left), &tx);
+        assert_eq!(a.cursor, 4);
+        a.handle_key(Key::Word(Move::Right), &tx);
+        assert_eq!(a.cursor, 7);
+        // Delete forward.
+        let mut a = draft("one two", 0);
+        a.handle_key(Key::DeleteWord(true), &tx);
+        assert_eq!(a.input, " two");
+        // Replace a word by selecting it.
+        let mut a = draft("use npm", 7);
+        a.handle_key(Key::SelectWord(Move::Left), &tx);
+        for c in "pnpm".chars() {
+            a.handle_key(Key::Char(c), &tx);
+        }
+        assert_eq!(a.input, "use pnpm");
+        // Multi-byte words stay whole.
+        let mut a = draft("café crème", "café crème".len());
+        a.handle_key(Key::DeleteWord(false), &tx);
+        assert_eq!(a.input, "café ");
     }
 
     #[test]
