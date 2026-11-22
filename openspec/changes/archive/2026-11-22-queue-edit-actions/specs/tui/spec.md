@@ -2,7 +2,7 @@
 
 ### Requirement: Queued messages are edited in place
 
-The system SHALL walk from an empty draft through queued messages, newest first, and then history on ↑, and back on ↓, SHALL open a queued message in the composer with the rule reading `editing queued n/m · Enter save · ↑↓ move`, SHALL save it in its place on Enter or on leaving it, SHALL remove it when saved empty, SHALL send the open message now on `Ctrl+Q`, as a steer into the running turn or as a new turn when none runs, removing it from the queue, SHALL delete it on `Ctrl+X` and leave the entry that follows open, SHALL close the editor on `Ctrl+C` with the message unchanged, and SHALL release the queue whenever the editor closes after the turn ended.
+The system SHALL walk from an empty draft through queued messages, newest first, then history on ↑, and back on ↓, SHALL open one in the composer with the rule naming its keys, SHALL save it in place on Enter or on leaving it, SHALL remove it when saved empty, SHALL send it now on `Ctrl+Q`, SHALL delete it on `Ctrl+X` and leave the next entry open, SHALL close the editor on `Ctrl+C` unchanged, and SHALL release the queue when the editor closes after the turn ended.
 
 #### Scenario: Edit the next message
 - **WHEN** two messages are queued and the user presses ↑ twice on an empty draft
