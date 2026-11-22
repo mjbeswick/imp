@@ -2089,7 +2089,6 @@ fn first_run_outcome(result: Result<(), String>) -> KeyOutcome {
 /// Actions the palette lists with the shortcut that also runs them.
 const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
     ("next session", "Ctrl+N", "next-session"),
-    ("keys card", "?", "keys"),
     ("stop the turn", "Esc", "stop"),
     ("expand tools", "Ctrl+E", "expand"),
     ("clear the view", "Ctrl+L", "clear"),
@@ -3602,7 +3601,6 @@ impl App {
                     self.push(Role::Info, "one session");
                 }
             }
-            "keys" => self.open_keys(),
             "queue-mode" => self.handle_key_inner(Key::Ctrl('q'), tx),
             "paste" => self.handle_key_inner(Key::Ctrl('v'), tx),
             "stop" => self.handle_key_inner(Key::Esc, tx),
@@ -8663,6 +8661,7 @@ mod tests {
         let a = app();
         let actions: Vec<String> = a.palette_items().into_iter().filter_map(|i| i.value.strip_prefix("key:").map(String::from)).collect();
         assert!(!actions.iter().any(|v| v == "thinking"), "/think is already a palette row");
+        assert!(!actions.iter().any(|v| v == "keys"), "/keys is already a palette row");
     }
 
     #[test]
