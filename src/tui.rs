@@ -1078,7 +1078,6 @@ pub enum Ev {
         multiple: bool,
         reply: Sender<Option<String>>,
     },
-    Stop(String),
     Done(Option<String>),
     /// The user's likely next message, drawn greyed out in an empty input.
     Suggest(String),
@@ -2642,11 +2641,6 @@ impl App {
         true
     }
 
-    /// One diff row, indented under its tool row like a failure's reason.
-    fn push_diff(&mut self, line: String) {
-        self.push_diffs(vec![line], "");
-    }
-
     /// Diff rows for a file with extension `ext`, marked for syntax and for
     /// the words that changed.
     fn push_diffs(&mut self, lines: Vec<String>, ext: &str) {
@@ -2965,13 +2959,6 @@ impl App {
                 self.bell_pending = true;
                 self.dirty = true;
                 self.tick_spinner();
-            }
-            Ev::Stop(reason) => {
-                self.pending = None;
-                self.status.streaming = false;
-                self.cancel.store(true, Ordering::Relaxed);
-                self.push(Role::Error, reason);
-                self.dirty = true;
             }
             Ev::Done(err) => {
                 if let Some(next) = self.agent_next.take() {
@@ -9207,22 +9194,6 @@ mod tests {
         assert!(!a.cancel.load(Ordering::Relaxed), "the turn was cancelled");
     }
 
-    #[test]
-    fn a_stop_event_ends_the_turn() {
-        let mut a = app();
-        let (reply, _rx) = channel();
-        a.apply(Ev::Confirm {
-            what: "run `ls`".into(),
-            reply,
-            always: false,
-        });
-        a.status.streaming = true;
-        a.apply(Ev::Stop("no answer within 60s".into()));
-        assert!(a.cancel.load(Ordering::Relaxed), "the turn kept running");
-        assert!(!a.status.streaming);
-        assert!(a.pending.is_none(), "a stale prompt stayed on screen");
-        assert!(a.entries.last().expect("entry").text.contains("no answer"));
-    }
 
     #[test]
     fn up_recalls_history_from_the_first_row() {
@@ -11821,7 +11792,7 @@ mod tests {
     #[test]
     fn diff_bands_reach_the_edge() {
         let mut a = colour_app();
-        a.push_diff("+short line".into());
+        a.push_diffs(vec!["+short line".into()], "");
         let out = a.frame(54, 8);
         let row = out.split("\r\n").find(|r| r.contains("+short line")).expect("diff row");
         let shown = strip(row);
@@ -11830,7 +11801,7 @@ mod tests {
         assert!(row.starts_with("  \x1b[48;2;"), "the indent must stay clear: {row:?}");
         // Without colour the row keeps its sign and no padding.
         let mut b = app();
-        b.push_diff("+short line".into());
+        b.push_diffs(vec!["+short line".into()], "");
         let plain = b.frame(54, 8);
         assert!(plain.contains("  +short line\x1b[K") || plain.contains("  +short line\r"), "{plain:?}");
     }

@@ -8,4 +8,4 @@
 
 ## 2. Code
 
-- [ ] 2.1 Delete `Ev::Stop` and `push_diff`; the build has no warnings
+- [x] 2.1 Delete `Ev::Stop` and `push_diff`; the build has no warnings
