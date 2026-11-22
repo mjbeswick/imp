@@ -13,12 +13,14 @@ blank rows show.
   is blank on screen between frames.
 - Each frame is wrapped in synchronised output, so terminals that support it
   show it at once. Others ignore the sequence.
-- Deferred: sending only the rows that changed. Add it if the flicker or the
-  cost of a full frame on the Pi still shows after this change.
+- Only rows that differ from the last frame are written. A countdown tick
+  rewrites one row, not the screen.
+- A frame is still drawn only when something visible changed.
 
 ## Keyboard and resources
 
-No keys. Fewer bytes per frame; no extra work.
+No keys. Far fewer bytes per frame; one copy of the last frame is kept,
+about one screen of text.
 
 ## Capabilities
 
