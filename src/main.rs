@@ -244,8 +244,15 @@ fn run() -> Result<(), String> {
                 let mut session = session;
                 let mut cli = Cli { verbosity: tui_cfg.verbosity, palette: tui::Palette::detect(&tui_cfg) };
                 let result = repl(&mut session, &mut cli, &sessions_dir);
+                let entries = match &result {
+                    Ok(entries) => *entries,
+                    Err(_) => 1,
+                };
+                if let Some(hint) = silent_exit_hint(false, interactive, entries) {
+                    eprintln!("{hint}");
+                }
                 let id = session.log.as_ref().map(|l| l.id.clone());
-                (result, id)
+                (result.map(|_| ()), id)
             }
         }
     };
@@ -264,6 +271,13 @@ fn key_gate(chat: bool, resolved: Result<(), String>) -> Result<Option<String>, 
             "{var} is not set; run imp in a terminal to enter a key, or export it"
         )),
     }
+}
+
+/// One line when a run had nothing to do, so a silent exit is explained.
+fn silent_exit_hint(prompt: bool, interactive: bool, entries: usize) -> Option<&'static str> {
+    (!prompt && !interactive && entries == 0).then_some(
+        "imp: no terminal to chat in; run imp in an interactive terminal, or pass a prompt",
+    )
 }
 
 /// The line printed when a session ends, naming the id `imp -r` accepts.
@@ -358,12 +372,15 @@ fn read_entry<R: BufRead>(r: &mut R) -> std::io::Result<Option<String>> {
     Ok(Some(String::from_utf8_lossy(&line).into_owned()))
 }
 
-fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) -> Result<(), String> {
+/// Run the line-mode loop. The count is the entries it read, so a run that
+/// did nothing can say why.
+fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) -> Result<usize, String> {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout();
     let tty = unsafe { isatty(0) } != 0;
     let _line_mode = if tty { Some(tui::LineMode::enter()) } else { None };
     let mut stash: Vec<String> = Vec::new();
+    let mut seen = 0usize;
     loop {
         if tty {
             // Yolo shows by colour alone.
@@ -378,7 +395,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                 if tty {
                     println!();
                 }
-                return Ok(());
+                return Ok(seen);
             }
         };
         if tty {
@@ -388,9 +405,10 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
         if text.is_empty() {
             continue;
         }
+        seen += 1;
         if let Some(cmd) = text.strip_prefix('/') {
             match cmd {
-                "quit" | "exit" => return Ok(()),
+                "quit" | "exit" => return Ok(seen),
                 "help" => println!("{}", help::commands(terminal_width(), false, false)),
                 "new" => {
                     let system = session
@@ -989,6 +1007,14 @@ mod tests {
             Some("DEEPSEEK_API_KEY".to_string())
         );
         assert_eq!(key_gate(true, Ok(())).unwrap(), None);
+    }
+
+    #[test]
+    fn a_silent_run_says_why() {
+        assert!(silent_exit_hint(false, false, 0).is_some(), "the silent case is quiet");
+        assert!(silent_exit_hint(false, false, 1).is_none(), "a pipe with input was told off");
+        assert!(silent_exit_hint(true, false, 0).is_none(), "a prompt was told off");
+        assert!(silent_exit_hint(false, true, 0).is_none(), "an interactive run was told off");
     }
 
     #[test]
