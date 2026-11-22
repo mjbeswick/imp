@@ -4577,7 +4577,13 @@ impl App {
             let mut row = String::new();
             match line {
                 Line::Text(text) => {
-                    let painted = self.marked(*role, &fit(text, cols));
+                    let mut text = fit(text, cols);
+                    // A diff band runs to the edge; without colour there is no band.
+                    if self.palette.on && matches!(role, Role::Add | Role::Delete) {
+                        let used = text.chars().count();
+                        text.push_str(&" ".repeat(cols.saturating_sub(used)));
+                    }
+                    let painted = self.marked(*role, &text);
                     // Muted asides, reasoning first, are italic.
                     let italic = if *role == Role::Thinking { "3" } else { "" };
                     row.push_str(&self.palette.styled(italic, painted));
@@ -9079,6 +9085,23 @@ mod tests {
         a.handle_key(Key::Ctrl('e'), &tx);
         let text = &a.entries.last().unwrap().text;
         assert!(text.contains("line 19") && !text.contains("line 20\n") && text.contains("… +31 lines"), "{text}");
+    }
+
+    #[test]
+    fn diff_bands_reach_the_edge() {
+        let mut a = colour_app();
+        a.push_diff("+short line".into());
+        let out = a.frame(54, 8);
+        let row = out.split("\r\n").find(|r| r.contains("+short line")).expect("diff row");
+        let band = row.split_once("+short line").unwrap().1;
+        let pad = band.split('\x1b').next().unwrap();
+        assert_eq!(2 + "+short line".len() + pad.len(), 54, "{row:?}");
+        assert!(row.starts_with("  \x1b[48;2;"), "the indent must stay clear: {row:?}");
+        // Without colour the row keeps its sign and no padding.
+        let mut b = app();
+        b.push_diff("+short line".into());
+        let plain = b.frame(54, 8);
+        assert!(plain.contains("  +short line\x1b[K") || plain.contains("  +short line\r"), "{plain:?}");
     }
 
     #[test]

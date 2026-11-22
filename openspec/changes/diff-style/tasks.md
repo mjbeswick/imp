@@ -2,7 +2,7 @@
 
 ## 1. Bands
 
-- [ ] 1.1 Pad added and removed rows to the screen edge; tests at 54 columns and with colour off
+- [x] 1.1 Pad added and removed rows to the screen edge; tests at 54 columns and with colour off
 
 ## 2. Changed words
 
