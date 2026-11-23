@@ -14,6 +14,15 @@ libcurl is the only runtime dependency. Release profile `lto = "fat"`,
 30 runs of `imp --version`; RSS is the full-screen interface idle for two
 seconds. `scripts/measure.sh [host]` takes these figures.
 
+## Documentation
+
+- [Getting started](docs/getting-started.md): install, the first run, a first
+  task, agents, sessions, and running on a Pi.
+- [The agent loop](docs/agent-loop.md): what a turn does, from the system
+  prompt through tool calls, permissions, retries, and context limits.
+- This README is the reference: every command, key, setting, and limit.
+- The behaviour imp must keep is specified in [`openspec/specs/`](openspec/specs/).
+
 ## Install
 
 ```sh
@@ -77,9 +86,9 @@ Ctrl+O next waiting · Ctrl+N next session · Ctrl+P palette · ? keys, from an 
 
 `/new` and resuming from `/sessions` open another live session beside the
 current one, up to four; the oldest idle one closes to make room and stays in
-`/sessions`, and its background jobs stop, as every session's do when imp exits. Ctrl+N moves to the next one,
-and the status line shows which one is in view, such as
-`2/3 fix the parser`, and how many others are `waiting`. There is no close
+`/sessions`, and its background jobs stop, as every session's do when imp exits. Ctrl+N moves to the next one.
+The title bar shows which one is in view, such as `2/3 fix the parser`, and
+the status line how many others are `waiting`. There is no close
 command: `/new` moves on, and the pool makes room by itself.
 
 In `/sessions`, a spinner marks a live session that is still working. When the
@@ -157,7 +166,8 @@ Bare `/provider` picks from built-in and custom profiles. `add <name>`, `edit <n
 and the active profile cannot be deleted.
 
 While a turn runs, Enter steers it or queues the message; Ctrl+Q switches
-between the two, and the rule above the composer says which. Queued messages
+between the two, and the prompt glyph says which: `>` steers, a muted `»`
+queues. Queued messages
 wait above the composer and go out as turns end. ↑ on an empty draft opens
 them for editing, which holds the turn; saving one empty removes it.
 `/queue <text>` adds one, bare `/queue` lists them, `pop [n]` loads one into
@@ -227,6 +237,7 @@ wins when set.
 # render.mermaid=mmd      # draw a reply's ```mermaid blocks with a command (stdin, COLUMNS)
 # verbosity=medium        # low: a line per step · medium: and its result · high: and the output
 # thinking=false
+# effort=default          # low | medium | high | default
 # compact_at=60000
 # color=auto
 # mouse=on
@@ -262,9 +273,9 @@ composer. The copy also goes to the terminal clipboard over OSC 52, which
 iTerm2, Ghostty, kitty, and WezTerm accept and Terminal.app ignores; under
 tmux it needs `set -g set-clipboard on`.
 
-Ctrl+G hands the mouse to the terminal until the next key, so its own
-selection works; on kmscon, which has no Shift-drag bypass, that is the way to
-select. `mouse=off` gives the mouse back for good.
+Drag across text to select it; letting go copies it, as the `⧉` label does.
+Ctrl+G hands the mouse to the terminal until the next key, for its own
+selection. `mouse=off` gives the mouse back for good.
 
 ### Themes
 
@@ -286,7 +297,7 @@ picker row. Terminals without truecolor get the nearest 256-colour match.
 |---|---|---|---|
 | `deepseek` | `https://api.deepseek.com` | `deepseek-flash` | `DEEPSEEK_API_KEY` |
 | `openai` | `https://api.openai.com/v1` | `gpt-4.1-mini` | `OPENAI_API_KEY` |
-| `anthropic` | `https://api.anthropic.com` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
+| `anthropic` | `https://api.anthropic.com` | `claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `https://generativelanguage.googleapis.com` | `gemini-2.5-pro` | `GEMINI_API_KEY` |
 | `ollama` | `http://localhost:11434/v1` | `llama3.2` | none |
 | `custom` | `http://localhost:8000/v1` | `local-model` | none |
@@ -310,9 +321,13 @@ other providers show tokens and no cost.
 
 | mode | reads | writes | shell |
 |---|---|---|---|
-| `normal` | allow | allow in the directory, ask outside | ask unless safe-listed |
-| `strict` | allow | ask | ask |
+| `normal` | allow | allow in the directory | ask unless safe-listed |
+| `strict` | allow | ask in the directory | ask |
 | `yolo` | allow | allow, jail off | allow |
+
+File tools reach only the session directory, imp's config folder, and its
+output folder; other paths are refused without a prompt. `yolo` turns this
+jail off.
 
 A safe-listed command such as `ls`, `rg`, or `git diff` runs unprompted only
 when the whole line is read-only: a pipe of safe commands is fine, but `&&`,
@@ -358,7 +373,7 @@ AGENTS.md                     global, repository root, then session directory
 Project sources shadow global ones by name. `.agents` shadows `.imp`, and an
 explicit `--skills-dir` wins over both.
 
-Agent frontmatter: `description`, `tools`, `model`, `thinking`. Skills use
+Agent frontmatter: `description`, `tools`, `model`, `thinking`, `effort`. Skills use
 `name` and `description`; only the description reaches the prompt until loaded.
 
 ## Sessions

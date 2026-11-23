@@ -13,6 +13,7 @@ const CONFIG_TEMPLATE: &str = "\
 # permissions=normal          # normal | strict | yolo
 # allow_sudo=false
 # thinking=false
+# effort=default             # low | medium | high | default
 # links=auto                  # auto | always | never
 # prune_at=45000
 # compact_at=60000
