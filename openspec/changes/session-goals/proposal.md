@@ -30,3 +30,12 @@ session loses it.
 ## Keyboard and resources
 
 No new keys. The tool confirmation uses the existing confirmation prompt.
+
+## Goal UX
+
+- `/goal` shows the goal's text, its round and limit, and its state: running,
+  paused, or waiting for your confirmation.
+- `/goal edit <new text>` changes the text and keeps the round. It starts no
+  rounds. A running goal uses the new text from its next round.
+- `/goal <text>` while a goal exists asks first whether to replace it. Declining
+  keeps the current goal unchanged.

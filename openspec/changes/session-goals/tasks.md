@@ -14,6 +14,10 @@
 
 - [ ] 3.1 A goal is written to the session metadata when it changes and read back on open or resume; a running goal restores as paused; tests
 
-## 4. Docs
+## 4. Goal UX
 
-- [ ] 4.1 README describes the `/goal` subcommands, the `goal` tool, and goal persistence
+- [ ] 4.0 `/goal` shows text, round, limit and state; `/goal edit` changes the text without a round; `/goal <text>` asks before replacing; tests
+
+## 5. Docs
+
+- [ ] 5.1 README describes the `/goal` subcommands, the `goal` tool, and goal persistence
