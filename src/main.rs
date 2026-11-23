@@ -1,6 +1,7 @@
 mod agent;
 mod api;
 mod config;
+mod context;
 mod help;
 mod http;
 mod images;

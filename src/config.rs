@@ -162,6 +162,8 @@ pub struct Config {
     pub auto_next: bool,
     /// Shade the title bar from the select colour toward the accent.
     pub title_gradient: bool,
+    /// The model's context window in tokens, overriding the built-in table.
+    pub context_window: Option<u64>,
     /// Secret-looking variables the agent's commands may still see.
     pub pass_env: Vec<String>,
     /// How much of each tool step the interface shows.
@@ -207,6 +209,7 @@ impl Default for Config {
             spinner: 0,
             auto_next: true,
             title_gradient: false,
+            context_window: None,
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
             auth: Vec::new(),
@@ -284,6 +287,16 @@ impl Config {
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
             "max_tokens" => self.max_tokens = parse_u32(key, value)?,
+            "context_window" => {
+                let tokens: u64 = value
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("context_window must be a number, got {value:?}"))?;
+                if tokens == 0 {
+                    return Err("context_window must be at least 1".into());
+                }
+                self.context_window = Some(tokens);
+            }
             "max_steps" => self.max_steps = parse_max_steps(value)?,
             "goal_rounds" => {
                 self.goal_rounds = parse_u32("goal_rounds", value)?;
@@ -1333,6 +1346,14 @@ mod tests {
         let out = set_line("mouse=on\nmouse=off\n", "mouse", "on");
         assert_eq!(out, "mouse=on\nmouse = on\n");
         assert_eq!(set_line("", "mouse", "off"), "mouse = off\n");
+    }
+
+    #[test]
+    fn context_window_is_a_positive_number_or_unset() {
+        assert_eq!(Config::from_str("").unwrap().context_window, None);
+        assert_eq!(Config::from_str("context_window = 32000").unwrap().context_window, Some(32_000));
+        assert!(Config::from_str("context_window = 0").is_err());
+        assert!(Config::from_str("context_window = big").is_err());
     }
 
     #[test]
