@@ -2,9 +2,9 @@
 
 ## 1. Window size
 
-- [ ] 1.1 `context_window` config key parses a positive integer and rejects zero or non-numbers; tests in `config.rs`
-- [ ] 1.2 Window lookup returns the config value first, then the table entry, then nothing; tests for each source
-- [ ] 1.3 Table entries each cite their source in a comment; a test checks the table is non-empty and has no duplicate prefixes
+- [x] 1.1 `context_window` config key parses a positive integer and rejects zero or non-numbers; tests in `config.rs`
+- [x] 1.2 Window lookup returns the config value first, then the table entry, then nothing; tests for each source
+- [x] 1.3 Table entries each cite their source in a comment; a test checks the table is non-empty and has no duplicate prefixes
 
 ## 2. Percent on the status line
 
