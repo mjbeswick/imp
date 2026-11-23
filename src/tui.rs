@@ -1528,6 +1528,23 @@ fn spinner_frame(tick: usize) -> char {
 
 /// Put a spinner frame before the count of each working session's row, and
 /// two spaces before the rest, so titles keep their width.
+/// An editable text row for a form: `prefix`, the text, and a caret bar at byte
+/// `caret` when the field is active. Returns the row and the caret's column.
+fn text_row(prefix: &str, text: &str, caret: Option<usize>) -> (String, usize) {
+    let Some(caret) = caret else {
+        return (format!("{prefix}{text}"), prefix.chars().count());
+    };
+    let split = caret.min(text.len());
+    let (before, after) = text.split_at(split);
+    let col = prefix.chars().count() + before.chars().count();
+    (format!("{prefix}{before}▏{after}"), col)
+}
+
+/// A select row for a form: `prefix` then the current choice between arrows.
+fn select_row(prefix: &str, value: &str) -> String {
+    format!("{prefix}‹ {value} ›")
+}
+
 /// The mark for one session, by priority: waiting for the user, running (the
 /// spinner frame), failed, then a reply not yet viewed. `None` when idle.
 fn state_mark(waiting: bool, streaming: bool, failed: bool, replied: bool, frame: char) -> Option<char> {
@@ -1751,6 +1768,8 @@ pub struct App {
     queue_at: Option<usize>,
     /// The stored title: set by `/rename`, or cut from the first message.
     title: String,
+    /// Where the caret sits in the provider form's active field, in bytes.
+    form_caret: usize,
     /// The last turn ended with an error, until the next one finishes.
     failed: bool,
     /// The turn ended while a queued message was open; send on close.
@@ -2576,6 +2595,7 @@ impl App {
             queued: Vec::new(),
             queue_at: None,
             title: String::new(),
+            form_caret: 0,
             failed: false,
             queue_due: false,
             steer: session_steer.clone(),
@@ -5431,6 +5451,7 @@ impl App {
                     Key::Enter => {
                         if at + 1 < fields.len() {
                             at += 1;
+                            self.form_caret = fields.get(at).map_or(0, |f| f.1.len());
                             self.pending = Some(Pending::ProviderForm { name, fields, at });
                         } else {
                             self.finish_provider_form(name, fields);
@@ -5439,14 +5460,34 @@ impl App {
                     }
                     Key::Char(c) => {
                         if let Some(field) = fields.get_mut(at) {
-                            field.1.push(c);
+                            let caret = self.form_caret.min(field.1.len());
+                            field.1.insert(caret, c);
+                            self.form_caret = caret + c.len_utf8();
                         }
                         self.pending = Some(Pending::ProviderForm { name, fields, at });
                         self.dirty = true;
                     }
                     Key::Backspace => {
                         if let Some(field) = fields.get_mut(at) {
-                            field.1.pop();
+                            let caret = self.form_caret.min(field.1.len());
+                            if let Some(prev) = field.1[..caret].chars().last() {
+                                let from = caret - prev.len_utf8();
+                                field.1.replace_range(from..caret, "");
+                                self.form_caret = from;
+                            }
+                        }
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        self.dirty = true;
+                    }
+                    // Left and Right move the caret through a text field.
+                    Key::Left | Key::Right if label != "dialect" => {
+                        if let Some(field) = fields.get(at) {
+                            let caret = self.form_caret.min(field.1.len());
+                            self.form_caret = if matches!(key, Key::Left) {
+                                field.1[..caret].chars().last().map_or(0, |c| caret - c.len_utf8())
+                            } else {
+                                field.1[caret..].chars().next().map_or(caret, |c| caret + c.len_utf8())
+                            };
                         }
                         self.pending = Some(Pending::ProviderForm { name, fields, at });
                         self.dirty = true;
@@ -5454,11 +5495,13 @@ impl App {
                     // Back to an earlier field to fix it; each field keeps its text.
                     Key::Up | Key::BackTab => {
                         at = at.saturating_sub(1);
+                        self.form_caret = fields.get(at).map_or(0, |f| f.1.len());
                         self.pending = Some(Pending::ProviderForm { name, fields, at });
                         self.dirty = true;
                     }
                     Key::Down => {
                         at = (at + 1).min(fields.len().saturating_sub(1));
+                        self.form_caret = fields.get(at).map_or(0, |f| f.1.len());
                         self.pending = Some(Pending::ProviderForm { name, fields, at });
                         self.dirty = true;
                     }
@@ -6642,18 +6685,19 @@ impl App {
     /// Absolute cursor addressing paints the rectangle without disturbing the
     /// transcript, and the next full frame replaces it, leaving no residue.
     #[allow(clippy::type_complexity)]
-    /// The provider form as a box: every field with its value, the field being
-    /// typed in on the top line, and the keys below.
+    /// The provider form as a box. A text field shows its caret; the dialect
+    /// shows arrows; the key row shows dots, never the key.
     fn provider_form_overlay(
         &self,
         name: &str,
         fields: &[(String, String)],
         at: usize,
+        caret: usize,
         cols: usize,
         rows: usize,
     ) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
         let width = (cols * 80 / 100).clamp(40, 72).min(cols);
-        if width < 4 || rows < 9 {
+        if width < 4 || rows < 8 {
             return None;
         }
         let inner = width.saturating_sub(2);
@@ -6664,42 +6708,38 @@ impl App {
             let fill = inner.saturating_sub(label.chars().count() + 3);
             line(&format!("{l}─ {label} {}{r}", "─".repeat(fill)))
         };
-        let value = fields.get(at).map(|f| f.1.clone()).unwrap_or_default();
-        let mut block: Vec<String> = vec![edge('╭', '╮', &format!("provider {name}"))];
-        // The key is never drawn as text, on the input line either.
-        let typed = if fields.get(at).is_some_and(|f| f.0 == "api_key") {
-            "•".repeat(value.chars().count().min(24))
-        } else {
-            value.clone()
-        };
-        let input = format!(" › {typed}");
-        block.push(format!("{wall}{}{wall}", self.boxed(&input, inner, false)));
-        block.push(line(&format!("├{}┤", "─".repeat(inner))));
         let key_env = fields.get(3).map(|f| f.1.clone()).unwrap_or_default();
         let stored = !key_env.is_empty() && crate::config::load_keys().iter().any(|(n, _)| *n == key_env);
+        let mut block: Vec<String> = vec![edge('╭', '╮', &format!("provider {name}"))];
+        // Where the caret is drawn, as (row in the block, column in the box).
+        let mut at_caret = (1usize, 0usize);
         for (i, (label, text)) in fields.iter().enumerate() {
-            let marker = if i == at { "▸" } else { " " };
-            // The key is shown as dots, or as whether one is already stored.
-            let shown = if label == "api_key" {
-                if !text.is_empty() {
-                    "•".repeat(text.chars().count().min(24))
-                } else if stored {
-                    "set (type to replace)".to_string()
+            let active = i == at;
+            let marker = if active { "▸" } else { " " };
+            let prefix = format!("{marker} {label:<8} ");
+            let row = if label == "dialect" {
+                select_row(&prefix, text)
+            } else if label == "api_key" {
+                let dots = "•".repeat(text.chars().count().min(24));
+                let status = if text.is_empty() {
+                    if stored { "set (type to replace)".to_string() } else { "not set".to_string() }
                 } else {
-                    "not set".to_string()
-                }
+                    dots
+                };
+                format!("{prefix}{status}")
             } else {
-                text.clone()
+                let (row, col) = text_row(&prefix, text, active.then_some(caret));
+                if active {
+                    at_caret = (block.len(), col);
+                }
+                row
             };
-            let row = format!("{marker} {label:<8} {shown}");
-            block.push(format!("{wall}{}{wall}", self.boxed(&row, inner, i == at)));
+            block.push(format!("{wall}{}{wall}", self.boxed(&row, inner, active)));
         }
-        let keys = if fields.get(at).is_some_and(|f| f.0 == "dialect") {
-            "↑↓ field · ←→ dialect · Enter next · Esc cancel"
-        } else if fields.get(at).is_some_and(|f| f.0 == "model") {
-            "↑↓ field · Tab models · Enter next · Esc cancel"
-        } else {
-            "↑↓ field · Enter next · Esc cancel"
+        let keys = match fields.get(at).map(|f| f.0.as_str()) {
+            Some("dialect") => "↑↓ field · ←→ choose · Enter next · Esc cancel",
+            Some("model") => "↑↓ field · Tab models · Enter next · Esc cancel",
+            _ => "↑↓ field · ←→ caret · Enter next · Esc cancel",
         };
         block.push(edge('╰', '╯', keys));
         let height = block.len();
@@ -6710,13 +6750,13 @@ impl App {
         for (i, row) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{row}", y + i, x));
         }
-        let cursor = (x + 1 + format!(" › {typed}").chars().count()).min(x + width - 2);
-        Some((out, cursor, y + 1, Vec::new()))
+        let (row, col) = at_caret;
+        Some((out, x + 1 + col, y + row, Vec::new()))
     }
 
     fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
         if let Some(Pending::ProviderForm { name, fields, at }) = &self.pending {
-            return self.provider_form_overlay(name, fields, *at, cols, rows);
+            return self.provider_form_overlay(name, fields, *at, self.form_caret, cols, rows);
         }
         let picker = match &self.pending {
             Some(Pending::Pick(picker)) => picker,

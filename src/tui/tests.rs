@@ -6828,3 +6828,48 @@ fn saving_with_a_key_but_no_variable_name_is_refused_and_nothing_is_saved() {
     assert!(shown.contains("key variable"), "no reason shown: {shown:?}");
     assert!(!std::fs::read_to_string(&config).unwrap().contains("sk-no-variable-1"), "the key reached the config");
 }
+
+#[test]
+fn an_input_edits_at_the_caret_and_shows_it() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    type_text(&mut a, &tx, "abc");
+    a.handle_key(Key::Left, &tx);
+    type_text(&mut a, &tx, "X");
+    assert_eq!(form_field(&a, "base"), "abXc", "text did not go in at the caret");
+    a.handle_key(Key::Left, &tx);
+    a.handle_key(Key::Left, &tx);
+    a.handle_key(Key::Backspace, &tx);
+    assert_eq!(form_field(&a, "base"), "bXc", "backspace did not delete before the caret");
+    let shown = strip(&a.frame(80, 24));
+    assert!(shown.contains("▏bXc"), "the caret is not drawn in the active input: {shown:?}");
+}
+
+#[test]
+fn the_active_select_shows_its_arrows() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Right, &tx);
+    let shown = strip(&a.frame(80, 24));
+    assert!(shown.contains("‹ deepseek ›"), "the dialect select has no arrows: {shown:?}");
+}
+
+
+#[test]
+fn saving_without_a_model_says_which_fields_are_required() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider add work", &tx);
+    type_text(&mut a, &tx, "http://x");
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
+    let shown = strip(&a.frame(90, 24));
+    assert!(shown.contains("required"), "no required message: {shown:?}");
+}
