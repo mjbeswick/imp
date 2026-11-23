@@ -107,11 +107,15 @@ project folder except in `yolo`, and some commands are refused in every mode.
 `/think` turns thinking on or off, and `/effort low|medium|high` sets how hard
 the model works where the provider supports it.
 
-`/settings` opens a form of ten settings with their current values. Right,
-Enter or Space steps a value forward, Left steps back, and Esc closes it. Each
-change applies at once and is saved to the config file, with its comments kept.
-One of the ten is `title_gradient`, off by default: on a truecolor terminal the
-title bar shades from the select colour toward the accent.
+`/settings` opens a list of the settings with their current values. Right,
+Enter or Space steps a value forward, Left steps back, and Esc closes it. Enter
+on a setting such as `model`, `max_tokens` or `skills_dir` opens a one-line
+field: type the new value and press Enter, or Esc to keep the old one. A value
+the config refuses stays in the field with the reason. `API key` shows `set` or
+`not set` and opens a masked field. Each change applies at once and is saved to
+the config file, with its comments kept. `title_gradient`, off by default, shades
+the title bar from the select colour toward the accent on a truecolor terminal.
+The lists `auth`, `render`, `pass_env` and `allow` stay in the config file.
 
 ## Everyday keys
 

@@ -124,7 +124,7 @@ one 16 MB output buffer budget.
 /provider  manage providers      /queue     messages waiting to send
 /rename    rename this session   /quit      leave
 /next      next session waiting on you
-/settings  the settings form: change ten settings, saved to the config
+/settings  the settings list: step or type a value, saved to the config
 /retry     send the last message again, dropping its reply
 /effort    low, medium, high, or default
 ```
