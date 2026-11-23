@@ -5984,7 +5984,8 @@ impl App {
                     )
                 }
                 (None, true) if self.status.suggestion.is_some() => "→ accept".into(),
-                (None, true) if !self.queued.is_empty() => "↑ edit queue".into(),
+                // ↑ does nothing while a question or confirmation is open.
+                (None, true) if !asking && !self.queued.is_empty() => "↑ edit queue".into(),
                 (None, true) => String::new(),
                 // The prompt glyph shows steer or queue; the rule stays quiet.
                 (None, false) => String::new(),
@@ -6399,12 +6400,17 @@ impl App {
                 parts.push((about.clone(), 6, true));
             }
         }
+        // Queued messages wait for the answer; the hint says how many.
+        let queued = match self.queued.len() {
+            0 => String::new(),
+            n => format!(" · {n} queued"),
+        };
         parts.push(match mode {
-            AskMode::Choose if self.ask_multiple => (format!("type to answer   Esc stop   1-{} mark   Enter send", opts.len()), 2, false),
-            AskMode::Choose => ("type to answer   Esc stop".to_string(), 2, false),
+            AskMode::Choose if self.ask_multiple => (format!("type to answer   Esc stop   1-{} mark   Enter send{queued}", opts.len()), 2, false),
+            AskMode::Choose => (format!("type to answer   Esc stop{queued}"), 2, false),
             AskMode::Custom => {
                 let (before, after) = typed.split_at(self.ask_caret.min(typed.len()));
-                (format!("> {before}{CARET}{after}"), 4, false)
+                (format!("> {before}{CARET}{after}{queued}"), 4, false)
             }
         });
         let mut rows: Vec<(String, bool)> = Vec::new();

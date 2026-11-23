@@ -5995,3 +5995,63 @@ fn the_status_line_names_auto_and_not_normal() {
     a.cfg.set_permissions(crate::config::Permissions::Normal);
     assert!(!a.status_line(100).contains("auto"), "{}", a.status_line(100));
 }
+
+fn open_question_with_queue(a: &mut App, queued: &[&str]) -> Receiver<Option<String>> {
+    let (reply, rx) = channel();
+    a.status.streaming = true;
+    a.queued = queued.iter().map(|s| s.to_string()).collect();
+    a.pending = Some(Pending::Question {
+        q: "which package manager?".into(),
+        opts: vec!["npm".into(), "pnpm".into()],
+        reply,
+        mode: AskMode::Choose,
+        typed: String::new(),
+    });
+    rx
+}
+
+#[test]
+fn a_question_hint_counts_the_queue_and_the_rule_offers_no_edit() {
+    let (mut a, _cmds, _ev) = worker_app();
+    let _rx = open_question_with_queue(&mut a, &["use pnpm", "also add tests"]);
+    let shown = strip(&a.frame(70, 14));
+    assert!(shown.contains("type to answer   Esc stop · 2 queued"), "{shown:?}");
+    assert!(!shown.contains("↑ edit queue"), "the rule offers an edit that ↑ does not do: {shown:?}");
+}
+
+#[test]
+fn a_question_never_takes_a_queued_message_as_its_answer() {
+    let (mut a, cmds, _ev) = worker_app();
+    let tx = a.worker.as_ref().unwrap().0.clone();
+    let rx = open_question_with_queue(&mut a, &["use pnpm"]);
+    a.handle_key(Key::Enter, &tx);
+    assert!(rx.try_recv().is_err(), "Enter answered the question");
+    assert_eq!(a.queued, vec!["use pnpm"], "the queue changed");
+    assert!(matches!(a.pending, Some(Pending::Question { .. })), "the question closed");
+    assert!(cmds.try_recv().is_err(), "a message was sent");
+}
+
+#[test]
+fn esc_on_a_question_keeps_the_queue_and_starts_no_turn() {
+    let (mut a, cmds, _ev) = worker_app();
+    let tx = a.worker.as_ref().unwrap().0.clone();
+    let rx = open_question_with_queue(&mut a, &["use pnpm", "also add tests"]);
+    a.handle_key(Key::Esc, &tx);
+    assert!(matches!(rx.try_recv(), Ok(None)), "Esc did not decline the question");
+    assert_eq!(a.queued, vec!["use pnpm", "also add tests"], "Esc changed the queue");
+    a.apply(Ev::Done(None));
+    assert!(cmds.try_recv().is_err(), "a stopped turn started the queue");
+    assert_eq!(a.queued, vec!["use pnpm", "also add tests"]);
+}
+
+#[test]
+fn after_the_answer_the_oldest_queued_message_starts_when_the_turn_ends() {
+    let (mut a, cmds, _ev) = worker_app();
+    let tx = a.worker.as_ref().unwrap().0.clone();
+    let rx = open_question_with_queue(&mut a, &["use pnpm", "also add tests"]);
+    a.handle_key(Key::Char('2'), &tx);
+    assert!(matches!(rx.try_recv(), Ok(Some(t)) if t == "pnpm"), "the answer was not sent");
+    a.apply(Ev::Done(None));
+    assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "use pnpm"), "the oldest message did not start");
+    assert_eq!(a.queued, vec!["also add tests"]);
+}
