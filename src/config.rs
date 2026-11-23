@@ -136,6 +136,10 @@ pub struct Config {
     pub allow: Arc<std::sync::Mutex<Vec<String>>>,
     /// The file this was loaded from; `None` keeps `allow` in memory only.
     pub file: Option<PathBuf>,
+    /// The file's `key = value` lines, in order, for `/reload` to diff.
+    pub pairs: Vec<(String, String)>,
+    /// Keys the file set that imp does not know; ignored, but named.
+    pub unknown: Vec<String>,
     pub prune_at: u32,
     pub compact_at: u32,
     pub max_tokens: u32,
@@ -183,6 +187,8 @@ impl Default for Config {
             allow_sudo: false,
             allow: Arc::default(),
             file: None,
+            pairs: Vec::new(),
+            unknown: Vec::new(),
             prune_at: 45_000,
             compact_at: 60_000,
             max_tokens: 8192,
@@ -244,6 +250,7 @@ impl Config {
             let Some((k, v)) = line.split_once('=') else {
                 return Err(format!("line {}: expected key=value", n + 1));
             };
+            cfg.pairs.push((k.trim().to_string(), v.trim().to_string()));
             cfg.set(k.trim(), v.trim())?;
         }
         Ok(cfg)
@@ -301,10 +308,48 @@ impl Config {
                 self.render.retain(|(l, _)| *l != lang);
                 self.render.push((lang, value.trim().to_string()));
             }
-            // Unknown keys are ignored so newer configs do not break older runs.
-            _ => {}
+            // Unknown keys are ignored so newer configs do not break older
+            // runs, but named so a typo does not pass unseen.
+            key => {
+                if !self.unknown.iter().any(|u| u == key) {
+                    self.unknown.push(key.to_string());
+                }
+            }
         }
         Ok(())
+    }
+
+    /// Apply the keys whose file value changed in `new`, leaving every other
+    /// key at its session value. Returns `key: old → new` lines and the keys
+    /// the file dropped, which need a restart. `allow` lines are imp's own
+    /// and already live, so they are skipped.
+    pub fn reload_from(&mut self, new: &Config) -> (Vec<String>, Vec<String>) {
+        let last = |pairs: &[(String, String)]| -> std::collections::BTreeMap<String, String> {
+            pairs.iter().filter(|(k, _)| k != "allow").cloned().collect()
+        };
+        let (old, now) = (last(&self.pairs), last(&new.pairs));
+        let mut changed = Vec::new();
+        for (key, value) in &now {
+            let before = old.get(key);
+            if before == Some(value) {
+                continue;
+            }
+            let result = if key.starts_with("provider.") {
+                self.named = new.named.clone();
+                Ok(())
+            } else {
+                self.set(key, value)
+            };
+            let from = before.map_or("unset", String::as_str);
+            changed.push(match result {
+                Ok(()) => format!("{key}: {from} → {value}"),
+                Err(e) => format!("{key}: not applied: {e}"),
+            });
+        }
+        let removed = old.keys().filter(|k| !now.contains_key(*k)).cloned().collect();
+        self.pairs = new.pairs.clone();
+        self.unknown = new.unknown.clone();
+        (changed, removed)
     }
 
     /// Set the mode in one place so the shared byte cannot drift.
@@ -626,6 +671,15 @@ fn read_keys(path: &Path) -> Vec<(String, String)> {
 }
 
 /// The keys file, read when it exists.
+/// One line naming config keys imp ignored, or `None` when there are none.
+pub fn unknown_note(keys: &[String]) -> Option<String> {
+    match keys {
+        [] => None,
+        [one] => Some(format!("config: unknown key {one} ignored")),
+        many => Some(format!("config: unknown keys {} ignored", many.join(", "))),
+    }
+}
+
 pub fn load_keys() -> Vec<(String, String)> {
     read_keys(&keys_path())
 }
@@ -1182,5 +1236,30 @@ mod tests {
         std::fs::write(&file, "x").unwrap();
         assert!(resolve_root(Some(file.to_str().unwrap()), &base).is_err());
         let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn unknown_keys_are_named_not_fatal() {
+        let cfg = Config::from_str("allow_sudo = true\nsudoo = yes\nprovider.work.base = http://box/v1\n").unwrap();
+        assert!(cfg.allow_sudo);
+        assert_eq!(cfg.unknown, vec!["sudoo"], "provider keys are known, typos are not");
+        assert_eq!(cfg.pairs.len(), 3);
+        assert_eq!(unknown_note(&cfg.unknown).as_deref(), Some("config: unknown key sudoo ignored"));
+        assert_eq!(unknown_note(&[]), None);
+    }
+
+    #[test]
+    fn reload_applies_only_what_the_file_changed() {
+        let mut live = Config::from_str("model = a\nmax_steps = 5\nallow = ls\n").unwrap();
+        live.model = "picked".into(); // chosen with /model during the session
+        let new = Config::from_str("model = a\nmax_steps = 9\nallow_sudo = true\nallow = ls\nallow = pwd\n").unwrap();
+        let (changed, removed) = live.reload_from(&new);
+        assert_eq!(changed, vec!["allow_sudo: unset → true", "max_steps: 5 → 9"]);
+        assert!(removed.is_empty());
+        assert!(live.allow_sudo && live.max_steps == 9);
+        assert_eq!(live.model, "picked", "a session choice was undone");
+        let gone = Config::from_str("model = a\n").unwrap();
+        let (_, removed) = live.reload_from(&gone);
+        assert_eq!(removed, vec!["allow_sudo", "max_steps"]);
     }
 }

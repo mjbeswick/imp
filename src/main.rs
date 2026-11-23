@@ -152,6 +152,11 @@ fn run() -> Result<(), String> {
     // A chat can ask for a key; a line-mode run has nobody to ask.
     let interactive = unsafe { isatty(0) } != 0 && unsafe { isatty(1) } != 0;
     let chat = prompt.is_none() && wants_chat(mode, interactive);
+    if !chat {
+        if let Some(note) = config::unknown_note(&cfg.unknown) {
+            eprintln!("imp: {note}");
+        }
+    }
     let missing_key = key_gate(chat, cfg.resolve_key_env(config::key_lookup()))?;
 
     let existing = match &resume {

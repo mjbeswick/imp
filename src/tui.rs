@@ -7293,6 +7293,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
     session.hold = app.hold.clone();
     app.worker = Some(spawn_worker(session, sessions_dir));
     app.fresh = Some(fresh);
+    if let Some(note) = crate::config::unknown_note(&app.cfg.unknown) {
+        app.push(Role::Info, note);
+    }
     if let Some(var) = missing_key {
         app.begin_onboard(var);
     }
