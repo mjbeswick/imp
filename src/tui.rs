@@ -2116,8 +2116,12 @@ fn desc_column(picker: &Picker, inner: usize) -> Option<usize> {
     if !picker.items.iter().any(|item| !item.desc.is_empty()) {
         return None;
     }
-    let mut left = picker.items.iter().map(|item| item.label.chars().count()).max().unwrap_or(0).max(10) + 2;
-    if !matches!(picker.kind, PickKind::Command | PickKind::Keys | PickKind::Palette) {
+    let longest = picker.items.iter().map(|item| item.label.chars().count()).max().unwrap_or(0);
+    // Names are identifiers: the label column fits the longest one, and the
+    // description gives way instead.
+    let names = matches!(picker.kind, PickKind::Provider | PickKind::Model | PickKind::Agent | PickKind::Theme | PickKind::Mode);
+    let mut left = if names { longest + 2 } else { longest.max(10) + 2 };
+    if !names && !matches!(picker.kind, PickKind::Command | PickKind::Keys | PickKind::Palette) {
         // The right column stays whole, one space off the wall; the
         // label gives way.
         let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);

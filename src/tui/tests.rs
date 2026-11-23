@@ -6165,3 +6165,29 @@ fn esc_on_the_provider_form_cancels_everything() {
     assert!(a.pending.is_none(), "Esc left the form open");
     assert!(!std::fs::read_to_string(&config).unwrap_or_default().contains("work"), "Esc saved the provider");
 }
+
+#[test]
+fn provider_names_stay_whole_and_the_url_is_what_gets_cut() {
+    let items = vec![
+        ("deepseek", "current · https://api.deepseek.com", "deepseek-flash"),
+        ("anthropic", "https://api.anthropic.com", "claude-opus-5-5"),
+        ("gemini", "https://generativelanguage.googleapis.com", "gemini-2.5-pro"),
+        ("ollama", "http://localhost:11434/v1", "llama3.2"),
+        ("custom", "http://localhost:8000/v1", "local-model"),
+    ]
+    .into_iter()
+    .map(|(name, base, model)| PickItem {
+        label: name.into(),
+        value: name.into(),
+        actions: Vec::new(),
+        desc: format!("{base}  {model}"),
+    })
+    .collect();
+    let picker = Picker::new("provider", items, PickKind::Provider);
+    let at = picker.items.iter().position(|i| i.label == "anthropic").unwrap();
+    let row = picker_row(&picker, at, at, 68, false).remove(0);
+    // Check the label column itself: the URL also contains "anthropic".
+    assert!(row.starts_with("  anthropic "), "the provider name was clipped: {row:?}");
+    assert!(row.chars().count() <= 68, "{row:?}");
+}
+
