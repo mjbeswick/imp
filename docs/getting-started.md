@@ -98,9 +98,10 @@ Three agents are built in. **Tab** on an empty draft moves between them:
 A file at `~/.config/imp/agents/plan.md`, or `.agents/agents/plan.md` in a
 project, replaces the built-in one with the same name.
 
-**Shift+Tab** steps the permission mode: `normal` asks before writing
-outside the project or running unknown commands, `strict` asks before every
-change, and `yolo` asks for nothing. Some commands are refused in every mode.
+**Shift+Tab** steps the permission mode: `normal` asks before commands that
+are not plainly read-only, `strict` asks before every change and command, and
+`yolo` asks for nothing. File tools never leave the project folder except in
+`yolo`, and some commands are refused in every mode.
 
 `/think` turns thinking on or off, and `/effort low|medium|high` sets how hard
 the model works where the provider supports it.
