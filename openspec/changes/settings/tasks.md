@@ -2,7 +2,7 @@
 
 ## 1. Gradient
 
-- [ ] 1.1 `title_gradient` shades the title bar on truecolor, flat otherwise; tests
+- [x] 1.1 `title_gradient` shades the title bar on truecolor, flat otherwise; tests
 
 ## 2. Settings
 

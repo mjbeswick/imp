@@ -5813,3 +5813,21 @@ fn the_clock_matches_date_in_this_zone() {
     let again = String::from_utf8_lossy(&again.stdout).trim().to_string();
     assert!(ours == date || ours == again, "clock {ours} but date {date}");
 }
+
+#[test]
+fn the_title_gradient_is_optional_and_needs_truecolor() {
+    let mut a = colour_app();
+    a.palette.truecolor = true;
+    let backgrounds = |bar: &str| {
+        let mut seen: Vec<&str> = bar.split("\x1b[48;2;").skip(1).map(|p| p.split('m').next().unwrap_or("")).collect();
+        seen.dedup();
+        seen.len()
+    };
+    assert_eq!(backgrounds(&a.title_bar(40)), 1, "flat by default");
+    a.cfg.title_gradient = true;
+    let bar = a.title_bar(40);
+    assert!(backgrounds(&bar) > 10, "no gradient: {bar:?}");
+    assert_eq!(strip(&bar).chars().count(), 40, "the gradient changed the text");
+    a.palette.truecolor = false;
+    assert!(!a.title_bar(40).contains("\x1b[48;2;"), "a gradient without truecolor");
+}

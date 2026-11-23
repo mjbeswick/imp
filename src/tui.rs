@@ -499,6 +499,27 @@ impl Palette {
         }
     }
 
+    /// Text on a background shading from the select colour toward the accent,
+    /// one colour per cell. Without truecolor it is the flat select row.
+    pub(crate) fn gradient(&self, text: &str) -> String {
+        if !self.on || !self.truecolor {
+            return self.select(text);
+        }
+        use crate::theme::Slot;
+        let from = self.theme.rgb(Slot::Select);
+        let accent = self.theme.rgb(Slot::Accent);
+        // Halfway to the accent at the right edge keeps the text readable.
+        let to: [u8; 3] = std::array::from_fn(|i| ((from[i] as u16 + accent[i] as u16) / 2) as u8);
+        let fg = self.theme.rgb(Slot::User);
+        let n = text.chars().count().max(2) - 1;
+        let mut out = format!("\x1b[38;2;{};{};{}m", fg[0], fg[1], fg[2]);
+        for (i, c) in text.chars().enumerate() {
+            let at = |k: usize| (from[k] as usize * (n - i.min(n)) + to[k] as usize * i.min(n)) / n;
+            out.push_str(&format!("\x1b[48;2;{};{};{}m{c}", at(0), at(1), at(2)));
+        }
+        out + "\x1b[0m"
+    }
+
     /// The highlighted picker row: user text on the select background.
     pub(crate) fn select(&self, text: &str) -> String {
         if !self.on {
@@ -2823,7 +2844,7 @@ impl App {
         let room = cols.saturating_sub(time.len() + 3);
         let text = format!(" {:<room$} {time} ", fit(&name, room));
         self.clock_shown = time;
-        self.palette.select(&text)
+        if self.cfg.title_gradient { self.palette.gradient(&text) } else { self.palette.select(&text) }
     }
 
     /// Whether the minute moved on since the title bar was drawn.

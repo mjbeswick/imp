@@ -160,6 +160,8 @@ pub struct Config {
     pub spinner: usize,
     /// Move to the next waiting session after handing one work.
     pub auto_next: bool,
+    /// Shade the title bar from the select colour toward the accent.
+    pub title_gradient: bool,
     /// Secret-looking variables the agent's commands may still see.
     pub pass_env: Vec<String>,
     /// How much of each tool step the interface shows.
@@ -204,6 +206,7 @@ impl Default for Config {
             diffs: true,
             spinner: 0,
             auto_next: true,
+            title_gradient: false,
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
             auth: Vec::new(),
@@ -301,6 +304,7 @@ impl Config {
                 })?
             }
             "auto_next" => self.auto_next = parse_bool(value)?,
+            "title_gradient" => self.title_gradient = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             // Managed profile lines were read before this pass.
             key if key.starts_with("provider.") => {}
