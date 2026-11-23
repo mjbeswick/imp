@@ -1823,7 +1823,7 @@ The system SHALL use a syntax colour on a diff row only where it reaches a contr
 
 ### Requirement: Tab cycles the agent and Shift+Tab the mode
 
-The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo` on Shift+Tab, applying it at once, SHALL cycle agent profiles on Tab when the draft is empty and no picker is open, applying a change made during a turn when that turn ends, SHALL write one transcript line for each change, and SHALL show the agent in the status line when more than one exists, and the mode when it is not `normal`.
+The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo` on Shift+Tab, applying it at once, SHALL cycle agent profiles on Tab when the draft is empty and no picker is open, applying a change made during a turn when that turn ends, SHALL write one transcript line for each mode change, and SHALL show the mode in the status line when it is not `normal`.
 
 #### Scenario: Mode
 - **WHEN** the mode is `strict` and the user presses Shift+Tab
@@ -1835,11 +1835,19 @@ The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo
 
 #### Scenario: Mid-turn agent
 - **WHEN** a turn is running and the user presses Tab
-- **THEN** the status line shows the coming agent and the switch happens when the turn ends
+- **THEN** the prompt names the coming agent and the switch happens when the turn ends
 
 #### Scenario: Text in the draft
 - **WHEN** the draft holds `fix` and the user presses Tab
 - **THEN** nothing changes
+
+#### Scenario: Agent before the prompt
+- **WHEN** more than one agent exists and `plan` is active
+- **THEN** the composer's first row starts with `plan >` and no `agent:` line is written on a switch
+
+#### Scenario: One agent
+- **WHEN** only one agent exists
+- **THEN** the composer starts with `>` alone
 
 ### Requirement: Messages wait in a queue
 
@@ -1903,7 +1911,7 @@ The system SHALL walk from an empty draft through queued messages, newest first,
 
 ### Requirement: Enter steers or queues by a visible mode
 
-The system SHALL keep a per-session send mode, steer by default, SHALL toggle it on Ctrl+Q, SHALL show it while a turn runs as a label set into the rule above the composer, `steer · ^Q queue` or `queue · ^Q steer`, and as the prompt glyph, `>` for steer and a muted `»` for queue, SHALL on Enter in steer mode give the draft to the running turn before the model's next step and draw it as a user row marked `(steered)`, and SHALL send on Enter when no turn runs, whatever the mode.
+The system SHALL keep a per-session send mode, steer by default, SHALL toggle it on Ctrl+Q, SHALL show it only as the prompt glyph, `>` for steer and a muted `»` for queue, SHALL on Enter in steer mode give the draft to the running turn before the model's next step and draw it as a user row marked `(steered)`, and SHALL send on Enter when no turn runs, whatever the mode.
 
 #### Scenario: Steer
 - **WHEN** a turn is running a tool in steer mode and the user types `use pnpm, not npm` and presses Enter
