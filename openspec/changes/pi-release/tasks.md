@@ -13,5 +13,4 @@
 
 ## 3. Device
 
-- [ ] 3.1 dtach installed on the Hackberry; README example checked there
-- [ ] 3.2 Keys card walked on the Hackberry keyboard; untypable keys listed
+- [ ] 3.1 Keys card walked on the Hackberry keyboard; untypable keys listed
