@@ -107,10 +107,10 @@ polls with the `job` tool.
 
 ## Talking to a running turn
 
-- **Steer** (Enter while a turn runs, the default): your message joins the
-  history before the next step, and shows marked `(steered)`.
-- **Queue** (Ctrl+Q, then Enter): the message waits and starts its own turn
-  when this one ends. Opening a queued message to edit it holds the turn
+- **Steer** (Ctrl+S while a turn runs): your message joins the history before
+  the next step, and shows marked `(steered)`.
+- **Queue** (Enter while a turn runs, the default): the message waits and
+  starts its own turn when this one ends. Opening a queued message to edit it holds the turn
   before its next step.
 - **Esc** stops at the next check: before a step, or during a request or a
   retry wait.

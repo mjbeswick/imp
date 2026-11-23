@@ -76,9 +76,9 @@ the model is told you declined.
 While the model works:
 
 - **Esc** stops the turn.
-- **Enter** sends a message into the running turn; **Ctrl+Q** switches to
-  queueing it for after the turn instead. The prompt glyph shows which:
-  `>` steers, a muted `»` queues.
+- **Enter** queues a message for after the running turn. **Ctrl+S** steers
+  it into the turn before its next step instead, and sends it when no turn
+  runs. The prompt glyph shows a muted `»` while a turn runs and `>` otherwise.
 - **Ctrl+R** sends your last message again and drops the reply.
 - **Ctrl+E** expands the latest tool rows to show their commands and output.
 

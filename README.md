@@ -167,9 +167,9 @@ Bare `/provider` picks from built-in and custom profiles. `add <name>`, `edit <n
 `# >>> providers` block in the config file; comments and other keys survive,
 and the active profile cannot be deleted.
 
-While a turn runs, Enter steers it or queues the message; Ctrl+Q switches
-between the two, and the prompt glyph says which: `>` steers, a muted `»`
-queues. Queued messages
+While a turn runs, Enter queues the message for after the turn, and Ctrl+S
+steers it into the turn before its next step; with no turn running, both send.
+The prompt glyph shows a muted `»` while a turn runs and `>` otherwise. Queued messages
 wait above the composer and go out as turns end. ↑ on an empty draft opens
 them for editing, which holds the turn; saving one empty removes it.
 `/queue <text>` adds one, bare `/queue` lists them, `pop [n]` loads one into
