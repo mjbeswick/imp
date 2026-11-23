@@ -3961,7 +3961,7 @@ impl App {
                 desc: mark_current(name == self.cfg.active_name, &about),
                 label: name.clone(),
                 value: name.clone(),
-                actions: Vec::new(),
+                actions: vec![('e', "configure")],
             });
         }
         for profile in &self.cfg.named {
@@ -3972,7 +3972,7 @@ impl App {
                     profile.name == self.cfg.active_name,
                     &format!("{}  {}  {}", profile.base, profile.model, profile.dialect),
                 ),
-                actions: Vec::new(),
+                actions: vec![('e', "configure")],
             });
         }
         items
@@ -4645,6 +4645,10 @@ impl App {
                 self.push(Role::Info, lines.join("\n"));
             }
             "add" => {
+                if crate::providers::Provider::parse(name).is_ok() {
+                    self.push(Role::Error, format!("provider: {name} is a built-in provider name"));
+                    return;
+                }
                 if !crate::config::valid_profile_name(name) {
                     self.push(Role::Error, "provider: name must be letters, digits, - or _");
                     return;
@@ -4710,6 +4714,31 @@ impl App {
                 format!("provider: unknown {other:?}; use add, edit, delete, or use"),
             ),
         }
+    }
+
+    /// `e` on a provider row: the form for its configuration. A named profile
+    /// opens as saved; a built-in opens from its defaults, to be saved as a
+    /// named copy so the built-in stays as it is.
+    fn configure_provider(&mut self, value: &str) {
+        if let Some(profile) = self.cfg.named.iter().find(|n| n.name == value).cloned() {
+            let fields = vec![
+                ("base".to_string(), profile.base),
+                ("model".to_string(), profile.model),
+                ("dialect".to_string(), profile.dialect),
+                ("key_env".to_string(), profile.key_env),
+            ];
+            self.pending = Some(Pending::ProviderForm { name: value.to_string(), fields, at: 0 });
+        } else if let Ok(provider) = crate::providers::Provider::parse(value) {
+            let defaults = provider.profile();
+            let fields = vec![
+                ("base".to_string(), defaults.base_url.to_string()),
+                ("model".to_string(), defaults.model.to_string()),
+                ("dialect".to_string(), value.to_string()),
+                ("key_env".to_string(), defaults.key_var.unwrap_or("").to_string()),
+            ];
+            self.pending = Some(Pending::ProviderForm { name: format!("{value}-custom"), fields, at: 0 });
+        }
+        self.dirty = true;
     }
 
     /// Point the session at a built-in or custom profile.
@@ -5435,6 +5464,11 @@ impl App {
                             }
                             Some("add") => {
                                 self.pending = Some(Pending::AllowRule { value: String::new() });
+                            }
+                            Some("configure") => {
+                                if let Some(choice) = picker.selected().cloned() {
+                                    self.configure_provider(&choice.value);
+                                }
                             }
                             Some("allow") => {
                                 if let Some(choice) = picker.selected() {

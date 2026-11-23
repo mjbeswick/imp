@@ -6279,3 +6279,102 @@ fn a_background_job_notice_raises_a_toast_and_the_chat_keeps_its_row() {
         "the chat lost the job row"
     );
 }
+
+fn provider_row(a: &mut App, name: &str) {
+    match &mut a.pending {
+        Some(Pending::Pick(p)) => {
+            p.index = p.items.iter().position(|i| i.value == name).expect("no provider row");
+        }
+        _ => panic!("no picker is open"),
+    }
+}
+
+#[test]
+fn e_on_a_built_in_provider_opens_its_defaults_as_a_named_copy_form() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "deepseek");
+    a.handle_key(Key::Char('e'), &tx);
+    match &a.pending {
+        Some(Pending::ProviderForm { name, fields, at }) => {
+            assert_eq!(name, "deepseek-custom");
+            assert_eq!(fields[0].1, crate::providers::Provider::DeepSeek.profile().base_url);
+            assert_eq!(fields[1].1, crate::providers::Provider::DeepSeek.profile().model);
+            assert_eq!(fields[2].1, "deepseek");
+            assert_eq!(*at, 0);
+        }
+        _ => panic!("e did not open the provider form"),
+    }
+}
+
+#[test]
+fn e_on_a_custom_provider_opens_its_saved_profile() {
+    let (mut a, _config) = provider_app();
+    a.cfg.named.push(crate::config::NamedProvider {
+        name: "work".into(),
+        base: "http://box/v1".into(),
+        model: "m1".into(),
+        key_env: String::new(),
+        dialect: "openai".into(),
+    });
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "work");
+    a.handle_key(Key::Char('e'), &tx);
+    match &a.pending {
+        Some(Pending::ProviderForm { name, fields, .. }) => {
+            assert_eq!(name, "work");
+            assert_eq!(fields[0].1, "http://box/v1");
+            assert_eq!(fields[1].1, "m1");
+            assert_eq!(fields[2].1, "openai");
+        }
+        _ => panic!("e did not open the saved profile"),
+    }
+}
+
+#[test]
+fn saving_a_built_in_change_adds_a_named_copy_and_keeps_the_built_in() {
+    let (mut a, config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "deepseek");
+    a.handle_key(Key::Char('e'), &tx);
+    a.handle_key(Key::Down, &tx);
+    for _ in 0..crate::providers::Provider::DeepSeek.profile().model.len() {
+        a.handle_key(Key::Backspace, &tx);
+    }
+    type_text(&mut a, &tx, "deepseek-pro");
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Enter, &tx);
+    let saved = std::fs::read_to_string(&config).unwrap();
+    assert!(saved.contains("deepseek-custom") && saved.contains("deepseek-pro"), "{saved}");
+    assert_eq!(crate::providers::Provider::DeepSeek.profile().model, "deepseek-flash", "the built-in changed");
+    let (tx2, _rx2) = channel();
+    a.run_command("provider", &tx2);
+    assert!(open_picker(&a).items.iter().any(|i| i.value == "deepseek"), "the built-in left the picker");
+}
+
+#[test]
+fn a_built_in_name_is_refused_for_a_new_provider() {
+    let (mut a, config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider add openai", &tx);
+    assert!(a.pending.is_none(), "a form opened for a built-in name");
+    let shown = strip(&a.frame(90, 20));
+    assert!(shown.contains("built-in"), "the refusal is not shown: {shown:?}");
+    assert!(!std::fs::read_to_string(&config).unwrap().contains("openai"), "the name was saved");
+}
+
+#[test]
+fn enter_still_switches_and_the_footer_offers_configure() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "ollama");
+    let shown = strip(&a.frame(100, 30));
+    assert!(shown.contains("e configure"), "the footer has no configure hint: {shown:?}");
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(a.cfg.active_name, "ollama", "Enter did not switch");
+}
