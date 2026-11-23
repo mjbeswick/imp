@@ -1702,8 +1702,6 @@ pub struct App {
     // ponytail: one for the app, not saved per session; clamped where used,
     // so a switch mid-answer moves the caret, never past the text.
     ask_caret: usize,
-    /// Enter during a turn queues rather than steers.
-    queue_mode: bool,
     /// Messages waiting for the running turn to end, oldest first.
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
@@ -1822,8 +1820,6 @@ struct Pane {
     ask_descs: Vec<String>,
     ask_multiple: bool,
     ask_marked: Vec<bool>,
-    /// Enter during a turn queues rather than steers.
-    queue_mode: bool,
     /// Messages waiting for the running turn to end, oldest first.
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
@@ -1870,7 +1866,6 @@ impl Pane {
             ask_descs: Vec::new(),
             ask_multiple: false,
             ask_marked: Vec::new(),
-            queue_mode: false,
             queued: Vec::new(),
             queue_at: None,
             queue_due: false,
@@ -2168,7 +2163,7 @@ const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
     ("scroll up", "PgUp", "page-up"),
     ("scroll down", "PgDn", "page-down"),
     ("release the mouse", "Ctrl+G", "release"),
-    ("steer or queue", "Ctrl+Q", "queue-mode"),
+    ("steer now", "Ctrl+S", "steer"),
     ("paste", "Ctrl+V", "paste"),
     ("quit", "Ctrl+D", "quit"),
 ];
@@ -2470,7 +2465,6 @@ impl App {
             ask_multiple: false,
             ask_marked: Vec::new(),
             ask_caret: 0,
-            queue_mode: false,
             queued: Vec::new(),
             queue_at: None,
             queue_due: false,
@@ -2553,7 +2547,6 @@ impl App {
         swap(&mut self.ask_descs, &mut p.ask_descs);
         swap(&mut self.ask_multiple, &mut p.ask_multiple);
         swap(&mut self.ask_marked, &mut p.ask_marked);
-        swap(&mut self.queue_mode, &mut p.queue_mode);
         swap(&mut self.queued, &mut p.queued);
         swap(&mut self.queue_at, &mut p.queue_at);
         swap(&mut self.queue_due, &mut p.queue_due);
@@ -3458,11 +3451,14 @@ impl App {
                 }
                 self.dirty = true;
             }
-            Key::Ctrl('q') => {
+            Key::Ctrl('s') => {
+                // In the queue editor, Ctrl+S sends the open message. Elsewhere
+                // it steers during a turn and sends when idle; an empty draft
+                // does nothing.
                 if self.queue_at.is_some() {
                     self.send_queued(tx);
                 } else {
-                    self.queue_mode = !self.queue_mode;
+                    self.submit(tx, true);
                 }
                 self.dirty = true;
             }
@@ -3621,7 +3617,7 @@ impl App {
                 self.dirty = true;
             }
             Key::Ctrl('x') if self.queue_at.is_some() => self.delete_queued(tx),
-            Key::Enter => self.submit(tx),
+            Key::Enter => self.submit(tx, false),
             Key::Newline => {
                 self.follow_tail();
                 self.input.insert(self.cursor, '\n');
@@ -3769,7 +3765,7 @@ impl App {
                     self.push(Role::Info, "one session");
                 }
             }
-            "queue-mode" => self.handle_key_inner(Key::Ctrl('q'), tx),
+            "steer" => self.handle_key_inner(Key::Ctrl('s'), tx),
             "paste" => self.handle_key_inner(Key::Ctrl('v'), tx),
             "stop" => self.handle_key_inner(Key::Esc, tx),
             "expand" => self.handle_key_inner(Key::Ctrl('e'), tx),
@@ -4033,7 +4029,9 @@ impl App {
         }
     }
 
-    fn submit(&mut self, tx: &Sender<Cmd>) {
+    /// Send the draft. During a turn, Enter (`steer` false) queues it and
+    /// Ctrl+S (`steer` true) hands it to the running turn.
+    fn submit(&mut self, tx: &Sender<Cmd>, steer: bool) {
         // Enter on an open queued message saves it; empty, it is removed.
         if self.queue_at.is_some() {
             self.save_queued(tx, true);
@@ -4075,17 +4073,17 @@ impl App {
         if self.history.len() > 1000 {
             self.history.drain(..self.history.len() - 1000);
         }
-        // During a turn, queue mode holds the message for the turn's end. A
-        // goal ends on any message, as before.
+        // During a turn, Enter holds the message for the turn's end, and Ctrl+S
+        // steers it into the turn. A goal ends on any message, as before.
         if self.status.streaming && self.status.goal.is_none() {
-            if self.queue_mode {
-                self.queued.push(text);
-            } else {
-                // Steer: the running turn takes it before its next step.
+            if steer {
+                // The running turn takes it before its next step.
                 self.push(Role::User, format!("{text} (steered)"));
                 if let Ok(mut box_) = self.steer.lock() {
                     box_.push(text);
                 }
+            } else {
+                self.queued.push(text);
             }
             self.dirty = true;
             return;
@@ -5421,7 +5419,7 @@ impl App {
                             Some(choice) => {
                                 self.input = choice.value.clone();
                                 self.cursor = self.input.len();
-                                self.submit(tx);
+                                self.submit(tx, false);
                             }
                             None => {
                                 self.pending = Some(Pending::Pick(picker));
@@ -5978,7 +5976,7 @@ impl App {
                 (Some(i), _) => {
                     let verb = if self.status.streaming { "steer" } else { "send" };
                     format!(
-                        "editing {}/{} · Enter save · ^Q {verb} · ^X del",
+                        "editing {}/{} · Enter save · ^S {verb} · ^X del",
                         i + 1,
                         self.queued.len()
                     )
@@ -6531,7 +6529,7 @@ impl App {
             marks(&mut body, line.len());
             let glyph = if shell {
                 "$ "
-            } else if self.status.streaming && self.queue_mode {
+            } else if self.status.streaming {
                 "» "
             } else {
                 "> "

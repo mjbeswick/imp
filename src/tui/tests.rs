@@ -235,24 +235,56 @@ fn ctrl_v_attaches_a_clipboard_image_or_pastes_the_copy() {
 }
 
 #[test]
-fn ctrl_q_toggles_steer_and_queue_shown_in_the_rule() {
+fn enter_queues_during_a_turn_and_ctrl_q_does_nothing() {
     let (tx, _cmds) = channel();
     let mut b = Vec::from(&b"\x11"[..]);
     assert_eq!(decode(&mut b), vec![Key::Ctrl('q')]);
     let mut a = app();
-    // Idle: a plain rule and the usual glyph.
-    let idle = strip(&a.frame(60, 10));
-    assert!(!idle.contains("steer") && idle.contains("\r\n> "), "{idle:?}");
     a.status.streaming = true;
-    let steer = strip(&a.frame(60, 10));
-    assert!(!steer.contains("^Q") && steer.contains("\r\n> "), "the rule names the mode: {steer:?}");
+    a.input = "also add tests".into();
+    a.cursor = a.input.len();
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(a.queued, vec!["also add tests"], "Enter did not queue");
+    assert!(a.input.is_empty());
+    let shown = strip(&a.frame(60, 10));
+    assert!(shown.contains("\r\n» "), "the glyph is not » during a turn: {shown:?}");
+    a.input = "draft".into();
+    a.cursor = a.input.len();
     a.handle_key(Key::Ctrl('q'), &tx);
-    let queue = strip(&a.frame(60, 10));
-    assert!(!queue.contains("^Q") && queue.contains("\r\n» "), "the glyph did not change: {queue:?}");
-    // The mode stays when the turn ends; the label goes.
-    a.status.streaming = false;
-    let done = strip(&a.frame(60, 10));
-    assert!(a.queue_mode && !done.contains("^Q"), "{done:?}");
+    assert_eq!(a.queued, vec!["also add tests"], "Ctrl+Q changed the queue");
+    assert_eq!(a.input, "draft", "Ctrl+Q changed the draft");
+}
+
+#[test]
+fn ctrl_s_steers_during_a_turn() {
+    let (tx, cmds) = channel();
+    let mut b = Vec::from(&b"\x13"[..]);
+    assert_eq!(decode(&mut b), vec![Key::Ctrl('s')]);
+    let mut a = app();
+    a.status.streaming = true;
+    a.begin_task();
+    a.input = "use pnpm, not npm".into();
+    a.cursor = a.input.len();
+    a.handle_key(Key::Ctrl('s'), &tx);
+    assert_eq!(*a.steer.lock().unwrap(), vec!["use pnpm, not npm"]);
+    assert_eq!(a.entries.last().unwrap().text, "use pnpm, not npm (steered)");
+    assert!(a.queued.is_empty(), "a steered message was queued");
+    assert!(a.input.is_empty());
+    assert!(cmds.try_recv().is_err(), "a steered message was sent as a turn");
+}
+
+#[test]
+fn ctrl_s_sends_when_idle_and_does_nothing_on_an_empty_draft() {
+    let (mut a, cmds, _ev) = worker_app();
+    let tx = a.worker.as_ref().unwrap().0.clone();
+    a.handle_key(Key::Ctrl('s'), &tx);
+    assert!(cmds.try_recv().is_err(), "an empty draft was sent");
+    assert!(!a.status.streaming, "an empty draft started a turn");
+    a.input = "hi".into();
+    a.cursor = a.input.len();
+    a.handle_key(Key::Ctrl('s'), &tx);
+    assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "hi"), "Ctrl+S did not send when idle");
+    assert!(a.status.streaming, "the turn did not start");
 }
 
 /// An app whose worker is a pair of test channels.
@@ -271,7 +303,6 @@ fn queued_messages_wait_for_the_turn_to_end() {
     a.status.streaming = true;
     a.begin_task();
     a.status.steps = 4;
-    a.queue_mode = true;
     a.input = "also add tests".into();
     a.cursor = a.input.len();
     a.handle_key(Key::Enter, &tx);
@@ -314,7 +345,7 @@ fn queued_messages_are_walked_and_edited_in_place() {
     assert_eq!((a.queue_at, a.input.as_str()), (Some(1), "second"));
     assert!(a.hold.load(Ordering::SeqCst), "the turn is not held");
     let shown = strip(&a.frame(70, 14));
-    assert!(shown.contains("editing 2/2 · Enter save · ^Q steer · ^X del"), "{shown:?}");
+    assert!(shown.contains("editing 2/2 · Enter save · ^S steer · ^X del"), "{shown:?}");
     assert!(a.status_line(120).contains("paused · editing queue"));
     a.handle_key(Key::Up, &tx);
     assert_eq!((a.queue_at, a.input.as_str()), (Some(0), "first"));
@@ -351,16 +382,16 @@ fn queued_messages_are_walked_and_edited_in_place() {
 }
 
 #[test]
-fn enter_steers_a_running_turn() {
+fn enter_no_longer_steers_a_running_turn() {
     let (mut a, cmds, _ev) = worker_app();
     let tx = a.worker.as_ref().unwrap().0.clone();
     a.status.streaming = true;
     a.input = "use pnpm, not npm".into();
     a.cursor = a.input.len();
     a.handle_key(Key::Enter, &tx);
-    assert_eq!(a.entries.last().unwrap().text, "use pnpm, not npm (steered)");
-    assert_eq!(*a.steer.lock().unwrap(), vec!["use pnpm, not npm".to_string()]);
-    assert!(cmds.try_recv().is_err(), "a steered message was sent as a turn");
+    assert!(a.steer.lock().unwrap().is_empty(), "Enter steered");
+    assert_eq!(a.queued, vec!["use pnpm, not npm".to_string()]);
+    assert!(cmds.try_recv().is_err(), "a queued message was sent as a turn");
     // Steered too late: the next turn carries it.
     a.apply(Ev::Done(None));
     assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "use pnpm, not npm"));
@@ -375,7 +406,7 @@ fn enter_steers_a_running_turn() {
 }
 
 #[test]
-fn ctrl_q_steers_the_open_queued_message() {
+fn ctrl_s_steers_the_open_queued_message() {
     let (mut a, cmds, _ev) = worker_app();
     let tx = a.worker.as_ref().unwrap().0.clone();
     a.status.streaming = true;
@@ -384,7 +415,7 @@ fn ctrl_q_steers_the_open_queued_message() {
     a.handle_key(Key::Up, &tx);
     a.input = "second, but terser".into();
     a.cursor = a.input.len();
-    a.handle_key(Key::Ctrl('q'), &tx);
+    a.handle_key(Key::Ctrl('s'), &tx);
     assert_eq!(a.queued, vec!["first"]);
     assert_eq!(*a.steer.lock().unwrap(), vec!["second, but terser"]);
     assert_eq!(a.entries.last().unwrap().text, "second, but terser (steered)");
@@ -395,14 +426,14 @@ fn ctrl_q_steers_the_open_queued_message() {
 }
 
 #[test]
-fn ctrl_q_sends_the_open_message_when_no_turn_runs() {
+fn ctrl_s_sends_the_open_message_when_no_turn_runs() {
     let (mut a, cmds, _ev) = worker_app();
     let tx = a.worker.as_ref().unwrap().0.clone();
     a.queued = vec!["only".into()];
     a.handle_key(Key::Up, &tx);
     let out = strip(&a.frame(70, 14));
-    assert!(out.contains("^Q send"), "{out:?}");
-    a.handle_key(Key::Ctrl('q'), &tx);
+    assert!(out.contains("^S send"), "{out:?}");
+    a.handle_key(Key::Ctrl('s'), &tx);
     assert!(a.queued.is_empty());
     assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "only"));
     assert_eq!(a.queue_at, None);
@@ -485,10 +516,10 @@ fn the_edit_rule_fits_and_names_every_key() {
     a.queued = vec!["only".into()];
     a.handle_key(Key::Up, &tx);
     let running = strip(&a.frame(54, 14));
-    assert!(running.contains("editing 1/1 · Enter save · ^Q steer · ^X del"), "{running:?}");
+    assert!(running.contains("editing 1/1 · Enter save · ^S steer · ^X del"), "{running:?}");
     a.status.streaming = false;
     let idle = strip(&a.frame(54, 14));
-    assert!(idle.contains("editing 1/1 · Enter save · ^Q send · ^X del"), "{idle:?}");
+    assert!(idle.contains("editing 1/1 · Enter save · ^S send · ^X del"), "{idle:?}");
 }
 
 #[test]
@@ -535,9 +566,8 @@ fn an_open_queued_message_holds_the_turn_and_esc_still_stops_it() {
     assert!(a.hold.load(Ordering::SeqCst));
     a.handle_key(Key::Esc, &tx);
     assert!(a.cancel.load(Ordering::Relaxed), "Esc did not stop the held turn");
-    // Leaving the message releases the hold.
-    a.handle_key(Key::Enter, &tx);
-    assert!(!a.hold.load(Ordering::SeqCst));
+    // Esc closes the editor: the hold is released and the message stays queued.
+    assert!(!a.hold.load(Ordering::SeqCst), "the hold outlived the editor");
     assert_eq!(a.queued, vec!["next"]);
 }
 
@@ -582,7 +612,7 @@ fn tab_cycles_agents_on_an_empty_draft() {
     a.handle_key(Key::Tab, &tx);
     assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("review", Some("build")));
     assert!(a.entries.is_empty(), "a switch wrote a transcript line");
-    assert!(strip(&a.frame(60, 10)).contains("\r\nbuild> "), "the prompt does not name the coming agent");
+    assert!(strip(&a.frame(60, 10)).contains("\r\nbuild» "), "the prompt does not name the coming agent");
     a.apply(Ev::Done(None));
     assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("build", None));
     // One agent: Tab does nothing.
@@ -620,7 +650,7 @@ fn slash_keys_opens_the_keys_card() {
     a.run_command("keys", &tx);
     assert!(matches!(&a.pending, Some(Pending::Pick(p)) if p.kind == PickKind::Keys));
     let out = strip(&a.frame(80, 30));
-    assert!(out.contains("Ctrl+Q") && out.contains("Shift+Tab"), "{out:?}");
+    assert!(out.contains("Ctrl+S") && out.contains("Shift+Tab"), "{out:?}");
 }
 
 #[test]
@@ -1296,11 +1326,11 @@ fn the_palette_shows_command_keys_and_more_actions() {
     assert!(desc("/keys").ends_with(" · ?"), "{}", desc("/keys"));
     assert!(desc("/next").ends_with(" · Ctrl+O"), "{}", desc("/next"));
     assert!(!desc("/mode").contains('·'), "/mode does not do what Shift+Tab does");
-    assert_eq!(desc("steer or queue"), "Ctrl+Q");
+    assert_eq!(desc("steer now"), "Ctrl+S");
     assert_eq!(desc("paste"), "Ctrl+V");
-    let mode = a.queue_mode;
-    a.palette_action("queue-mode", &tx);
-    assert_ne!(a.queue_mode, mode, "Ctrl+Q did not replay");
+    let before = a.entries.len();
+    a.palette_action("steer", &tx);
+    assert_eq!(a.entries.len(), before, "steer now with an empty draft did something");
     a.palette_action("next-session", &tx);
     assert_eq!(a.entries.last().unwrap().text, "one session");
 }
@@ -1404,7 +1434,8 @@ fn key_state(key: &Key, picker: bool) -> App {
         a.cursor = if at_end { text.len() } else { 0 };
     };
     match key {
-        Key::Enter | Key::Newline | Key::Ctrl('c') => draft(&mut a, "hello", true),
+        // Ctrl+S on an empty draft does nothing by design, so it gets a draft.
+        Key::Enter | Key::Newline | Key::Ctrl('c') | Key::Ctrl('s') => draft(&mut a, "hello", true),
         Key::Delete | Key::DeleteWord(true) | Key::Ctrl('k') => draft(&mut a, "hello world", false),
         Key::Select(Move::Down | Move::Right | Move::End) | Key::Word(Move::Right) | Key::SelectWord(Move::Right) => {
             draft(&mut a, "hello world\nsecond", false)
@@ -1450,13 +1481,12 @@ fn key_state(key: &Key, picker: bool) -> App {
 /// What a key can change: the drawn screen and the state it does not draw.
 fn fingerprint(a: &mut App) -> String {
     format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}",
         a.frame(80, 20),
         a.input,
         a.cursor,
         a.quit,
         a.at,
-        a.queue_mode,
         a.released,
         a.agent,
         a.cancel.load(Ordering::Relaxed)
@@ -4208,7 +4238,7 @@ fn slash_commands_with_values_reach_the_parser() {
     let (tx, rx) = channel();
     a.input = "/cd .".into();
     a.cursor = a.input.len();
-    a.submit(&tx);
+    a.submit(&tx, false);
     assert!(matches!(rx.try_recv(), Ok(Cmd::SetRoot(_))));
 }
 

@@ -2,8 +2,8 @@
 
 /// Keys in the full-screen chat.
 pub const KEYS: &[(&str, &str)] = &[
-    ("Enter", "send; during a turn, steer or queue"),
-    ("Ctrl+Q", "switch Enter between steer and queue"),
+    ("Enter", "send; during a turn, queue the message"),
+    ("Ctrl+S", "steer now; send when idle"),
     ("Shift+Enter, Alt+Enter, Ctrl+J", "newline"),
     ("Esc", "stop the turn or close a picker"),
     ("Ctrl+C", "clear the draft, else stop the turn; twice to quit"),
@@ -436,7 +436,7 @@ mod tests {
         assert!(!text.contains("Ctrl+C") && !text.contains("\nKeys\n"), "{text}");
         assert!(text.trim_end().ends_with("Keys: ? or /keys"), "{text}");
         let keys: Vec<&str> = KEYS.iter().map(|(k, _)| *k).collect();
-        for k in ["Ctrl+Q", "Shift+Tab", "Ctrl+C", "PgUp, PgDn", "Shift+Enter, Alt+Enter, Ctrl+J", "Ctrl+X"] {
+        for k in ["Ctrl+S", "Shift+Tab", "Ctrl+C", "PgUp, PgDn", "Shift+Enter, Alt+Enter, Ctrl+J", "Ctrl+X"] {
             assert!(keys.contains(&k), "{k} is not on the card");
         }
     }
