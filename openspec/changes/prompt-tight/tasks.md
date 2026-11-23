@@ -2,4 +2,4 @@
 
 ## 1. Prompt
 
-- [ ] 1.1 No space between the agent and the glyph; rows align; tests
+- [x] 1.1 No space between the agent and the glyph; rows align; tests

@@ -6326,7 +6326,7 @@ impl App {
         if let (Some(s), true, None) = (&self.status.suggestion, self.input.is_empty(), &self.pending) {
             let tone = if self.yolo() { Role::Error } else { Role::User };
             let hint = fit(s, cols.saturating_sub(self.prompt_width() + 1));
-            let agent = self.prompt_agent().map_or(String::new(), |a| format!("{a} "));
+            let agent = self.prompt_agent().map_or(String::new(), |a| a.to_string());
             return vec![format!(
                 "{}\x1b[7m \x1b[0m{}",
                 self.palette.paint(tone, &format!("{agent}> ")),
@@ -6400,7 +6400,7 @@ impl App {
                 "> "
             };
             let prefix = match (i, self.prompt_agent()) {
-                (0, Some(agent)) => format!("{agent} {glyph}"),
+                (0, Some(agent)) => format!("{agent}{glyph}"),
                 (0, None) => glyph.to_string(),
                 _ => " ".repeat(lead),
             };
@@ -6453,9 +6453,9 @@ impl App {
         (self.agents.len() > 1).then(|| self.agent_next.as_deref().unwrap_or(&self.agent))
     }
 
-    /// Columns the prompt takes: the agent and a space, then glyph and space.
+    /// Columns the prompt takes: the agent, then the glyph and a space.
     fn prompt_width(&self) -> usize {
-        2 + self.prompt_agent().map_or(0, |a| a.chars().count() + 1)
+        2 + self.prompt_agent().map_or(0, |a| a.chars().count())
     }
 
     /// Yolo is shown by colour alone: the prompt glyph and the rule.

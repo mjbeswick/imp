@@ -47,7 +47,7 @@ imp --provider anthropic         # or put provider=anthropic in the config
 ✓ edit src/parse.rs → 1 change                           
 The parser now keeps blank lines …                       ← the reply
 ──────────────────────────────────────────────────────── 
-build > _                                                ← agent and prompt
+build> _                                                 ← agent and prompt
 deepseek-flash · 3.1K tok · $0.002          ~/project    ← status line
 ```
 

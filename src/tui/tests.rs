@@ -582,7 +582,7 @@ fn tab_cycles_agents_on_an_empty_draft() {
     a.handle_key(Key::Tab, &tx);
     assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("review", Some("build")));
     assert!(a.entries.is_empty(), "a switch wrote a transcript line");
-    assert!(strip(&a.frame(60, 10)).contains("\r\nbuild > "), "the prompt does not name the coming agent");
+    assert!(strip(&a.frame(60, 10)).contains("\r\nbuild> "), "the prompt does not name the coming agent");
     a.apply(Ev::Done(None));
     assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("build", None));
     // One agent: Tab does nothing.
@@ -603,10 +603,10 @@ fn the_prompt_names_the_agent_and_the_status_line_the_mode() {
     a.input = "x".repeat(70);
     a.cursor = a.input.len();
     let rows: Vec<String> = strip(&a.frame(60, 12)).split("\r\n").map(String::from).collect();
-    let first = rows.iter().position(|r| r.starts_with("build > ")).expect("no agent before the prompt");
-    assert!(rows[first + 1].starts_with("        x"), "the next row is not aligned: {rows:?}");
+    let first = rows.iter().position(|r| r.starts_with("build> ")).expect("no agent before the prompt");
+    assert!(rows[first + 1].starts_with("       x"), "the next row is not aligned: {rows:?}");
     a.agent_next = Some("plan".into());
-    assert!(strip(&a.frame(60, 12)).contains("\r\nplan > "));
+    assert!(strip(&a.frame(60, 12)).contains("\r\nplan> "));
     assert!(a.status_line(80).starts_with("deepseek-flash · 0 tok"), "{}", a.status_line(80));
     a.cfg.set_permissions(crate::config::Permissions::Strict);
     assert!(a.status_line(80).starts_with("deepseek-flash · strict · 0 tok"), "{}", a.status_line(80));
