@@ -6191,3 +6191,42 @@ fn provider_names_stay_whole_and_the_url_is_what_gets_cut() {
     assert!(row.chars().count() <= 68, "{row:?}");
 }
 
+
+#[test]
+fn a_waiting_session_outranks_running_failed_and_unseen() {
+    assert_eq!(state_mark(true, true, true, true, '⠋'), Some('?'));
+    assert_eq!(state_mark(false, true, true, true, '⠋'), Some('⠋'));
+    assert_eq!(state_mark(false, false, true, true, '⠋'), Some('!'));
+    assert_eq!(state_mark(false, false, false, true, '⠋'), Some('•'));
+    assert_eq!(state_mark(false, false, false, false, '⠋'), None, "an idle session has a mark");
+}
+
+#[test]
+fn the_sessions_modal_lists_a_blank_session() {
+    let mut a = multi_app("sessions-blank");
+    let dir = a.sessions_dir.clone();
+    std::fs::create_dir_all(&dir).unwrap();
+    let _blank = crate::store::Log::create(&dir, &dir, "deepseek-flash");
+    let (tx, _rx) = channel();
+    a.run_command("sessions", &tx);
+    let items = open_picker(&a).items.clone();
+    assert_eq!(items.len(), 1, "the blank session is missing from the modal");
+    assert!(items[0].label.contains("(untitled)"), "{:?}", items[0].label);
+}
+
+#[test]
+fn marks_are_written_once_and_repainting_does_not_stack_them() {
+    let row = |id: &str| PickItem { label: id.into(), value: id.into(), actions: Vec::new(), desc: "3 msgs".into() };
+    let mut items = vec![row("abc"), row("def")];
+    let marks = vec![("abc".to_string(), '?')];
+    mark_rows(&mut items, &marks);
+    assert_eq!(items[0].desc, "? 3 msgs");
+    assert_eq!(items[1].desc, "  3 msgs", "an idle row lost its column");
+    mark_rows(&mut items, &marks);
+    mark_rows(&mut items, &marks);
+    assert_eq!(items[0].desc, "? 3 msgs", "repaints stacked marks");
+    assert_eq!(items[1].desc, "  3 msgs");
+    mark_rows(&mut items, &[("def".to_string(), '•')]);
+    assert_eq!(items[0].desc, "  3 msgs", "a cleared mark stayed");
+    assert_eq!(items[1].desc, "• 3 msgs");
+}

@@ -1524,10 +1524,46 @@ fn spinner_frame(tick: usize) -> char {
 
 /// Put a spinner frame before the count of each working session's row, and
 /// two spaces before the rest, so titles keep their width.
-fn spin_rows(items: &mut [PickItem], working: &[String], frame: char) {
+/// The mark for one session, by priority: waiting for the user, running (the
+/// spinner frame), failed, then a reply not yet viewed. `None` when idle.
+fn state_mark(waiting: bool, streaming: bool, failed: bool, replied: bool, frame: char) -> Option<char> {
+    if waiting {
+        Some('?')
+    } else if streaming {
+        Some(frame)
+    } else if failed {
+        Some('!')
+    } else if replied {
+        Some('•')
+    } else {
+        None
+    }
+}
+
+/// Whether a character is one of the marks a session row can start with.
+fn is_mark(c: char) -> bool {
+    matches!(c, '?' | '!' | '•') || spinner_frames().contains(c)
+}
+
+/// The description without a leading mark, so a repaint never stacks marks.
+fn strip_mark(desc: &str) -> &str {
+    let desc = desc.trim_start();
+    let mut chars = desc.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), Some(' ')) if is_mark(c) => desc[c.len_utf8() + 1..].trim_start(),
+        _ => desc,
+    }
+}
+
+/// Write each session row's mark in front of its description. A session
+/// without a mark gets two spaces, so the columns line up.
+fn mark_rows(items: &mut [PickItem], marks: &[(String, char)]) {
     for item in items {
-        let count = item.desc.trim_start_matches(|c| spinner_frames().contains(c) || c == ' ');
-        item.desc = if working.contains(&item.value) { format!("{frame} {count}") } else { format!("  {count}") };
+        let plain = strip_mark(&item.desc).to_string();
+        item.desc = match marks.iter().find(|(id, _)| *id == item.value) {
+            Some((_, mark)) => format!("{mark} {plain}"),
+            None => format!("  {plain}"),
+        };
     }
 }
 
@@ -1711,6 +1747,8 @@ pub struct App {
     queue_at: Option<usize>,
     /// The stored title: set by `/rename`, or cut from the first message.
     title: String,
+    /// The last turn ended with an error, until the next one finishes.
+    failed: bool,
     /// The turn ended while a queued message was open; send on close.
     queue_due: bool,
     /// Shared with the session: messages that join the running turn, and
@@ -1831,6 +1869,8 @@ struct Pane {
     queue_at: Option<usize>,
     /// The stored title: set by `/rename`, or cut from the first message.
     title: String,
+    /// The last turn ended with an error, until the next one finishes.
+    failed: bool,
     /// The turn ended while a queued message was open; send on close.
     queue_due: bool,
     /// Shared with the session: messages that join the running turn, and
@@ -1876,6 +1916,7 @@ impl Pane {
             queued: Vec::new(),
             queue_at: None,
             title: session.log.as_ref().map(|log| log.meta().title).unwrap_or_default(),
+            failed: false,
             queue_due: false,
             steer: session_steer.clone(),
             hold: session_hold.clone(),
@@ -2480,6 +2521,7 @@ impl App {
             queued: Vec::new(),
             queue_at: None,
             title: String::new(),
+            failed: false,
             queue_due: false,
             steer: session_steer.clone(),
             hold: session_hold.clone(),
@@ -2563,6 +2605,7 @@ impl App {
         swap(&mut self.queued, &mut p.queued);
         swap(&mut self.queue_at, &mut p.queue_at);
         swap(&mut self.title, &mut p.title);
+        swap(&mut self.failed, &mut p.failed);
         swap(&mut self.queue_due, &mut p.queue_due);
         swap(&mut self.steer, &mut p.steer);
         swap(&mut self.hold, &mut p.hold);
@@ -3172,6 +3215,7 @@ impl App {
                 self.dirty = true;
             }
             Ev::Done(err) => {
+                self.failed = err.is_some();
                 if let Some(next) = self.agent_next.take() {
                     self.agent = next;
                 }
@@ -3920,7 +3964,7 @@ impl App {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let mut options: Vec<PickItem> = crate::store::Log::list(&self.sessions_dir)
+        let mut options: Vec<PickItem> = crate::store::Log::listing(&self.sessions_dir)
             .into_iter()
             .map(|m| {
                 let (label, desc) = crate::store::session_row(&m, now);
@@ -3933,7 +3977,7 @@ impl App {
             })
             .collect();
         options.truncate(20);
-        spin_rows(&mut options, &self.working_ids(), spinner_frame(self.spinner));
+        mark_rows(&mut options, &self.session_marks());
         Picker::new("sessions", options, PickKind::Session)
     }
 
@@ -3952,7 +3996,7 @@ impl App {
             })
             .collect::<Vec<_>>();
         let mut items = items;
-        spin_rows(&mut items, &self.working_ids(), spinner_frame(self.spinner));
+        mark_rows(&mut items, &self.session_marks());
         Picker::new(format!("search \"{}\"", query.trim()), items, PickKind::Session)
     }
 
@@ -5759,6 +5803,26 @@ impl App {
     }
 
     /// Ids of live sessions whose agent is working.
+    /// Each open session's mark, keyed by session id. A closed session has none.
+    fn session_marks(&self) -> Vec<(String, char)> {
+        let frame = spinner_frame(self.spinner);
+        let mut out = Vec::new();
+        let mut add = |worker: Option<&Worker>, waiting: bool, streaming: bool, failed: bool, replied: bool| {
+            let Some(id) = worker.and_then(|w| w.2.lock().ok().map(|s| s.clone())).filter(|s| !s.is_empty()) else {
+                return;
+            };
+            if let Some(mark) = state_mark(waiting, streaming, failed, replied, frame) {
+                out.push((id, mark));
+            }
+        };
+        let asking = |pending: &Option<Pending>| matches!(pending, Some(Pending::Confirm { .. } | Pending::Question { .. }));
+        add(self.worker.as_ref(), asking(&self.pending), self.status.streaming, self.failed, self.replied);
+        for p in self.panes.iter().flatten() {
+            add(p.worker.as_ref(), asking(&p.pending), p.status.streaming, p.failed, p.replied);
+        }
+        out
+    }
+
     fn working_ids(&self) -> Vec<String> {
         (0..self.panes.len())
             .filter_map(|i| {
@@ -5780,14 +5844,13 @@ impl App {
         {
             return false;
         }
-        let working = self.working_ids();
         if !self.tool.as_ref().is_some_and(|row| row.running) {
             self.spinner += 1;
         }
-        let frame = spinner_frame(self.spinner);
+        let marks = self.session_marks();
         let Some(Pending::Pick(p)) = &mut self.pending else { return false };
         let before: Vec<String> = p.items.iter().map(|i| i.desc.clone()).collect();
-        spin_rows(&mut p.items, &working, frame);
+        mark_rows(&mut p.items, &marks);
         p.items.iter().zip(&before).any(|(i, b)| &i.desc != b)
     }
 
