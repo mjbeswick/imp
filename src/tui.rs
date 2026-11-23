@@ -17,6 +17,8 @@ const ALT_ON: &str = "\x1b[?1049h\x1b[?25l\x1b[>1u\x1b[?2004h";
 const ALT_OFF: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[<u\x1b[?25h\x1b[?1049l";
 /// SGR mouse reports, so the wheel reaches imp instead of the scrollback.
 const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+/// How long a confirmation stays in the status line.
+const TOAST: Duration = Duration::from_secs(3);
 const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 /// Set from the `mouse` setting before raw mode starts.
 static MOUSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -2360,6 +2362,8 @@ fn is_image_name(name: &str) -> bool {
 
 #[derive(Default)]
 struct Status {
+    /// A confirmation shown in place of the status line, and when.
+    toast: Option<(String, Instant)>,
     /// A retry's countdown: seconds left, attempt, and how many.
     retry: Option<(u64, u32, u32)>,
     tokens: u64,
@@ -2795,12 +2799,28 @@ impl App {
         self.done.clear();
     }
 
+    /// A confirmation of what the user just did, shown in the status line.
+    fn toast(&mut self, text: impl Into<String>) {
+        self.status.toast = Some((text.into(), Instant::now()));
+        self.dirty = true;
+    }
+
+    /// Drop a toast whose time is up; true when the screen needs a repaint.
+    fn expire_toast(&mut self) -> bool {
+        let due = self.status.toast.as_ref().is_some_and(|(_, at)| at.elapsed() >= TOAST);
+        if due {
+            self.status.toast = None;
+            self.dirty = true;
+        }
+        due
+    }
+
     /// Keep `text` for Ctrl+V and say how much was copied.
     fn copy(&mut self, text: String) {
         let n = text.chars().count();
         self.osc52 = Some(format!("\x1b]52;c;{}\x07", crate::api::base64(text.as_bytes())));
         self.clip = text;
-        self.push(Role::Info, format!("copied {n} characters"));
+        self.toast(format!("copied {n} characters"));
     }
 
     fn push(&mut self, role: Role, text: impl Into<String>) {
@@ -4230,7 +4250,7 @@ impl App {
         self.status.served.clear();
         let _ = tx.send(Cmd::SetModel(name.to_string()));
         record_model(&self.models_path, name);
-        self.push(Role::Info, format!("model: {name}"));
+        self.toast(format!("model: {name}"));
     }
 
     /// Add, list, pop, or delete parked messages.
@@ -4733,10 +4753,7 @@ impl App {
             "think" => {
                 self.cfg.thinking = !self.cfg.thinking;
                 let _ = tx.send(Cmd::SetThinking(self.cfg.thinking));
-                self.push(
-                    Role::Info,
-                    format!("thinking: {}", if self.cfg.thinking { "on" } else { "off" }),
-                );
+                self.toast(format!("thinking: {}", if self.cfg.thinking { "on" } else { "off" }));
             }
             "new" => self.new_session(tx),
             "next" => self.go_next(),
@@ -4753,7 +4770,7 @@ impl App {
                 } else if crate::theme::by_name(rest).is_some() {
                     let _ = crate::theme::save(rest);
                     self.palette = Palette::detect(&self.cfg);
-                    self.push(Role::Info, format!("theme: {rest}"));
+                    self.toast(format!("theme: {rest}"));
                 } else {
                     self.push(
                         Role::Error,
@@ -4815,7 +4832,7 @@ impl App {
                     level => match Verbosity::parse(level) {
                         Ok(v) => {
                             self.verbosity = v;
-                            self.push(Role::Info, format!("verbosity: {}", v.as_str()));
+                            self.toast(format!("verbosity: {}", v.as_str()));
                         }
                         Err(e) => self.push(Role::Error, e),
                     },
@@ -5280,7 +5297,7 @@ impl App {
                             PickKind::Keys => {}
                             PickKind::Verbosity => {
                                 self.verbosity = Verbosity::parse(&choice.value).unwrap_or(self.verbosity);
-                                self.push(Role::Info, format!("verbosity: {}", choice.value));
+                                self.toast(format!("verbosity: {}", choice.value));
                             }
                             PickKind::Theme => {
                                 let _ = crate::theme::save(&choice.value);
@@ -5289,7 +5306,7 @@ impl App {
                                 }
                                 // Chosen, so closing must not restore.
                                 self.preview_from = None;
-                                self.push(Role::Info, format!("theme: {}", choice.value));
+                                self.toast(format!("theme: {}", choice.value));
                             }
                             PickKind::Provider if self.onboard => {
                                 self.choose_onboard_provider(&choice.value, tx);
@@ -5542,6 +5559,10 @@ impl App {
     /// long otherwise, an open prompt included. `quiet` is the time since
     /// the last key or event.
     fn loop_wait(&self, quiet: Duration) -> Duration {
+        // A toast wakes the loop when it is due to go.
+        if let Some((_, at)) = &self.status.toast {
+            return TOAST.saturating_sub(at.elapsed()).clamp(Duration::from_millis(50), Duration::from_secs(5));
+        }
         let streaming = self.status.streaming || self.panes.iter().flatten().any(|p| p.status.streaming);
         if streaming || self.tool.as_ref().is_some_and(|row| row.running) || quiet < Duration::from_secs(2) {
             Duration::from_millis(50)
@@ -6485,6 +6506,9 @@ impl App {
         }
         if let (Some((secs, attempt, of)), true) = (self.status.retry, self.status.streaming) {
             return fit(&format!(" retrying in {secs}s · {attempt}/{of} · Esc stop"), cols);
+        }
+        if let Some((text, _)) = self.status.toast.as_ref().filter(|(_, at)| at.elapsed() < TOAST) {
+            return fit(&format!(" {text}"), cols);
         }
         if self.input.starts_with('!') && !self.status.streaming {
             return fit(" shell · local · not sent to the model", cols);
@@ -7512,6 +7536,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
                 redraw = true;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if app.expire_toast() {
+                    redraw = true;
+                }
                 // Ten frames a second is enough for a spinner. Repainting faster
                 // flickers under software terminal renderers.
                 if app.spin_sessions() {

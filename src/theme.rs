@@ -364,6 +364,10 @@ pub fn names() -> Vec<&'static str> {
 }
 
 pub fn save(name: &str) -> Result<(), String> {
+    // Tests must never change the user's saved theme.
+    if cfg!(test) {
+        return Ok(());
+    }
     let path = state_path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

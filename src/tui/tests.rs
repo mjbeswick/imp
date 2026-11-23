@@ -1897,7 +1897,7 @@ fn copy_labels_copy_a_reply_or_its_code() {
     a.frame(40, 12);
     click(&mut a, &tx, |t| matches!(t, Target::Copy(_, None)));
     assert_eq!(a.clip, reply);
-    assert!(a.entries.iter().any(|e| e.text == format!("copied {} characters", reply.len())));
+    assert!(a.status.toast.as_ref().is_some_and(|(t, _)| *t == format!("copied {} characters", reply.len())));
 }
 
 #[test]
@@ -4242,7 +4242,8 @@ fn verbosity_command_controls_tool_detail() {
         detail: String::new(),
         ms: 4,
     });
-    let text = &a.entries[1].text;
+    // The verbosity confirmation is a toast, so the tool row comes first.
+    let text = &a.entries[0].text;
     assert!(text.contains("\n  $ ls"), "{text:?}");
     assert!(text.contains("foo"), "{text:?}");
 
@@ -5040,8 +5041,8 @@ fn replies_use_one_form() {
     assert_eq!(last.role, Role::Error);
     assert!(last.text.contains("/nope"), "{}", last.text);
     a.run_command("think", &tx);
-    let last = a.entries.last().unwrap();
-    assert!(last.text == "thinking: on" || last.text == "thinking: off", "{}", last.text);
+    let toast = a.status.toast.as_ref().map(|(t, _)| t.as_str());
+    assert!(matches!(toast, Some("thinking: on" | "thinking: off")), "{toast:?}");
     a.run_command("verbosity loud", &tx);
     let last = a.entries.last().unwrap();
     assert_eq!(last.role, Role::Error);
@@ -5696,7 +5697,7 @@ fn drags_decode_and_copy_on_release() {
     assert!(a.frame(40, 10).contains("\x1b[7mhello world\x1b[27m"), "no highlight");
     a.handle_key(Key::Release(x + 10, y), &tx);
     assert_eq!(a.clip, "hello world");
-    assert_eq!(a.entries.last().unwrap().text, "copied 11 characters");
+    assert_eq!(a.status.toast.as_ref().map(|(t, _)| t.as_str()), Some("copied 11 characters"));
     assert!(!a.frame(40, 10).contains("\x1b[7mhello"), "the highlight stayed");
     // A click alone copies nothing.
     a.clip.clear();
@@ -5717,4 +5718,20 @@ fn a_retry_counts_down_and_a_failure_offers_ctrl_r() {
     a.apply(Ev::Done(Some("HTTP 401: bad key".into())));
     assert_eq!(a.entries.last().unwrap().text, "HTTP 401: bad key · Ctrl+R retry");
     assert!(!a.status_line(80).contains("retrying"));
+}
+
+#[test]
+fn a_toast_shows_then_goes() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    let before = a.status_line(80);
+    let rows = a.entries.len();
+    a.run_command("verbosity high", &tx);
+    assert_eq!(a.entries.len(), rows, "the confirmation went to the transcript");
+    assert_eq!(a.status_line(80).trim_end(), " verbosity: high");
+    assert!(a.loop_wait(Duration::from_secs(9)) <= TOAST, "the loop sleeps past the toast");
+    a.status.toast.as_mut().unwrap().1 -= TOAST;
+    assert!(a.expire_toast(), "a due toast stayed");
+    assert_eq!(a.status_line(80), before);
+    assert!(!a.expire_toast());
 }
