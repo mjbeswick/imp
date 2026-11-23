@@ -963,11 +963,11 @@ After a successful `edit` or `write`, the system SHALL draw the changed lines un
 
 ### Requirement: Twenty-five slash commands, no more
 
-The system SHALL provide exactly `/help`, `/keys`, `/diff`, `/new`, `/goal`, `/copy`, `/sessions`, `/agent`, `/reload`, `/compact`, `/retry`, `/think`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/queue`, `/rename`, and `/quit`, SHALL run them without sending a request to the model except `/retry`, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
+The system SHALL provide exactly `/help`, `/keys`, `/diff`, `/new`, `/goal`, `/copy`, `/sessions`, `/agent`, `/reload`, `/compact`, `/retry`, `/think`, `/effort`, `/mode`, `/next`, `/verbosity`, `/cwd`, `/cd`, `/image`, `/fork`, `/theme`, `/shell`, `/model`, `/provider`, `/queue`, `/rename`, and `/quit`, SHALL run them without sending a request to the model except `/retry`, and SHALL NOT provide `/clear`, `/yolo`, or `/cost`.
 
 #### Scenario: Help
 - **WHEN** the user types `/help`
-- **THEN** all twenty-six commands appear with a one-line description
+- **THEN** all twenty-seven commands appear with a one-line description
 
 #### Scenario: Unknown command
 - **WHEN** the user types `/nope`
@@ -988,6 +988,10 @@ The system SHALL provide exactly `/help`, `/keys`, `/diff`, `/new`, `/goal`, `/c
 #### Scenario: Nothing to retry
 - **WHEN** no message was sent, or a turn is running, and the user runs `/retry`
 - **THEN** a line says `nothing to retry` or `a turn is running` and nothing is sent
+
+#### Scenario: Effort
+- **WHEN** the user runs `/effort high`
+- **THEN** the next request asks the provider for high effort and the transcript says `effort: high`
 
 ### Requirement: A shell can be opened from the prompt
 

@@ -7,7 +7,7 @@ Defines agents as named profiles — instructions, tool subset, model, thinking 
 
 ### Requirement: An agent is a markdown file
 
-The system SHALL load agents from `agents/<name>.md` under an explicit extra directory, the project `.agents/`, the project `.imp/`, and the global config directory, in that order of precedence, with the file's first heading or filename as its name, its body as instructions, and optional frontmatter keys `tools`, `model`, and `thinking`. It SHALL skip entries that are not `.md` files and SHALL prefer the earlier source when two files share a name.
+The system SHALL load agents from `agents/<name>.md` under an explicit extra directory, the project `.agents/`, the project `.imp/`, and the global config directory, in that order of precedence, with the file's first heading or filename as its name, its body as instructions, and optional frontmatter keys `tools`, `model`, `thinking`, and `effort`. It SHALL skip entries that are not `.md` files and SHALL prefer the earlier source when two files share a name.
 
 #### Scenario: Project agent
 - **WHEN** `.imp/agents/reviewer.md` exists
@@ -32,6 +32,10 @@ The system SHALL load agents from `agents/<name>.md` under an explicit extra dir
 #### Scenario: No agent files
 - **WHEN** no agent files exist
 - **THEN** a built-in `default` profile is available with all tools and no extra instructions
+
+#### Scenario: Effort key
+- **WHEN** an agent file's frontmatter has `effort: high`
+- **THEN** switching to that agent sets the session effort to `high`
 
 ### Requirement: The agent is selectable at launch and switchable later
 
