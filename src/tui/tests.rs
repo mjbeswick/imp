@@ -245,12 +245,10 @@ fn ctrl_q_toggles_steer_and_queue_shown_in_the_rule() {
     assert!(!idle.contains("steer") && idle.contains("\r\n> "), "{idle:?}");
     a.status.streaming = true;
     let steer = strip(&a.frame(60, 10));
-    assert!(steer.contains("── steer · ^Q queue ─"), "{steer:?}");
+    assert!(!steer.contains("^Q") && steer.contains("\r\n> "), "the rule names the mode: {steer:?}");
     a.handle_key(Key::Ctrl('q'), &tx);
     let queue = strip(&a.frame(60, 10));
-    assert!(queue.contains("── queue · ^Q steer ─") && queue.contains("\r\n» "), "{queue:?}");
-    let rule = queue.lines().find(|l| l.contains("queue · ^Q")).unwrap().trim_end_matches('\r');
-    assert_eq!(rule.chars().count(), 60, "{rule:?}");
+    assert!(!queue.contains("^Q") && queue.contains("\r\n» "), "the glyph did not change: {queue:?}");
     // The mode stays when the turn ends; the label goes.
     a.status.streaming = false;
     let done = strip(&a.frame(60, 10));
@@ -502,7 +500,7 @@ fn an_idle_queue_points_at_up() {
     // While a turn runs the rule still says what Enter does.
     a.status.streaming = true;
     let out = strip(&a.frame(54, 12));
-    assert!(!out.contains("↑ edit queue") && out.contains("^Q queue"), "{out:?}");
+    assert!(!out.contains("↑ edit queue") && !out.contains("^Q"), "{out:?}");
 }
 
 #[test]
@@ -583,7 +581,8 @@ fn tab_cycles_agents_on_an_empty_draft() {
     a.status.streaming = true;
     a.handle_key(Key::Tab, &tx);
     assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("review", Some("build")));
-    assert!(a.entries.last().unwrap().text.ends_with("after this turn"));
+    assert!(a.entries.is_empty(), "a switch wrote a transcript line");
+    assert!(strip(&a.frame(60, 10)).contains("\r\nbuild > "), "the prompt does not name the coming agent");
     a.apply(Ev::Done(None));
     assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("build", None));
     // One agent: Tab does nothing.
@@ -595,17 +594,22 @@ fn tab_cycles_agents_on_an_empty_draft() {
 }
 
 #[test]
-fn the_status_line_names_the_agent_and_an_unusual_mode() {
+fn the_prompt_names_the_agent_and_the_status_line_the_mode() {
     let mut a = app();
     a.agents = vec![("build".into(), String::new())];
     a.agent = "build".into();
+    assert!(strip(&a.frame(60, 10)).contains("\r\n> "), "one agent should give a bare prompt");
+    a.agents.push(("plan".into(), String::new()));
+    a.input = "x".repeat(70);
+    a.cursor = a.input.len();
+    let rows: Vec<String> = strip(&a.frame(60, 12)).split("\r\n").map(String::from).collect();
+    let first = rows.iter().position(|r| r.starts_with("build > ")).expect("no agent before the prompt");
+    assert!(rows[first + 1].starts_with("        x"), "the next row is not aligned: {rows:?}");
+    a.agent_next = Some("plan".into());
+    assert!(strip(&a.frame(60, 12)).contains("\r\nplan > "));
     assert!(a.status_line(80).starts_with("deepseek-flash · 0 tok"), "{}", a.status_line(80));
-    a.agents.push(("review".into(), String::new()));
-    assert!(a.status_line(80).starts_with("deepseek-flash · build · 0 tok"));
-    a.agent_next = Some("review".into());
-    assert!(a.status_line(80).starts_with("deepseek-flash · build → review · 0 tok"));
     a.cfg.set_permissions(crate::config::Permissions::Strict);
-    assert!(a.status_line(80).starts_with("deepseek-flash · build → review · strict · 0 tok"));
+    assert!(a.status_line(80).starts_with("deepseek-flash · strict · 0 tok"), "{}", a.status_line(80));
     assert!(a.status_line(54).chars().count() <= 54);
 }
 
@@ -2541,7 +2545,7 @@ fn composer_rows_fit_the_terminal() {
         assert!(visible.chars().count() <= 40, "{visible:?}");
     }
     assert!(
-        !out.contains("…"),
+        !out.lines().filter(|l| l.contains('x') || l.contains('y')).any(|l| l.contains('…')),
         "a wrapped row was cut instead of wrapped"
     );
     assert_eq!(out.matches('x').count(), 90, "the draft lost characters");

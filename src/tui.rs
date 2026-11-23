@@ -2405,10 +2405,12 @@ impl App {
         let allows = cfg.always_allows().into_iter().map(|s| (s, true)).collect();
         SPIN.store(cfg.spinner, Ordering::Relaxed);
         let history = load_history();
-        let agents = crate::store::load_agents(&cfg, &root)
-            .into_iter()
-            .map(|a| (a.name, a.description))
-            .collect();
+        // Tests see one agent whatever the machine has installed.
+        let agents = if cfg!(test) {
+            vec![("default".to_string(), String::new())]
+        } else {
+            crate::store::load_agents(&cfg, &root).into_iter().map(|a| (a.name, a.description)).collect()
+        };
         let sessions_dir = crate::config::dirs_state().join("imp").join("sessions");
         // Handed to the session when its worker starts.
         let session_steer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -4105,11 +4107,10 @@ impl App {
         let at = self.agents.iter().position(|(n, _)| n == current).unwrap_or(0);
         let next = self.agents[(at + 1) % self.agents.len()].0.clone();
         let _ = tx.send(Cmd::SetAgent(next.clone()));
+        // The prompt names the agent; no transcript line.
         if self.status.streaming {
-            self.push(Role::Info, format!("agent: {next} after this turn"));
             self.agent_next = Some(next);
         } else {
-            self.push(Role::Info, format!("agent: {next}"));
             self.agent = next;
         }
         self.dirty = true;
@@ -5280,7 +5281,6 @@ impl App {
                             PickKind::Agent => {
                                 self.agent = choice.value.clone();
                                 let _ = tx.send(Cmd::SetAgent(choice.value.clone()));
-                                self.push(Role::Info, format!("agent: {}", choice.value));
                             }
                             PickKind::Session => self.resume(choice.value, tx),
                             PickKind::Model => {
@@ -5809,8 +5809,8 @@ impl App {
                 (None, true) if self.status.suggestion.is_some() => "→ accept".into(),
                 (None, true) if !self.queued.is_empty() => "↑ edit queue".into(),
                 (None, true) => String::new(),
-                (None, false) if self.queue_mode => "queue · ^Q steer".into(),
-                (None, false) => "steer · ^Q queue".into(),
+                // The prompt glyph shows steer or queue; the rule stays quiet.
+                (None, false) => String::new(),
             };
             let rule = if label.is_empty() || cols < label.chars().count() + 6 {
                 "─".repeat(cols)
@@ -6285,10 +6285,11 @@ impl App {
         }
         if let (Some(s), true, None) = (&self.status.suggestion, self.input.is_empty(), &self.pending) {
             let tone = if self.yolo() { Role::Error } else { Role::User };
-            let hint = fit(s, cols.saturating_sub(3));
+            let hint = fit(s, cols.saturating_sub(self.prompt_width() + 1));
+            let agent = self.prompt_agent().map_or(String::new(), |a| format!("{a} "));
             return vec![format!(
                 "{}\x1b[7m \x1b[0m{}",
-                self.palette.paint(tone, "> "),
+                self.palette.paint(tone, &format!("{agent}> ")),
                 self.palette.paint(Role::Thinking, &hint)
             )];
         }
@@ -6307,8 +6308,9 @@ impl App {
             (&self.input[..], self.cursor)
         };
         let cursor = cursor.min(text.len());
-        // Two columns for the prefix, one for a caret at the row's end.
-        let width = cols.saturating_sub(3).max(1);
+        // The prompt's columns, and one for a caret at the row's end.
+        let lead = self.prompt_width();
+        let width = cols.saturating_sub(lead + 1).max(1);
         let rows = draft_rows(text, width);
         // A caret on a wrap boundary belongs to the row it starts.
         let caret_row = rows
@@ -6350,14 +6352,17 @@ impl App {
                 body.push(ch);
             }
             marks(&mut body, line.len());
-            let prefix = if i != 0 {
-                "  "
-            } else if shell {
+            let glyph = if shell {
                 "$ "
             } else if self.status.streaming && self.queue_mode {
                 "» "
             } else {
                 "> "
+            };
+            let prefix = match (i, self.prompt_agent()) {
+                (0, Some(agent)) => format!("{agent} {glyph}"),
+                (0, None) => glyph.to_string(),
+                _ => " ".repeat(lead),
             };
             plain.push(format!("{prefix}{body}"));
         }
@@ -6374,8 +6379,8 @@ impl App {
 
     /// Paint one composer row. Rows are already cut to the width.
     fn paint_composer_row(&self, row: &str, _cols: usize) -> String {
-        // The prompt glyph and its space; `»` is two bytes.
-        let cut = row.char_indices().nth(2).map_or(row.len(), |(i, _)| i);
+        // The prompt, agent and glyph with their spaces; `»` is two bytes.
+        let cut = row.char_indices().nth(self.prompt_width()).map_or(row.len(), |(i, _)| i);
         let (prefix, fitted) = row.split_at(cut);
         let fitted = fitted.to_string();
         // A selection that runs on from the row before, or was cut off the
@@ -6393,13 +6398,24 @@ impl App {
         };
         let tone = if self.yolo() {
             Role::Error
-        } else if prefix.starts_with('»') {
+        } else if prefix.contains('»') {
             // Queue mode: the glyph is muted.
             Role::Thinking
         } else {
             Role::User
         };
         self.palette.paint(tone, prefix) + &fitted
+    }
+
+    /// The agent the next message goes to, shown before the prompt glyph
+    /// while there is a choice of agents.
+    fn prompt_agent(&self) -> Option<&str> {
+        (self.agents.len() > 1).then(|| self.agent_next.as_deref().unwrap_or(&self.agent))
+    }
+
+    /// Columns the prompt takes: the agent and a space, then glyph and space.
+    fn prompt_width(&self) -> usize {
+        2 + self.prompt_agent().map_or(0, |a| a.chars().count() + 1)
     }
 
     /// Yolo is shown by colour alone: the prompt glyph and the rule.
@@ -6470,7 +6486,8 @@ impl App {
     /// The draft's drawn rows at the terminal's width.
     fn draft_rows_now(&self) -> Vec<(usize, usize)> {
         let cols = self.cols.load(Ordering::Relaxed) as usize;
-        let width = if cols >= 5 { cols - 3 } else { 77 };
+        let lead = self.prompt_width() + 1;
+        let width = if cols >= lead + 2 { cols - lead } else { 77 };
         draft_rows(self.draft_text(), width)
     }
 
@@ -6574,12 +6591,8 @@ impl App {
             Some((_, round, rounds)) => format!(" · goal {round}/{rounds}"),
             None => String::new(),
         };
-        // The agent, when there is a choice of them, and the mode.
-        let agent = match (&self.agent_next, self.agents.len() > 1) {
-            (Some(next), _) => format!("{} → {next} · ", self.agent),
-            (None, true) => format!("{} · ", self.agent),
-            (None, false) => String::new(),
-        };
+        // The agent is named before the prompt glyph instead.
+        let agent = "";
         let mode = match self.cfg.live_permissions() {
             crate::config::Permissions::Normal => String::new(),
             other => format!("{} · ", other.as_str()),
@@ -7275,8 +7288,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                             tx: ev_tx.clone(),
                             waited: Duration::ZERO,
                         };
-                        let applied = worker_session.switch_agent(agent);
-                        let _ = ev_tx.send(Ev::Info(format!("agent: {applied}")));
+                        worker_session.switch_agent(agent);
                         let _ = &mut hooks;
                     } else {
                         let names: Vec<String> = worker_session
