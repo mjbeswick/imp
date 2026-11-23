@@ -18,24 +18,12 @@ const CONFIG_TEMPLATE: &str = "\
 # compact_at=60000
 # max_tokens=8192
 # color=auto                  # auto | always | never
-# mouse=on                    # wheel scrolls the chat; Option-drag selects
+# mouse=on                    # wheel scrolls; drag selects and copies
 # goal_rounds=5               # turns a /goal may run, 1 to 20
 # suggest=on                  # a greyed next message after each reply; Tab takes it
 # diffs=on                    # changed lines under each edit or write
 # spinner=circle              # braille dots line arc square triangle pulse bar star random
 # skills_dir=~/.config/imp/skills
-";
-
-const AGENT_EXAMPLE: &str = "\
----
-description: reviews a diff and reports only defects
-# tools: read, bash
-# model: deepseek-v4-pro
-# thinking: true
----
-
-You review code. Read the diff, then report only real defects, each with a
-file and line. Say nothing about style unless it changes behaviour.
 ";
 
 const SKILL_EXAMPLE: &str = "\
@@ -85,11 +73,6 @@ pub fn run_at(config_dir: &Path, state_dir: &Path) -> Result<Report, String> {
     write_once(
         &config_dir.join("config"),
         CONFIG_TEMPLATE,
-        &mut report,
-    )?;
-    write_once(
-        &config_dir.join("agents").join("example.md"),
-        AGENT_EXAMPLE,
         &mut report,
     )?;
     write_once(
@@ -159,7 +142,8 @@ mod tests {
         let state = base.join("state-dir");
         let report = run_at(&cfg, &state).unwrap();
         assert!(cfg.join("config").is_file());
-        assert!(cfg.join("agents/example.md").is_file());
+        assert!(cfg.join("agents").is_dir());
+        assert!(std::fs::read_dir(cfg.join("agents")).unwrap().next().is_none(), "init wrote an agent");
         assert!(cfg.join("skills/git/SKILL.md").is_file());
         assert!(state.join("sessions").is_dir());
         assert!(state.join("memory").is_dir());
@@ -192,8 +176,6 @@ mod tests {
         let cfg = base.join("c");
         let state = base.join("s");
         run_at(&cfg, &state).unwrap();
-        let agent = crate::store::Agent::from_file(&cfg.join("agents/example.md")).unwrap();
-        assert!(agent.instructions.contains("You review code"));
         let skill = std::fs::read_to_string(cfg.join("skills/git/SKILL.md")).unwrap();
         assert!(skill.contains("description:"));
     }

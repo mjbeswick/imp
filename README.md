@@ -24,7 +24,8 @@ export DEEPSEEK_API_KEY=...
 ```
 
 `imp init` creates `~/.config/imp/` and `~/.local/state/imp/`, writes a
-commented config and one example agent and skill, and overwrites nothing.
+commented config and one example skill, and overwrites nothing. The agents
+`build`, `plan` and `review` are built in; a file of the same name replaces one.
 
 Needs libcurl at runtime: present on macOS and on any Linux with curl installed.
 
