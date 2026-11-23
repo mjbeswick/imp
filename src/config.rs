@@ -324,14 +324,23 @@ impl Config {
     /// the file dropped, which need a restart. `allow` lines are imp's own
     /// and already live, so they are skipped.
     pub fn reload_from(&mut self, new: &Config) -> (Vec<String>, Vec<String>) {
-        let last = |pairs: &[(String, String)]| -> std::collections::BTreeMap<String, String> {
-            pairs.iter().filter(|(k, _)| k != "allow").cloned().collect()
+        // The last value of each key, sorted by key.
+        let last = |pairs: &[(String, String)]| -> Vec<(String, String)> {
+            let mut out: Vec<(String, String)> = Vec::new();
+            for (k, v) in pairs.iter().rev().filter(|(k, _)| k != "allow") {
+                if !out.iter().any(|(seen, _)| seen == k) {
+                    out.push((k.clone(), v.clone()));
+                }
+            }
+            out.sort();
+            out
         };
         let (old, now) = (last(&self.pairs), last(&new.pairs));
+        let get = |list: &[(String, String)], key: &str| list.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
         let mut changed = Vec::new();
         for (key, value) in &now {
-            let before = old.get(key);
-            if before == Some(value) {
+            let before = get(&old, key);
+            if before.as_ref() == Some(value) {
                 continue;
             }
             let result = if key.starts_with("provider.") {
@@ -340,13 +349,13 @@ impl Config {
             } else {
                 self.set(key, value)
             };
-            let from = before.map_or("unset", String::as_str);
+            let from = before.as_deref().unwrap_or("unset");
             changed.push(match result {
                 Ok(()) => format!("{key}: {from} → {value}"),
                 Err(e) => format!("{key}: not applied: {e}"),
             });
         }
-        let removed = old.keys().filter(|k| !now.contains_key(*k)).cloned().collect();
+        let removed = old.iter().filter(|(k, _)| get(&now, k).is_none()).map(|(k, _)| k.clone()).collect();
         self.pairs = new.pairs.clone();
         self.unknown = new.unknown.clone();
         (changed, removed)
