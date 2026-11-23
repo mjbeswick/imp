@@ -24,17 +24,21 @@ The system SHALL save a provider form for a built-in provider as a named profile
 - **WHEN** the user saves the form with the name `openai`
 - **THEN** the form reports that the name is a built-in provider and nothing is saved
 
-### Requirement: Enter still switches and the footer offers configure
+### Requirement: Enter opens the form, u switches, and the footer names both
 
-The system SHALL keep Enter switching the session to the highlighted provider, and SHALL show `e configure` in the footer of the provider picker when a row is highlighted.
+The system SHALL open the configuration form when the user presses Enter on a row of the provider picker, SHALL switch the session to the highlighted provider when the user presses `u` on that row, or Ctrl+U in a provider picker opened by a typed `/provider`, SHALL keep Enter switching during first-run setup, and SHALL show `u use` and `e configure` in the footer of the provider picker when a row is highlighted.
 
-#### Scenario: Enter switches
-- **WHEN** the user highlights `ollama` and presses Enter
-- **THEN** the session switches to `ollama`, as before
+#### Scenario: Enter opens the form
+- **WHEN** the user highlights `ollama` in the provider picker and presses Enter
+- **THEN** the configuration form for `ollama` opens and the session stays on its current provider
+
+#### Scenario: u switches
+- **WHEN** the user highlights `ollama` and presses `u`
+- **THEN** the session switches to `ollama` and the picker closes
 
 #### Scenario: Footer
 - **WHEN** the provider picker is open with a row highlighted
-- **THEN** the footer reads `e configure` alongside the existing hints
+- **THEN** the footer reads `u use` and `e configure`
 
 ### Requirement: Ctrl+E configures a row of a typed provider picker
 
