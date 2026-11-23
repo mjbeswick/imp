@@ -3392,7 +3392,8 @@ fn provider_add_edits_the_managed_block() {
     for c in "WORK_KEY".chars() {
         a.handle_key(Key::Char(c), &tx);
     }
-    // The key row comes after key_env; empty, its Enter saves the form.
+    // key_env, then models, then the key row, which saves when empty.
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     assert!(a.pending.is_none(), "the form stayed open");
@@ -3410,6 +3411,7 @@ fn provider_add_edits_the_managed_block() {
     for _ in 0..3 {
         a.handle_key(Key::Right, &tx);
     }
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
@@ -3440,7 +3442,9 @@ fn provider_use_reaches_the_worker_and_delete_refuses_the_active_one() {
         a.handle_key(Key::Char(c), &tx);
     }
     a.handle_key(Key::Enter, &tx);
-    // The key row comes after key_env; empty, its Enter saves the form.
+    // key_env, then models, then the key row, which saves when empty.
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
 
     a.run_command("provider use work", &tx);
@@ -6169,7 +6173,7 @@ fn the_provider_form_stops_at_the_first_and_last_field() {
     for _ in 0..6 {
         a.handle_key(Key::Down, &tx);
     }
-    assert_eq!(provider_form(&a).1, 4, "↓ went past the last field");
+    assert_eq!(provider_form(&a).1, 5, "↓ went past the last field");
 }
 
 #[test]
@@ -6332,6 +6336,7 @@ fn e_on_a_custom_provider_opens_its_saved_profile() {
         model: "m1".into(),
         key_env: String::new(),
         dialect: "openai".into(),
+        models: Vec::new(),
     });
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
@@ -6362,6 +6367,7 @@ fn saving_a_built_in_change_adds_a_named_copy_and_keeps_the_built_in() {
     type_text(&mut a, &tx, "deepseek-pro");
     a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     let saved = std::fs::read_to_string(&config).unwrap();
@@ -6526,6 +6532,7 @@ fn e_on_the_custom_provider_row_shows_the_form() {
         model: "m1".into(),
         key_env: String::new(),
         dialect: "openai".into(),
+        models: Vec::new(),
     });
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
@@ -6555,6 +6562,7 @@ fn ctrl_e_configures_the_row_after_slash_provider() {
         model: "m1".into(),
         key_env: String::new(),
         dialect: "openai".into(),
+        models: Vec::new(),
     });
     let (tx, _rx) = channel();
     a.input = "/provider ".into();
@@ -6794,7 +6802,7 @@ fn the_provider_form_has_an_api_key_field_that_is_masked() {
     let (tx, _rx) = channel();
     open_add_form(&mut a, &tx);
     assert_eq!(form_field(&a, "api_key"), "", "the key field is missing");
-    for _ in 0..4 {
+    for _ in 0..5 {
         a.handle_key(Key::Down, &tx);
     }
     type_text(&mut a, &tx, "sk-typed-key-9");
@@ -6818,7 +6826,8 @@ fn saving_with_a_key_but_no_variable_name_is_refused_and_nothing_is_saved() {
     a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Right, &tx);
     a.handle_key(Key::Right, &tx);
-    // key_env stays empty; down to the key row.
+    // key_env stays empty; down past models to the key row.
+    a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Down, &tx);
     type_text(&mut a, &tx, "sk-no-variable-1");
@@ -6870,6 +6879,77 @@ fn saving_without_a_model_says_which_fields_are_required() {
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
     let shown = strip(&a.frame(90, 24));
     assert!(shown.contains("required"), "no required message: {shown:?}");
+}
+
+#[test]
+fn the_models_field_saves_a_comma_separated_list() {
+    let (mut a, config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    for text in ["http://box/v1", "m1"] {
+        type_text(&mut a, &tx, text);
+        a.handle_key(Key::Enter, &tx);
+    }
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
+    type_text(&mut a, &tx, "m1, m2");
+    assert_eq!(form_field(&a, "models"), "m1, m2", "the models field did not take text");
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
+    let saved = std::fs::read_to_string(&config).unwrap();
+    assert!(saved.contains("provider.work.models = m1, m2"), "{saved}");
+}
+
+fn work_provider(a: &mut App) {
+    a.cfg.named.push(crate::config::NamedProvider {
+        name: "work".into(),
+        base: "http://box/v1".into(),
+        model: "m1".into(),
+        models: vec!["m2".into()],
+        key_env: String::new(),
+        dialect: "openai".into(),
+    });
+}
+
+#[test]
+fn the_model_picker_lists_every_configured_providers_models() {
+    let (mut a, _config) = provider_app();
+    work_provider(&mut a);
+    let (tx, _rx) = channel();
+    a.run_command("model", &tx);
+    let values: Vec<String> = open_picker(&a).items.iter().map(|i| i.value.clone()).collect();
+    assert!(values.iter().any(|v| v == "work::m1"), "no work::m1 row: {values:?}");
+    assert!(values.iter().any(|v| v == "work::m2"), "no work::m2 row: {values:?}");
+    assert!(values.iter().any(|v| v == "deepseek::deepseek-flash"), "no built-in row: {values:?}");
+}
+
+#[test]
+fn choosing_a_model_from_another_provider_switches_both() {
+    let (mut a, _config) = provider_app();
+    work_provider(&mut a);
+    let (tx, _rx) = channel();
+    a.run_command("model", &tx);
+    provider_row(&mut a, "work::m2");
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(a.cfg.active_name, "work", "the provider did not switch");
+    assert_eq!(a.cfg.model, "m2", "the model did not switch");
+}
+
+#[test]
+fn the_status_line_names_a_configured_provider() {
+    let (mut a, _config) = provider_app();
+    work_provider(&mut a);
+    let (tx, _rx) = channel();
+    a.run_command("model", &tx);
+    provider_row(&mut a, "work::m2");
+    a.handle_key(Key::Enter, &tx);
+    // The "model: m2" toast takes the status line for three seconds; the provider shows after it.
+    a.status.toast = None;
+    let line = a.status_line(120);
+    assert!(line.contains("m2 (work)"), "the status line does not name the provider: {line}");
 }

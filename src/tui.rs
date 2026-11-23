@@ -3882,6 +3882,37 @@ impl App {
                 actions: Vec::new(),
             });
         }
+        // Every provider's models, each row naming its provider. Choosing one
+        // switches to that provider as well.
+        let mut providers: Vec<(String, Vec<String>)> = Vec::new();
+        for provider in [
+            crate::providers::Provider::DeepSeek,
+            crate::providers::Provider::OpenAi,
+            crate::providers::Provider::Anthropic,
+            crate::providers::Provider::Gemini,
+            crate::providers::Provider::Ollama,
+            crate::providers::Provider::Custom,
+        ] {
+            providers.push((format!("{provider:?}").to_lowercase(), vec![provider.profile().model.to_string()]));
+        }
+        for named in &self.cfg.named {
+            providers.push((named.name.clone(), named.offered_models()));
+        }
+        for (provider, models) in providers {
+            for model in models {
+                let value = format!("{provider}::{model}");
+                if items.iter().any(|i| i.value == value) {
+                    continue;
+                }
+                let current_pair = provider == self.cfg.active_name && model == current;
+                items.push(PickItem {
+                    label: model.clone(),
+                    desc: mark_current(current_pair, &provider),
+                    value,
+                    actions: Vec::new(),
+                });
+            }
+        }
         items
     }
 
@@ -4754,7 +4785,7 @@ impl App {
                     self.push(Role::Error, format!("provider {name} already exists"));
                     return;
                 }
-                let fields = ["base".to_string(), "model".to_string(), "dialect".to_string(), "key_env".to_string(), "api_key".to_string()]
+                let fields = ["base".to_string(), "model".to_string(), "dialect".to_string(), "key_env".to_string(), "models".to_string(), "api_key".to_string()]
                     .into_iter()
                     .map(|label| (label, String::new()))
                     .collect();
@@ -4775,6 +4806,7 @@ impl App {
                     ("model".to_string(), profile.model),
                     ("dialect".to_string(), profile.dialect),
                     ("key_env".to_string(), profile.key_env),
+                    ("models".to_string(), profile.models.join(", ")),
                     ("api_key".to_string(), String::new()),
                 ];
                 self.pending = Some(Pending::ProviderForm {
@@ -4863,6 +4895,7 @@ impl App {
                 ("model".to_string(), profile.model),
                 ("dialect".to_string(), profile.dialect),
                 ("key_env".to_string(), profile.key_env),
+                ("models".to_string(), profile.models.join(", ")),
                 ("api_key".to_string(), String::new()),
             ];
             self.pending = Some(Pending::ProviderForm { name: value.to_string(), fields, at: 0 });
@@ -4873,6 +4906,7 @@ impl App {
                 ("model".to_string(), defaults.model.to_string()),
                 ("dialect".to_string(), value.to_string()),
                 ("key_env".to_string(), defaults.key_var.unwrap_or("").to_string()),
+                ("models".to_string(), String::new()),
                 ("api_key".to_string(), String::new()),
             ];
             self.pending = Some(Pending::ProviderForm { name: format!("{value}-custom"), fields, at: 0 });
@@ -5064,7 +5098,7 @@ impl App {
         }
         // A typed key goes to the key store under its variable name. It is never
         // written to the config or echoed.
-        let api_key = value(4);
+        let api_key = value(5);
         if !api_key.is_empty() {
             if key_env.is_empty() {
                 self.push(Role::Error, "provider: an API key needs a key variable (key_env) to save under");
@@ -5074,15 +5108,18 @@ impl App {
             }
             if let Err(e) = crate::config::save_key(&key_env, &api_key) {
                 self.push(Role::Error, e);
-                self.pending = Some(Pending::ProviderForm { name, fields, at: 4 });
+                self.pending = Some(Pending::ProviderForm { name, fields, at: 5 });
                 self.dirty = true;
                 return;
             }
         }
+        // The models a provider already lists are kept until the form edits them.
+        let models: Vec<String> = value(4).split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect();
         let profile = crate::config::NamedProvider {
             name: name.clone(),
             base,
             model,
+            models,
             dialect,
             key_env,
         };
@@ -5854,7 +5891,14 @@ impl App {
                             }
                             PickKind::Session => self.resume(choice.value, tx),
                             PickKind::Model => {
-                                self.set_model(&choice.value, tx);
+                                // A row from another provider names it as "provider::model".
+                                match choice.value.split_once("::") {
+                                    Some((provider, model)) => match self.set_provider(provider, tx) {
+                                        Ok(()) => self.set_model(model, tx),
+                                        Err(e) => self.push(Role::Error, e),
+                                    },
+                                    None => self.set_model(&choice.value, tx),
+                                }
                             }
                             PickKind::Palette => {
                                 let value = choice.value.clone();
@@ -7276,6 +7320,12 @@ impl App {
             self.cfg.model.clone()
         } else {
             format!("{} ({})", self.cfg.model, self.status.served)
+        };
+        // A configured provider is named after its model, so the session's source shows.
+        let model = if self.cfg.named.iter().any(|n| n.name == self.cfg.active_name) {
+            format!("{model} ({})", self.cfg.active_name)
+        } else {
+            model
         };
         // With several live sessions, which one this is comes first.
         // Which session this is lives in the title bar.

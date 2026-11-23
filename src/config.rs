@@ -118,8 +118,24 @@ pub struct NamedProvider {
     pub name: String,
     pub base: String,
     pub model: String,
+    /// Further models this provider offers, besides its default `model`.
+    pub models: Vec<String>,
     pub key_env: String,
     pub dialect: String,
+}
+
+impl NamedProvider {
+    /// Every model this provider offers: the default first, then the listed
+    /// ones, without repeats.
+    pub fn offered_models(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for model in std::iter::once(&self.model).chain(self.models.iter()) {
+            if !model.is_empty() && !out.contains(model) {
+                out.push(model.clone());
+            }
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -620,6 +636,9 @@ fn set_named_field(named: &mut Vec<NamedProvider>, name: &str, field: &str, valu
     match field {
         "base" => profile.base = value.to_string(),
         "model" => profile.model = value.to_string(),
+        "models" => {
+            profile.models = value.split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect()
+        }
         "key_env" => profile.key_env = value.to_string(),
         "dialect" => profile.dialect = value.to_string(),
         _ => {}
@@ -646,6 +665,9 @@ pub fn providers_block(named: &[NamedProvider]) -> String {
             "provider.{}.model = {}\n",
             profile.name, profile.model
         ));
+        if !profile.models.is_empty() {
+            out.push_str(&format!("provider.{}.models = {}\n", profile.name, profile.models.join(", ")));
+        }
         out.push_str(&format!(
             "provider.{}.key_env = {}\n",
             profile.name, profile.key_env
@@ -1225,6 +1247,7 @@ mod tests {
         let named = vec![NamedProvider {
             name: "work".into(),
             base: "http://box/v1".into(),
+            models: Vec::new(),
             model: "m".into(),
             key_env: "K".into(),
             dialect: "openai".into(),
@@ -1459,5 +1482,49 @@ impl TitleSummary {
             Self::On => "on",
             Self::Off => "off",
         }
+    }
+}
+
+#[cfg(test)]
+mod provider_models_tests {
+    use super::*;
+
+    #[test]
+    fn a_models_line_parses_as_a_comma_separated_list() {
+        let text = "# >>> providers\nprovider.work.base = http://box/v1\nprovider.work.model = m1\nprovider.work.models = m1, m2 ,m3\n# <<< providers\n";
+        let cfg = Config::from_str(text).unwrap();
+        let work = cfg.named.iter().find(|n| n.name == "work").unwrap();
+        assert_eq!(work.models, vec!["m1", "m2", "m3"]);
+    }
+
+    #[test]
+    fn the_default_model_is_always_offered() {
+        let work = NamedProvider {
+            name: "work".into(),
+            model: "m1".into(),
+            models: vec!["m2".into()],
+            ..NamedProvider::default()
+        };
+        assert_eq!(work.offered_models(), vec!["m1".to_string(), "m2".to_string()]);
+        let bare = NamedProvider { name: "bare".into(), model: "m1".into(), ..NamedProvider::default() };
+        assert_eq!(bare.offered_models(), vec!["m1".to_string()]);
+    }
+
+    #[test]
+    fn models_are_written_back_and_the_line_is_omitted_when_empty() {
+        let with = NamedProvider {
+            name: "work".into(),
+            base: "http://box/v1".into(),
+            model: "m1".into(),
+            models: vec!["m2".into(), "m3".into()],
+            dialect: "openai".into(),
+            ..NamedProvider::default()
+        };
+        let text = providers_block(&[with.clone()]);
+        assert!(text.contains("provider.work.models = m2, m3\n"), "{text}");
+        let back = Config::from_str(&text).unwrap();
+        assert_eq!(back.named[0].models, vec!["m2", "m3"]);
+        let without = NamedProvider { models: Vec::new(), ..with };
+        assert!(!providers_block(&[without]).contains(".models"), "an empty list was written");
     }
 }
