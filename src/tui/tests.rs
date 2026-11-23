@@ -6953,3 +6953,59 @@ fn the_status_line_names_a_configured_provider() {
     let line = a.status_line(120);
     assert!(line.contains("m2 (work)"), "the status line does not name the provider: {line}");
 }
+
+fn goal_app() -> (App, Sender<Cmd>, Receiver<Cmd>) {
+    let (mut a, _config) = provider_app();
+    let (tx, rx) = channel::<Cmd>();
+    let (_ev_tx, ev_rx) = channel::<Ev>();
+    a.worker = Some((tx.clone(), ev_rx, std::sync::Arc::new(std::sync::Mutex::new(String::new()))));
+    (a, tx, rx)
+}
+
+#[test]
+fn goal_shows_its_text_round_and_state() {
+    let (mut a, tx, _rx) = goal_app();
+    a.status.goal = Some(("fix the parser".into(), 2, 5));
+    a.status.goal_paused = true;
+    a.run_command("goal", &tx);
+    let shown = strip(&a.frame(100, 30));
+    assert!(shown.contains("fix the parser") && shown.contains("round 2/5") && shown.contains("paused"), "{shown:?}");
+}
+
+#[test]
+fn goal_pause_resume_clear_and_edit_send_their_commands() {
+    let (mut a, tx, rx) = goal_app();
+    a.status.goal = Some(("fix the parser".into(), 2, 5));
+    a.run_command("goal pause", &tx);
+    assert!(matches!(rx.try_recv(), Ok(Cmd::GoalPause)), "pause was not sent");
+    a.run_command("goal resume", &tx);
+    assert!(matches!(rx.try_recv(), Ok(Cmd::Goal(t)) if t.is_empty()), "resume was not sent");
+    a.run_command("goal clear", &tx);
+    assert!(matches!(rx.try_recv(), Ok(Cmd::GoalOff)), "clear was not sent");
+    a.run_command("goal edit fix the lexer", &tx);
+    assert!(matches!(rx.try_recv(), Ok(Cmd::GoalEdit(t)) if t == "fix the lexer"), "edit was not sent");
+}
+
+#[test]
+fn a_new_goal_asks_before_replacing_a_running_one() {
+    let (mut a, tx, rx) = goal_app();
+    a.status.goal = Some(("fix the parser".into(), 2, 5));
+    a.run_command("goal write tests", &tx);
+    assert!(matches!(a.pending, Some(Pending::GoalReplace { .. })), "no replace question");
+    assert!(rx.try_recv().is_err(), "the new goal started before the answer");
+    a.handle_key(Key::Char('n'), &tx);
+    assert!(a.pending.is_none());
+    assert!(rx.try_recv().is_err(), "declining still changed the goal");
+    a.run_command("goal write tests", &tx);
+    a.handle_key(Key::Char('y'), &tx);
+    assert!(matches!(rx.try_recv(), Ok(Cmd::Goal(t)) if t == "write tests"), "replace was not sent");
+}
+
+#[test]
+fn the_status_line_shows_a_paused_goal() {
+    let (mut a, _tx, _rx) = goal_app();
+    a.status.goal = Some(("fix the parser".into(), 2, 5));
+    a.status.goal_paused = true;
+    let line = a.status_line(120);
+    assert!(line.contains("goal 2/5 · paused"), "{line}");
+}

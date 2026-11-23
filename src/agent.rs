@@ -93,6 +93,8 @@ pub struct Goal {
     pub text: String,
     pub round: u32,
     pub rounds: u32,
+    /// Kept but not run: `/goal pause` sets it, `/goal resume` clears it.
+    pub paused: bool,
 }
 
 /// A file before imp first changed it this session.
@@ -1150,12 +1152,45 @@ impl Session {
     /// Set a goal and return the first round's message.
     pub fn start_goal(&mut self, text: &str) -> String {
         let rounds = self.cfg.goal_rounds.clamp(1, 20);
-        self.goal = Some(Goal { text: text.to_string(), round: 1, rounds });
+        self.goal = Some(Goal { text: text.to_string(), round: 1, rounds, paused: false });
         self.declined = false;
         format!(
             "[Goal from imp, not the user.] Work until this goal is met: {text}\n{}",
             GOAL_ENDINGS
         )
+    }
+
+    /// Pause the goal: it is kept with its round, and no round runs until resumed.
+    pub fn pause_goal(&mut self) {
+        if let Some(goal) = &mut self.goal {
+            goal.paused = true;
+        }
+    }
+
+    /// Clear the goal: it is removed.
+    pub fn clear_goal(&mut self) {
+        self.goal = None;
+    }
+
+    /// Resume a paused goal: the message for its saved round, without advancing it.
+    pub fn resume_goal(&mut self) -> Result<String, String> {
+        let Some(goal) = self.goal.as_mut() else { return Err("no goal to resume".into()) };
+        goal.paused = false;
+        Ok(format!(
+            "[Goal check from imp, not the user.] Round {} of {}. Goal: {}\n{GOAL_ENDINGS}",
+            goal.round, goal.rounds, goal.text
+        ))
+    }
+
+    /// Change the goal's text. The round and limit stay, and no round starts.
+    pub fn edit_goal(&mut self, text: &str) -> Result<(), String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("the goal needs text".into());
+        }
+        let Some(goal) = self.goal.as_mut() else { return Err("no goal to edit".into()) };
+        goal.text = text.to_string();
+        Ok(())
     }
 
     /// After a round: the next round's message, or why the goal ended. The
@@ -3967,5 +4002,67 @@ mod notice_tests {
             hooks.0
         );
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod goal_state_tests {
+    use super::*;
+
+    fn bare() -> Session {
+        let d = std::env::temp_dir().join(format!("imp-goal-state-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::create_dir_all(&d);
+        Session::new(
+            crate::config::Config::default(),
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            Vec::new(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        )
+    }
+
+    #[test]
+    fn pausing_keeps_the_goal_and_its_round() {
+        let mut s = bare();
+        s.start_goal("fix the parser");
+        s.goal.as_mut().unwrap().round = 2;
+        s.pause_goal();
+        let g = s.goal.clone().expect("pausing cleared the goal");
+        assert!(g.paused);
+        assert_eq!((g.text.as_str(), g.round, g.rounds), ("fix the parser", 2, 5));
+    }
+
+    #[test]
+    fn resuming_restarts_at_the_saved_round_without_advancing() {
+        let mut s = bare();
+        s.start_goal("fix the parser");
+        s.goal.as_mut().unwrap().round = 2;
+        s.pause_goal();
+        let msg = s.resume_goal().expect("resume failed");
+        assert!(msg.contains("Round 2 of 5"), "{msg}");
+        let g = s.goal.clone().unwrap();
+        assert!(!g.paused);
+        assert_eq!(g.round, 2, "resuming advanced the round");
+    }
+
+    #[test]
+    fn clear_removes_the_goal_and_resume_without_a_goal_is_an_error() {
+        let mut s = bare();
+        s.start_goal("x");
+        s.clear_goal();
+        assert!(s.goal.is_none());
+        assert!(s.resume_goal().is_err());
+    }
+
+    #[test]
+    fn edit_changes_the_text_and_keeps_the_round() {
+        let mut s = bare();
+        s.start_goal("fix the parser");
+        s.goal.as_mut().unwrap().round = 2;
+        s.edit_goal("fix the lexer").unwrap();
+        let g = s.goal.clone().unwrap();
+        assert_eq!((g.text.as_str(), g.round), ("fix the lexer", 2));
     }
 }

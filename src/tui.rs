@@ -1060,6 +1060,10 @@ pub enum Cmd {
     /// Work across turns until the goal is met.
     Goal(String),
     GoalOff,
+    /// Pause the goal after its current round.
+    GoalPause,
+    /// Change the goal's text; the round stays.
+    GoalEdit(String),
     Resume(String),
     Reload,
     SetPermissions(crate::config::Permissions),
@@ -1140,6 +1144,8 @@ pub enum Ev {
     GoalRound { text: String, round: u32, rounds: u32 },
     /// The goal ended, and why.
     GoalEnd(String),
+    /// The goal stopped at a round boundary because it was paused.
+    GoalPaused,
 }
 
 struct WorkerHooks {
@@ -2003,6 +2009,10 @@ enum Pending {
         value: String,
         error: String,
     },
+    /// `/goal <text>` while a goal runs: replace it only after a yes.
+    GoalReplace {
+        text: String,
+    },
     /// A typed command shape for an `allow` line.
     AllowRule {
         value: String,
@@ -2551,6 +2561,8 @@ struct Status {
     quiet_since: Option<Instant>,
     /// The running goal: its text, round, and rounds.
     goal: Option<(String, u32, u32)>,
+    /// The goal is paused: kept, but no round runs.
+    goal_paused: bool,
 }
 
 const COMMANDS: &[(&str, &str)] = crate::help::COMMANDS;
@@ -3093,11 +3105,21 @@ impl App {
                 self.status.streaming = true;
                 self.begin_task();
                 self.status.goal = Some((text, round, rounds));
+                self.status.goal_paused = false;
                 self.dirty = true;
             }
             Ev::GoalEnd(why) => {
                 self.push(Role::Info, format!("◎ {why}"));
                 self.status.goal = None;
+                self.status.goal_paused = false;
+                self.dirty = true;
+            }
+            Ev::GoalPaused => {
+                if let Some((text, round, rounds)) = &self.status.goal {
+                    self.push(Role::Info, format!("◎ goal paused at round {round}/{rounds}: {text}"));
+                }
+                self.status.goal_paused = true;
+                self.status.streaming = false;
                 self.dirty = true;
             }
             Ev::Notice(text) => self.apply(Ev::Info(text)),
@@ -4873,6 +4895,14 @@ impl App {
         self.pending = Some(Pending::Pick(picker));
     }
 
+    /// Start a goal now: its first round runs as soon as the worker is free.
+    fn start_goal_now(&mut self, text: String, tx: &Sender<Cmd>) {
+        self.push(Role::User, format!("/goal {text}"));
+        self.status.streaming = true;
+        self.begin_task();
+        let _ = tx.send(Cmd::Goal(text));
+    }
+
     /// Switch the session to a provider and report it.
     fn use_provider(&mut self, name: &str, tx: &Sender<Cmd>) {
         match self.set_provider(name, tx) {
@@ -5188,20 +5218,40 @@ impl App {
             }
             "goal" => {
                 let text = match &self.status.goal {
-                    Some((goal, round, rounds)) => format!("goal: {goal} · round {round}/{rounds}"),
+                    Some((goal, round, rounds)) => {
+                        let state = if self.status.goal_paused { "paused" } else { "running" };
+                        format!("goal: {goal} · round {round}/{rounds} · {state}")
+                    }
                     None => "no goal; /goal <text> sets one".into(),
                 };
                 self.push(Role::Info, text);
             }
-            "goal off" => {
+            "goal off" | "goal clear" => {
                 let _ = tx.send(Cmd::GoalOff);
+            }
+            "goal pause" => {
+                let _ = tx.send(Cmd::GoalPause);
+            }
+            "goal resume" => {
+                // An empty goal text resumes the saved goal instead of starting one.
+                let _ = tx.send(Cmd::Goal(String::new()));
+            }
+            other if other.starts_with("goal edit") => {
+                let text = other["goal edit".len()..].trim().to_string();
+                if let Some((goal, _, _)) = &mut self.status.goal {
+                    *goal = text.clone();
+                }
+                let _ = tx.send(Cmd::GoalEdit(text));
             }
             other if other.starts_with("goal ") => {
                 let text = other["goal ".len()..].trim().to_string();
-                self.push(Role::User, format!("/goal {text}"));
-                self.status.streaming = true;
-                self.begin_task();
-                let _ = tx.send(Cmd::Goal(text));
+                if self.status.goal.is_some() {
+                    self.push(Role::Info, "a goal is set; replace it? y/N");
+                    self.pending = Some(Pending::GoalReplace { text });
+                    self.dirty = true;
+                } else {
+                    self.start_goal_now(text, tx);
+                }
             }
             "copy" | "copy code" => {
                 let last = self.entries.iter().rev().find(|e| e.role == Role::Assistant);
@@ -5421,6 +5471,21 @@ impl App {
                         self.pending = Some(Pending::RenameCurrent { value });
                     }
                 }
+                return;
+            }
+            Pending::GoalReplace { text } => {
+                match key {
+                    Key::Char('y' | 'Y') => {
+                        self.start_goal_now(text, tx);
+                        self.pending = None;
+                    }
+                    Key::Char('n' | 'N') | Key::Esc | Key::Enter => {
+                        self.pending = None;
+                        self.push(Role::Info, "kept the current goal");
+                    }
+                    _ => self.pending = Some(Pending::GoalReplace { text }),
+                }
+                self.dirty = true;
                 return;
             }
             Pending::SettingField { key: name, mut value, error } => {
@@ -6696,6 +6761,7 @@ impl App {
                 Pending::RenameCurrent { value } => format!("new title: {value}{CARET}"),
                 // The boxed form draws every field, so the composer row stays free.
                 Pending::ProviderForm { .. } => return None,
+                Pending::GoalReplace { text } => format!("replace the goal with \"{text}\"? y/N"),
                 Pending::SettingField { key, value, error } => {
                     let now = self.setting_value(key);
                     let refused = if error.is_empty() { String::new() } else { format!("  refused: {error}") };
@@ -7336,6 +7402,7 @@ impl App {
         };
         let paused = if self.queue_at.is_some() && self.status.streaming { " · paused · editing queue" } else { "" };
         let goal = match &self.status.goal {
+            Some((_, round, rounds)) if self.status.goal_paused => format!(" · goal {round}/{rounds} · paused"),
             Some((_, round, rounds)) => format!(" · goal {round}/{rounds}"),
             None => String::new(),
         };
@@ -7949,8 +8016,16 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                 Ok(cmd) => Ok(cmd),
             } };
             match next {
+                // An empty text resumes the saved goal; with no goal there is nothing to resume.
+                Ok(Cmd::Goal(text)) if text.is_empty() && worker_session.goal.is_none() => {
+                    let _ = ev_tx.send(Ev::Info("no goal to resume".into()));
+                }
                 Ok(Cmd::Goal(text)) => {
-                    let mut message = worker_session.start_goal(&text);
+                    let mut message = if text.is_empty() {
+                        worker_session.resume_goal().unwrap_or_default()
+                    } else {
+                        worker_session.start_goal(&text)
+                    };
                     loop {
                         let Some(goal) = worker_session.goal.clone() else { break };
                         let _ = ev_tx.send(Ev::GoalRound { text: goal.text, round: goal.round, rounds: goal.rounds });
@@ -7961,8 +8036,11 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         let _ = ev_tx.send(Ev::Done(result.err()));
                         // What the user did during the round decides whether another starts.
                         let mut stop = failed.then(|| "goal stopped".to_string());
+                        let mut paused_now = false;
                         while let Ok(cmd) = cmd_rx.try_recv() {
                             match cmd {
+                                // Paused after this round: the goal is kept.
+                                Cmd::GoalPause => paused_now = true,
                                 Cmd::GoalOff => {
                                     stop.get_or_insert_with(|| "goal cleared".into());
                                 }
@@ -7978,6 +8056,11 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                             let _ = ev_tx.send(Ev::GoalEnd(why));
                             break;
                         }
+                        if paused_now {
+                            worker_session.pause_goal();
+                            let _ = ev_tx.send(Ev::GoalPaused);
+                            break;
+                        }
                         match worker_session.goal_next() {
                             Ok(next) => message = next,
                             Err(why) => {
@@ -7987,6 +8070,22 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         }
                     }
                 }
+                Ok(Cmd::GoalPause) => {
+                    if worker_session.goal.is_some() {
+                        worker_session.pause_goal();
+                        let _ = ev_tx.send(Ev::GoalPaused);
+                    } else {
+                        let _ = ev_tx.send(Ev::Info("no goal to pause".into()));
+                    }
+                }
+                Ok(Cmd::GoalEdit(text)) => match worker_session.edit_goal(&text) {
+                    Ok(()) => {
+                        let _ = ev_tx.send(Ev::Info("goal edited; the round stays".into()));
+                    }
+                    Err(why) => {
+                        let _ = ev_tx.send(Ev::Info(why));
+                    }
+                },
                 Ok(Cmd::GoalOff) => {
                     if worker_session.goal.take().is_some() {
                         let _ = ev_tx.send(Ev::GoalEnd("goal cleared".into()));
