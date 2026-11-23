@@ -32,7 +32,7 @@ fn decodes_the_wheel_and_a_left_press() {
     assert!(matches!(keys[0], Key::WheelUp), "{keys:?}");
     assert!(matches!(keys[1], Key::WheelDown), "{keys:?}");
     assert!(matches!(keys[2], Key::Click(3, 4)), "press: {keys:?}");
-    assert!(matches!(keys[3], Key::Unknown), "release: {keys:?}");
+    assert!(matches!(keys[3], Key::Release(3, 4)), "release: {keys:?}");
     assert!(matches!(keys[4], Key::WheelUp), "shift+wheel: {keys:?}");
     assert!(buf.is_empty());
 }
@@ -5676,4 +5676,31 @@ fn a_paste_fills_the_draft_and_never_answers() {
     a.handle_key(Key::Paste("3 files\nonly".into()), &tx);
     a.handle_key(Key::Enter, &tx);
     assert_eq!(got.recv().unwrap().as_deref(), Some("3 files only"));
+}
+
+#[test]
+fn drags_decode_and_copy_on_release() {
+    let mut buf = b"\x1b[<32;5;3M\x1b[<0;9;3m".to_vec();
+    assert_eq!(decode(&mut buf), vec![Key::Drag(5, 3), Key::Release(9, 3)]);
+    assert!(MOUSE_ON.contains("\x1b[?1002h"));
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.push(Role::Assistant, "hello world, and more");
+    let shown = a.frame(40, 10);
+    let rows: Vec<String> = shown.split("\r\n").map(strip).collect();
+    let y = rows.iter().position(|r| r.contains("hello world")).expect("the row") + 1;
+    let x = rows[y - 1].find("hello").unwrap() + 1;
+    let (x, y) = (x as u16, y as u16);
+    a.handle_key(Key::Click(x, y), &tx);
+    a.handle_key(Key::Drag(x + 10, y), &tx);
+    assert!(a.frame(40, 10).contains("\x1b[7mhello world\x1b[27m"), "no highlight");
+    a.handle_key(Key::Release(x + 10, y), &tx);
+    assert_eq!(a.clip, "hello world");
+    assert_eq!(a.entries.last().unwrap().text, "copied 11 characters");
+    assert!(!a.frame(40, 10).contains("\x1b[7mhello"), "the highlight stayed");
+    // A click alone copies nothing.
+    a.clip.clear();
+    a.handle_key(Key::Click(x, y), &tx);
+    a.handle_key(Key::Release(x, y), &tx);
+    assert!(a.clip.is_empty());
 }

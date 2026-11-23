@@ -6,4 +6,4 @@
 
 ## 2. Select
 
-- [ ] 2.1 Drag reports decode; a drag highlights and a release copies; a click alone acts as before; tests
+- [x] 2.1 Drag reports decode; a drag highlights and a release copies; a click alone acts as before; tests

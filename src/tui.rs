@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 const ALT_ON: &str = "\x1b[?1049h\x1b[?25l\x1b[>1u\x1b[?2004h";
 const ALT_OFF: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[<u\x1b[?25h\x1b[?1049l";
 /// SGR mouse reports, so the wheel reaches imp instead of the scrollback.
-const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1006h";
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 /// Set from the `mouse` setting before raw mode starts.
 static MOUSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -800,6 +800,9 @@ pub enum Key {
     Click(u16, u16),
     /// Text the terminal marked as pasted, line breaks as `\n`.
     Paste(String),
+    /// The pointer moved with the left button held, and where it let go.
+    Drag(u16, u16),
+    Release(u16, u16),
     Unknown,
 }
 
@@ -952,6 +955,8 @@ fn mouse(params: &[u8], press: bool) -> Key {
         64 => Key::WheelUp,
         65 => Key::WheelDown,
         0 if press && x > 0 && y > 0 => Key::Click(x, y),
+        32 if press => Key::Drag(x, y),
+        0 if x > 0 && y > 0 => Key::Release(x, y),
         _ => Key::Unknown,
     }
 }
@@ -1742,6 +1747,8 @@ pub struct App {
     osc52: Option<String>,
     /// Ctrl+G handed the mouse to the terminal until the next key.
     released: bool,
+    /// A drag selection: where the press began and where the pointer is.
+    drag: Option<(u16, u16, u16, u16)>,
     /// Mouse reporting to switch on or off with the next frame.
     mouse_seq: Option<&'static str>,
     /// The newest tool row; `done` holds the latest turn's earlier ones.
@@ -2463,6 +2470,7 @@ impl App {
             paste_noted: false,
             osc52: None,
             released: false,
+            drag: None,
             mouse_seq: None,
             tool: None,
             done: Vec::new(),
@@ -3157,6 +3165,27 @@ impl App {
                 self.dirty = true;
             }
             return;
+        }
+        match key {
+            Key::Drag(x, y) => {
+                if let Some(d) = &mut self.drag {
+                    (d.2, d.3) = (x, y);
+                    self.dirty = true;
+                }
+                return;
+            }
+            Key::Release(x, y) => {
+                if let Some((ax, ay, _, _)) = self.drag.take() {
+                    self.dirty = true;
+                    let text = selected_text(&self.shown, (ax, ay), (x, y));
+                    if (ax, ay) != (x, y) && !text.is_empty() {
+                        self.copy(text);
+                    }
+                }
+                return;
+            }
+            Key::Click(x, y) => self.drag = Some((x, y, x, y)),
+            _ => {}
         }
         let armed = std::mem::take(&mut self.armed);
         if armed {
@@ -5761,7 +5790,8 @@ impl App {
     /// be tested.
     #[cfg(test)]
     pub fn frame(&mut self, cols: usize, rows: usize) -> String {
-        let (screen, tail) = self.layout(cols, rows);
+        let (mut screen, tail) = self.layout(cols, rows);
+        highlight(&mut screen, self.drag);
         self.shown.clear();
         let out = paint_rows(&screen, None, cols, &tail);
         self.shown = screen;
@@ -5774,7 +5804,8 @@ impl App {
     /// ponytail: an overlay or a resize repaints every row, since the overlay
     /// draws over rows with cursor moves; compose it into the rows if pickers flicker.
     fn frame_changes(&mut self, cols: usize, rows: usize) -> String {
-        let (screen, tail) = self.layout(cols, rows);
+        let (mut screen, tail) = self.layout(cols, rows);
+        highlight(&mut screen, self.drag);
         let full = self.shown_size != (cols, rows) || self.shown_overlay || !tail.is_empty();
         let out = paint_rows(&screen, (!full).then_some(&self.shown[..]), cols, &tail);
         self.shown = screen;
@@ -6767,6 +6798,75 @@ fn edit_line(text: &mut String, caret: &mut usize, key: &Key, clip: &str) -> boo
     }
     *caret = at;
     true
+}
+
+/// A drawn row without its escape sequences.
+fn plain(row: &str) -> String {
+    let mut out = String::new();
+    let mut chars = row.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI runs to a final byte; OSC to BEL or ESC backslash.
+            Some('[') => while chars.next().is_some_and(|c| !('@'..='~').contains(&c)) {},
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The cells a drag covers on each row it touches, in text order: from the
+/// press to the pointer. `ponytail:` one column per character.
+fn drag_spans(a: (u16, u16), b: (u16, u16)) -> Vec<(usize, usize, usize)> {
+    let ((x0, y0), (x1, y1)) = if (a.1, a.0) <= (b.1, b.0) { (a, b) } else { (b, a) };
+    (y0..=y1)
+        .map(|y| {
+            let from = if y == y0 { x0 as usize - 1 } else { 0 };
+            let to = if y == y1 { x1 as usize } else { usize::MAX };
+            (y as usize - 1, from, to)
+        })
+        .collect()
+}
+
+/// The text a drag covers, one line per row, trailing spaces dropped.
+fn selected_text(rows: &[String], a: (u16, u16), b: (u16, u16)) -> String {
+    drag_spans(a, b)
+        .into_iter()
+        .filter_map(|(row, from, to)| {
+            let text: Vec<char> = plain(rows.get(row)?).chars().collect();
+            let to = to.min(text.len());
+            Some(text.get(from.min(to)..to)?.iter().collect::<String>().trim_end().to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+/// Draw a live drag reversed. Rows it covers lose their colour meanwhile.
+fn highlight(screen: &mut [String], drag: Option<(u16, u16, u16, u16)>) {
+    let Some((ax, ay, x, y)) = drag else { return };
+    if (ax, ay) == (x, y) {
+        return;
+    }
+    for (row, from, to) in drag_spans((ax, ay), (x, y)) {
+        let Some(line) = screen.get_mut(row) else { continue };
+        let text: Vec<char> = plain(line).chars().collect();
+        let to = to.min(text.len());
+        let from = from.min(to);
+        let part = |r: std::ops::Range<usize>| text[r].iter().collect::<String>();
+        *line = format!("{}\x1b[7m{}\x1b[27m{}", part(0..from), part(from..to), part(to..text.len()));
+    }
 }
 
 fn word_edge(s: &str, i: usize, forward: bool) -> usize {
