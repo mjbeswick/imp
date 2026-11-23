@@ -5611,3 +5611,39 @@ fn palette_names_are_never_cut() {
         assert!(row.contains(&item.label), "{} is cut: {row:?}", item.label);
     }
 }
+
+#[test]
+fn reload_rereads_the_config() {
+    let dir = scratch("reload-config");
+    let path = dir.join("config");
+    std::fs::write(&path, "max_steps = 5\n").unwrap();
+    let cfg = Config::load(&path).unwrap();
+    let mut a = app();
+    a.cfg = cfg.clone();
+    let session = Session::new(
+        cfg,
+        dir.clone(),
+        dir.join("out"),
+        String::new(),
+        crate::store::Agent::builtin(),
+        Vec::new(),
+        std::sync::Arc::new(std::sync::atomic::AtomicU16::new(80)),
+    );
+    let (tx, rx, _) = spawn_worker(session, dir.join("sessions"));
+    std::fs::write(&path, "max_steps = 5\nallow_sudo = true\ntypo = 1\n").unwrap();
+    tx.send(Cmd::Reload).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut said = Vec::new();
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ev::Done(_)) => break,
+            Ok(Ev::Info(t)) => said.push(t),
+            Ok(ev) => a.apply(ev),
+            Err(_) => {}
+        }
+    }
+    assert!(said.iter().any(|t| t == "allow_sudo: unset → true"), "{said:?}");
+    assert!(said.iter().any(|t| t == "config: unknown key typo ignored"), "{said:?}");
+    assert!(a.cfg.allow_sudo, "the chat kept the old config");
+    let _ = tx.send(Cmd::Quit);
+}

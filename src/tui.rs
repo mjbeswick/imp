@@ -1081,6 +1081,8 @@ pub enum Ev {
         reply: Sender<Option<String>>,
     },
     Done(Option<String>),
+    /// The config as re-read by `/reload`; the chat applies what changed.
+    Config(Box<Config>),
     /// The user's likely next message, drawn greyed out in an empty input.
     Suggest(String),
     /// Changed files for `/diff`; true for `/diff git`.
@@ -2990,6 +2992,9 @@ impl App {
                 self.dirty = true;
                 self.tick_spinner();
             }
+            Ev::Config(new) => {
+                self.cfg.reload_from(&new);
+            }
             Ev::Done(err) => {
                 if let Some(next) = self.agent_next.take() {
                     self.agent = next;
@@ -4592,7 +4597,7 @@ impl App {
             }
             "reload" => {
                 let _ = tx.send(Cmd::Reload);
-                self.push(Role::Info, "reloading instructions and skills…");
+                self.push(Role::Info, "reloading the config, instructions and skills…");
             }
             "sessions" => {
                 self.pending = Some(Pending::Pick(self.session_picker()));
@@ -7154,10 +7159,31 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     }
                 },
                 Ok(Cmd::Reload) => {
+                    // The config first: only keys the file changed apply.
+                    let path = worker_session.cfg.file.clone().unwrap_or_else(Config::config_path);
+                    match Config::load(&path) {
+                        Ok(new) => {
+                            let (changed, removed) = worker_session.cfg.reload_from(&new);
+                            crate::render::set_renderers(&worker_session.cfg.render);
+                            for line in changed {
+                                let _ = ev_tx.send(Ev::Info(line));
+                            }
+                            if !removed.is_empty() {
+                                let _ = ev_tx.send(Ev::Info(format!("restart to reset {}", removed.join(", "))));
+                            }
+                            if let Some(note) = crate::config::unknown_note(&new.unknown) {
+                                let _ = ev_tx.send(Ev::Info(note));
+                            }
+                            let _ = ev_tx.send(Ev::Config(Box::new(new)));
+                        }
+                        Err(e) => {
+                            let _ = ev_tx.send(Ev::Error(format!("config not reloaded: {e}")));
+                        }
+                    }
                     match worker_session.reload() {
                         Ok(()) => {
                             let _ = ev_tx.send(Ev::Info(
-                                "reloaded instructions and skills; prompt cache reset".to_string(),
+                                "reloaded the config, instructions and skills; prompt cache reset".to_string(),
                             ));
                         }
                         Err(e) => {

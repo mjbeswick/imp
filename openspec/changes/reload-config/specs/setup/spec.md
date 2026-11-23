@@ -6,7 +6,7 @@ The system SHALL re-read the config file on `/reload`, SHALL apply each key whos
 
 #### Scenario: Privilege setting
 - **WHEN** the user adds `allow_sudo=true` to the config and runs `/reload`
-- **THEN** a line reads `allow_sudo: false → true` and the next privileged command is classified as allowed
+- **THEN** a line reads `allow_sudo: unset → true` and the next privileged command is classified as allowed
 
 #### Scenario: Session choice kept
 - **WHEN** the user picked a model with `/model`, then edits only `allow_sudo` and reloads

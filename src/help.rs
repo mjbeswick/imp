@@ -53,7 +53,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/new", "start another live session"),
     ("/sessions", "pick a session"),
     ("/next", "next session waiting on you"),
-    ("/reload", "re-read instructions and skills"),
+    ("/reload", "re-read the config, instructions and skills"),
     ("/agent", "switch agent profile"),
     ("/compact", "compact the conversation now"),
     ("/goal", "keep working until a goal is met; off to stop"),
