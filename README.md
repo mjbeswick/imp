@@ -165,11 +165,11 @@ models, fetched live with a built-in catalog as the immediate and fallback
 list, plus the current model, the provider default, and recent choices.
 Nothing is written to the config.
 
-Bare `/provider` picks from built-in and custom profiles; Enter switches to the
-highlighted one, and `e` on its row opens its configuration form (after typing
-`/provider`, letters filter the list, so the key there is Ctrl+E). Saving a
-built-in provider from that form adds a named copy, such as `deepseek-custom`,
-and leaves the built-in as it is. `add <name>`, `edit <name>`,
+Bare `/provider` picks from built-in and custom profiles. Enter opens the
+highlighted one's configuration form, `e` does the same, and `u` switches to
+it. After typing `/provider`, letters filter the list, so the keys there are
+Ctrl+E (configure) and Ctrl+U (use). Saving a built-in provider from the form
+adds a named copy, such as `deepseek-custom`, and leaves the built-in as it is. `add <name>`, `edit <name>`,
 `delete <name>`, and `use <name>` manage custom profiles in a managed
 `# >>> providers` block in the config file; comments and other keys survive,
 and the active profile cannot be deleted. While `add` or `edit` is open, ↑ or
