@@ -64,10 +64,27 @@ pub fn classify_command(cmd: &str, mode: Permissions, allow_sudo: bool) -> Decis
         return Decision::Ask;
     }
 
-    if safe_shell(&lower) {
+    // `auto` adds the project's development commands to the safe list; both
+    // modes keep the chain, redirect, and substitution rules.
+    let dev = mode == Permissions::Auto;
+    if safe_shell(&lower, dev) {
         Decision::Allow
     } else {
         Decision::Ask
+    }
+}
+
+/// The project's development commands that `auto` runs without asking:
+/// builds, tests, linters, and formatters. Installs, publishing, and
+/// anything else that changes the machine or a remote are not listed.
+fn dev_command(first: &str, args: &[&str]) -> bool {
+    match first {
+        "cargo" => matches!(args.first().copied(), Some("build" | "check" | "test" | "clippy" | "fmt" | "doc")),
+        "npm" | "pnpm" | "yarn" => matches!(args.first().copied(), Some("test" | "run" | "lint" | "build")),
+        "make" => !args.contains(&"install"),
+        "pytest" => true,
+        "go" => matches!(args.first().copied(), Some("build" | "test" | "vet" | "fmt")),
+        _ => false,
     }
 }
 
@@ -136,7 +153,7 @@ fn quiet(cmd: &str, masked: &str) -> (String, String) {
     (c, m)
 }
 
-fn safe_shell(cmd: &str) -> bool {
+fn safe_shell(cmd: &str, dev: bool) -> bool {
     let Some(masked) = mask(cmd) else { return false };
     let (cmd, masked) = quiet(cmd, &masked);
     let cmd = cmd.as_str();
@@ -168,7 +185,7 @@ fn safe_shell(cmd: &str) -> bool {
         }
     }
     parts.push((start, cmd.len()));
-    parts.into_iter().all(|(from, to)| safe_pipeline(&cmd[from..to], &masked[from..to]))
+    parts.into_iter().all(|(from, to)| safe_pipeline(&cmd[from..to], &masked[from..to], dev))
 }
 
 /// Blank the `;` that ends a `find -exec` clause, so the chain test does not
@@ -201,7 +218,7 @@ fn blank_exec_terminators(masked: &str, split: &mut [u8]) {
 }
 
 /// One command or pipeline of `safe_shell`.
-fn safe_pipeline(cmd: &str, masked: &str) -> bool {
+fn safe_pipeline(cmd: &str, masked: &str, dev: bool) -> bool {
     // Pipes come from the masked text; words from the original at the same
     // offsets with quotes removed, as the program will see them, so `'-o'`
     // and `-de''lete` are still flags.
@@ -221,28 +238,37 @@ fn safe_pipeline(cmd: &str, masked: &str) -> bool {
             "git" => match args.first().copied() {
                 Some("status" | "ls-files") => true,
                 Some("diff" | "log" | "show") => !flag(&["--output"]),
-                Some("branch") => args[1..].iter().all(|a| {
-                    matches!(*a, "-a" | "-r" | "-v" | "-vv" | "--all" | "--remotes" | "--list" | "--show-current")
-                }),
+                Some("branch") => {
+                    let listing = args[1..].iter().all(|a| {
+                        matches!(*a, "-a" | "-r" | "-v" | "-vv" | "--all" | "--remotes" | "--list" | "--show-current")
+                    });
+                    // `auto` may also create a branch, but not delete or rename one.
+                    listing || (dev && !flag(&["-d", "-D", "-m", "-M", "--delete", "--move", "-f", "--force"]))
+                }
+                // Local history only: no push, fetch, or checkout.
+                Some("add" | "commit") => dev,
+                Some("stash") => {
+                    dev && matches!(args.get(1).copied(), None | Some("list" | "show" | "push" | "pop" | "apply" | "save"))
+                }
                 _ => false,
             },
             "find" => {
                 let write = ["-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"];
-                !flag(&write) && exec_clauses_safe(&words)
+                !flag(&write) && exec_clauses_safe(&words, dev)
             }
             "fd" => !flag(&["--exec", "--exec-batch"]) && !short('x') && !short('X'),
             "sort" => !flag(&["--output", "--compress-program"]) && !short('o'),
             "rg" => !flag(&["--pre"]),
             "tree" => !short('o'),
             "uniq" => args.iter().filter(|a| !a.starts_with('-')).count() < 2,
-            _ => SAFE.contains(&first),
+            _ => SAFE.contains(&first) || (dev && dev_command(first, args)),
         }
     })
 }
 
 /// True when every `-exec` or `-execdir` clause runs a program that is itself
 /// safe and read-only. A clause with no `;` or `+` terminator fails closed.
-fn exec_clauses_safe(words: &[&str]) -> bool {
+fn exec_clauses_safe(words: &[&str], dev: bool) -> bool {
     let mut at = 0;
     while at < words.len() {
         if matches!(words[at], "-exec" | "-execdir") {
@@ -255,7 +281,7 @@ fn exec_clauses_safe(words: &[&str]) -> bool {
                 return false;
             }
             let clause = words[start..end].join(" ");
-            if clause.is_empty() || !safe_pipeline(&clause.to_ascii_lowercase(), &clause) {
+            if clause.is_empty() || !safe_pipeline(&clause.to_ascii_lowercase(), &clause, dev) {
                 return false;
             }
             at = end + 1;
@@ -401,7 +427,7 @@ pub fn shape(cmd: &str) -> Option<String> {
     }
     // Piped only into safe filters, it is judged by its first command.
     let cmd = match masked.find('|') {
-        Some(at) if safe_pipeline(&cmd[at + 1..].to_ascii_lowercase(), &masked[at + 1..]) => &cmd[..at],
+        Some(at) if safe_pipeline(&cmd[at + 1..].to_ascii_lowercase(), &masked[at + 1..], false) => &cmd[..at],
         Some(_) => return None,
         None => cmd.as_str(),
     };
@@ -430,6 +456,7 @@ pub fn shape(cmd: &str) -> Option<String> {
 pub fn mode_line(mode: Permissions) -> &'static str {
     match mode {
         Permissions::Normal => "mode: normal · unlisted commands ask",
+        Permissions::Auto => "mode: auto · builds, tests and local git run · unlisted commands ask",
         Permissions::Strict => "mode: strict · every action asks",
         Permissions::Yolo => "mode: yolo · deny list still applies · path jail off",
     }
@@ -444,8 +471,8 @@ pub fn classify_fetch(mode: Permissions, url: &str) -> Decision {
     match mode {
         Permissions::Yolo => Decision::Allow,
         Permissions::Strict => Decision::Ask,
-        Permissions::Normal if url.len() > LONG_URL => Decision::Ask,
-        Permissions::Normal => Decision::Allow,
+        Permissions::Normal | Permissions::Auto if url.len() > LONG_URL => Decision::Ask,
+        Permissions::Normal | Permissions::Auto => Decision::Allow,
     }
 }
 
@@ -560,8 +587,8 @@ fn unquote(w: &str) -> Option<String> {
 pub fn classify_write(inside_jail: bool, mode: Permissions) -> Decision {
     match mode {
         Permissions::Yolo => Decision::Allow,
-        Permissions::Normal | Permissions::Strict => {
-            if inside_jail && mode == Permissions::Normal {
+        Permissions::Normal | Permissions::Auto | Permissions::Strict => {
+            if inside_jail && mode != Permissions::Strict {
                 Decision::Allow
             } else {
                 Decision::Ask
@@ -944,5 +971,111 @@ mod tests {
         assert_eq!(classify_write(false, Permissions::Normal), Decision::Ask);
         assert_eq!(classify_write(true, Permissions::Strict), Decision::Ask);
         assert_eq!(classify_write(false, Permissions::Yolo), Decision::Allow);
+    }
+}
+
+#[cfg(test)]
+mod auto_tests {
+    use super::*;
+
+    fn auto(cmd: &str) -> Decision {
+        classify_command(cmd, Permissions::Auto, false)
+    }
+
+    #[test]
+    fn auto_runs_the_listed_development_commands() {
+        for cmd in [
+            "cargo build",
+            "cargo test",
+            "cargo clippy --all-targets",
+            "cargo fmt --check",
+            "cargo doc --no-deps",
+            "npm test",
+            "npm run lint",
+            "pnpm build",
+            "yarn test",
+            "make",
+            "make check",
+            "pytest -q",
+            "go vet ./...",
+            "go test ./...",
+            "git status",
+            "git diff --stat",
+            "git log --oneline -5",
+            "git add src/main.rs",
+            "git commit -m fix",
+            "git stash list",
+            "git stash push -m wip",
+            "cargo test 2>&1 | tail -20",
+        ] {
+            assert_eq!(auto(cmd), Decision::Allow, "{cmd} should run in auto");
+        }
+    }
+
+    #[test]
+    fn auto_asks_for_installs_pushes_and_other_unlisted_commands() {
+        for cmd in [
+            "npm install",
+            "npm i left-pad",
+            "cargo install ripgrep",
+            "pip install requests",
+            "pnpm add zod",
+            "make install",
+            "git push",
+            "git push origin feature",
+            "git checkout main",
+            "git stash drop",
+            "git branch -D old",
+            "git branch -d old",
+            "git branch -m new",
+            "rm -rf build",
+            "curl https://example.com",
+            "sed -i s/a/b/ file",
+        ] {
+            assert_eq!(auto(cmd), Decision::Ask, "{cmd} should ask in auto");
+        }
+    }
+
+    #[test]
+    fn auto_keeps_the_chain_and_redirect_rules() {
+        for cmd in [
+            "cargo test && git push",
+            "cargo test; rm -rf build",
+            "cargo test > out.txt",
+            "cargo test | tee log.txt",
+            "cargo test `whoami`",
+        ] {
+            assert_eq!(auto(cmd), Decision::Ask, "{cmd} should ask in auto");
+        }
+    }
+
+    #[test]
+    fn auto_still_refuses_the_deny_list_and_sudo() {
+        assert!(matches!(auto("git push --force origin main"), Decision::Deny(_)));
+        assert!(matches!(auto("rm -rf ~"), Decision::Deny(_)));
+        assert!(matches!(classify_command("sudo ls", Permissions::Auto, false), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn normal_still_asks_for_the_development_commands() {
+        for cmd in ["cargo test", "npm test", "git add src/main.rs", "git stash list"] {
+            assert_eq!(classify_command(cmd, Permissions::Normal, false), Decision::Ask, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn auto_asks_for_writes_and_fetches_as_normal_does() {
+        assert_eq!(classify_write(false, Permissions::Auto), classify_write(false, Permissions::Normal));
+        assert_eq!(classify_write(true, Permissions::Auto), classify_write(true, Permissions::Normal));
+        assert_eq!(
+            classify_fetch(Permissions::Auto, "https://wttr.in/Woking"),
+            classify_fetch(Permissions::Normal, "https://wttr.in/Woking"),
+        );
+        assert!(jail_enabled(Permissions::Auto), "auto turned the path jail off");
+    }
+
+    #[test]
+    fn auto_has_a_mode_line() {
+        assert!(mode_line(Permissions::Auto).starts_with("mode: auto"));
     }
 }

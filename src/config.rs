@@ -9,6 +9,8 @@ use std::sync::Arc;
 pub enum Permissions {
     Normal,
     Strict,
+    /// Runs the project's development commands without asking.
+    Auto,
     Yolo,
 }
 
@@ -17,9 +19,10 @@ impl Permissions {
         match s.trim().to_ascii_lowercase().as_str() {
             "normal" => Ok(Self::Normal),
             "strict" => Ok(Self::Strict),
+            "auto" => Ok(Self::Auto),
             "yolo" => Ok(Self::Yolo),
             _ => Err(format!(
-                "permissions must be normal, strict, or yolo (got {s:?})"
+                "permissions must be normal, strict, auto, or yolo (got {s:?})"
             )),
         }
     }
@@ -28,6 +31,7 @@ impl Permissions {
         match self {
             Self::Normal => "normal",
             Self::Strict => "strict",
+            Self::Auto => "auto",
             Self::Yolo => "yolo",
         }
     }
@@ -38,6 +42,7 @@ impl Permissions {
             Self::Normal => 0,
             Self::Strict => 1,
             Self::Yolo => 2,
+            Self::Auto => 3,
         }
     }
 
@@ -45,6 +50,7 @@ impl Permissions {
         match code {
             1 => Self::Strict,
             2 => Self::Yolo,
+            3 => Self::Auto,
             _ => Self::Normal,
         }
     }
@@ -1366,5 +1372,24 @@ mod tests {
         save_setting(&path, "thinking", "on").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\nthinking = on\n");
         assert!(Config::load(&path).unwrap().thinking);
+    }
+}
+
+#[cfg(test)]
+mod auto_mode_tests {
+    use super::*;
+
+    #[test]
+    fn auto_is_a_permissions_value_and_round_trips() {
+        assert_eq!(Permissions::parse("auto"), Ok(Permissions::Auto));
+        assert_eq!(Permissions::Auto.as_str(), "auto");
+        assert_eq!(Permissions::from_code(Permissions::Auto.code()), Permissions::Auto);
+        assert_eq!(Config::from_str("permissions = auto").unwrap().permissions, Permissions::Auto);
+    }
+
+    #[test]
+    fn an_unknown_permissions_value_names_all_four() {
+        let err = Permissions::parse("sometimes").unwrap_err();
+        assert!(err.contains("normal, strict, auto, or yolo"), "{err}");
     }
 }

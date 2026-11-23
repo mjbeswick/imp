@@ -3599,9 +3599,10 @@ impl App {
                 // Shift+Tab steps through the modes; it applies at once.
                 use crate::config::Permissions::*;
                 let next = match self.cfg.live_permissions() {
-                    Normal => "strict",
-                    Strict => "yolo",
-                    Yolo => "normal",
+                    Normal => "auto",
+                    Auto => "yolo",
+                    Yolo => "strict",
+                    Strict => "normal",
                 };
                 self.set_mode(next, tx);
                 self.dirty = true;
@@ -3783,6 +3784,7 @@ impl App {
         let current = self.cfg.live_permissions().as_str();
         [
             ("normal", "unlisted commands ask"),
+            ("auto", "builds, tests and local git run"),
             ("strict", "every action asks"),
             ("yolo", "never asks; deny list holds"),
         ]
@@ -4167,7 +4169,7 @@ impl App {
     fn setting_choices(key: &str) -> Vec<String> {
         let words = |list: &[&str]| list.iter().map(|s| s.to_string()).collect();
         match key {
-            "permissions" => words(&["normal", "strict", "yolo"]),
+            "permissions" => words(&["normal", "auto", "strict", "yolo"]),
             "effort" => words(&["default", "low", "medium", "high"]),
             "verbosity" => words(&["low", "medium", "high"]),
             "thinking" | "mouse" | "suggest" | "diffs" | "auto_next" | "title_gradient" => words(&["off", "on"]),

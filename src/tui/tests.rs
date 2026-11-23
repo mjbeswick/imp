@@ -582,11 +582,12 @@ fn shift_tab_cycles_the_mode_at_once() {
         seen.push(a.cfg.live_permissions());
     }
     use crate::config::Permissions::*;
-    assert_eq!(seen, vec![Strict, Yolo, Normal]);
+    assert_eq!(seen, vec![Auto, Yolo, Strict]);
     assert_eq!(a.entries.len(), 3, "one line per change");
-    // Yolo turns the rule red.
-    a.handle_key(Key::BackTab, &tx);
-    a.handle_key(Key::BackTab, &tx);
+    // Strict to normal, auto, then yolo turns the rule red.
+    for _ in 0..3 {
+        a.handle_key(Key::BackTab, &tx);
+    }
     assert!(a.yolo());
 }
 
@@ -1875,7 +1876,7 @@ fn a_click_on_a_picker_row_chooses_it_and_a_hint_runs_its_key() {
     let (tx, _cmds) = channel();
     a.run_command("mode", &tx);
     a.frame(100, 30);
-    click(&mut a, &tx, |t| matches!(t, Target::Row(2)));
+    click(&mut a, &tx, |t| matches!(t, Target::Row(3)));
     assert_eq!(a.cfg.live_permissions(), crate::config::Permissions::Yolo);
 
     a.run_command("mode", &tx);
@@ -3183,10 +3184,10 @@ fn mode_picker_opens_on_the_current_mode() {
     let Some(Pending::Pick(p)) = &a.pending else { panic!("no picker") };
     assert_eq!(
         p.items.iter().map(|i| i.value.as_str()).collect::<Vec<_>>(),
-        ["normal", "strict", "yolo", "add-rule"]
+        ["normal", "auto", "strict", "yolo", "add-rule"]
     );
     assert_eq!(p.items[p.index].value, "strict");
-    assert!(p.items[1].desc.starts_with("current"), "{}", p.items[1].desc);
+    assert!(p.items[2].desc.starts_with("current"), "{}", p.items[2].desc);
     assert!(!p.items[0].desc.contains("current"));
     a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Enter, &tx);
@@ -3788,11 +3789,11 @@ fn the_mode_picker_lists_allows_below_the_modes() {
     a.allows = vec![("npm test".into(), false), ("cargo test".into(), true)];
     a.run_command("mode", &tx);
     let picker = open_picker(&a);
-    assert_eq!(picker.items.len(), 6, "modes, allows, and the add row");
-    assert_eq!(picker.items[3].label, "npm test");
-    assert_eq!(picker.items[3].desc, "session");
-    assert_eq!(picker.items[4].desc, "always");
-    assert_eq!(picker.items[3].value, "allow:npm test");
+    assert_eq!(picker.items.len(), 7, "modes, allows, and the add row");
+    assert_eq!(picker.items[4].label, "npm test");
+    assert_eq!(picker.items[4].desc, "session");
+    assert_eq!(picker.items[5].desc, "always");
+    assert_eq!(picker.items[4].value, "allow:npm test");
 }
 
 #[test]
@@ -3800,7 +3801,7 @@ fn the_mode_picker_with_no_allows_shows_only_the_modes() {
     let mut a = app();
     let (tx, _cmds) = channel();
     a.run_command("mode", &tx);
-    assert_eq!(open_picker(&a).items.len(), 4, "three modes and the add row");
+    assert_eq!(open_picker(&a).items.len(), 5, "four modes and the add row");
 }
 
 #[test]
@@ -3898,7 +3899,7 @@ fn the_mode_footer_offers_revoke_on_an_allow_row() {
     a.allows = vec![("npm test".into(), false)];
     a.run_command("mode", &tx);
     if let Some(Pending::Pick(p)) = &mut a.pending {
-        p.index = 3;
+        p.index = 4;
     }
     let frame = strip(&a.frame(100, 30));
     assert!(frame.contains("d revoke"), "no revoke hint: {frame:?}");
@@ -3911,7 +3912,7 @@ fn d_revokes_the_highlighted_allow() {
     a.allows = vec![("npm test".into(), false), ("cargo test".into(), true)];
     a.run_command("mode", &tx);
     if let Some(Pending::Pick(p)) = &mut a.pending {
-        p.index = 3;
+        p.index = 4;
     }
     a.handle_key(Key::Char('d'), &tx);
     assert_eq!(a.allows, vec![("cargo test".to_string(), true)]);
@@ -3923,7 +3924,7 @@ fn d_revokes_the_highlighted_allow() {
         _ => panic!("no revoke command"),
     }
     let picker = open_picker(&a);
-    assert_eq!(picker.items.len(), 5, "the row stayed in the list");
+    assert_eq!(picker.items.len(), 6, "the row stayed in the list");
     assert!(picker.items.iter().all(|i| i.label != "npm test"));
 }
 
@@ -3934,7 +3935,7 @@ fn choosing_an_allow_row_changes_nothing() {
     a.allows = vec![("npm test".into(), false)];
     a.run_command("mode", &tx);
     if let Some(Pending::Pick(p)) = &mut a.pending {
-        p.index = 3;
+        p.index = 4;
     }
     a.handle_key(Key::Enter, &tx);
     assert!(matches!(a.pending, Some(Pending::Pick(_))), "the picker closed");
@@ -5984,4 +5985,13 @@ fn esc_closes_the_form_and_keeps_the_values() {
     a.handle_key(Key::Esc, &tx);
     assert!(a.pending.is_none(), "the form stayed open");
     assert!(a.cfg.thinking, "Esc reverted the value");
+}
+
+#[test]
+fn the_status_line_names_auto_and_not_normal() {
+    let mut a = app();
+    a.cfg.set_permissions(crate::config::Permissions::Auto);
+    assert!(a.status_line(100).starts_with("deepseek-flash · auto · 0 tok"), "{}", a.status_line(100));
+    a.cfg.set_permissions(crate::config::Permissions::Normal);
+    assert!(!a.status_line(100).contains("auto"), "{}", a.status_line(100));
 }

@@ -1298,7 +1298,7 @@ impl Session {
                         Decision::Deny(why) => return (false, why),
                         Decision::Ask => {
                             // `always` only for one simple command in normal.
-                            let shape = perm::shape(cmd).filter(|_| mode == Permissions::Normal);
+                            let shape = perm::shape(cmd).filter(|_| matches!(mode, Permissions::Normal | Permissions::Auto));
                             let known = shape
                                 .as_ref()
                                 .is_some_and(|k| self.always.contains(k) || self.cfg.allowed(k));
@@ -1682,13 +1682,13 @@ impl Session {
         let question = match (mode, method.as_str()) {
             (Permissions::Yolo, _) => None,
             (Permissions::Strict, _) => Some(format!("{what}{with}")),
-            (Permissions::Normal, "GET") if auth.is_some() => {
+            (Permissions::Normal | Permissions::Auto, "GET") if auth.is_some() => {
                 (!self.auth_hosts.contains(&host)).then(|| format!("{what}{with} for this session"))
             }
-            (Permissions::Normal, "GET") => {
+            (Permissions::Normal | Permissions::Auto, "GET") => {
                 (perm::classify_fetch(mode, url) == Decision::Ask).then(|| perm::fetch_question(url))
             }
-            (Permissions::Normal, _) => {
+            (Permissions::Normal | Permissions::Auto, _) => {
                 let size = body.as_ref().map_or(String::new(), |b| format!(", a {} B body", b.len()));
                 Some(format!("{what}{size}{with}"))
             }
