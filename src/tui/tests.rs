@@ -3392,6 +3392,8 @@ fn provider_add_edits_the_managed_block() {
     for c in "WORK_KEY".chars() {
         a.handle_key(Key::Char(c), &tx);
     }
+    // The key row comes after key_env; empty, its Enter saves the form.
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     assert!(a.pending.is_none(), "the form stayed open");
     let text = std::fs::read_to_string(&config).unwrap();
@@ -3408,6 +3410,7 @@ fn provider_add_edits_the_managed_block() {
     for _ in 0..3 {
         a.handle_key(Key::Right, &tx);
     }
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     let text = std::fs::read_to_string(&config).unwrap();
@@ -3436,6 +3439,8 @@ fn provider_use_reaches_the_worker_and_delete_refuses_the_active_one() {
     for c in "K".chars() {
         a.handle_key(Key::Char(c), &tx);
     }
+    a.handle_key(Key::Enter, &tx);
+    // The key row comes after key_env; empty, its Enter saves the form.
     a.handle_key(Key::Enter, &tx);
 
     a.run_command("provider use work", &tx);
@@ -6164,7 +6169,7 @@ fn the_provider_form_stops_at_the_first_and_last_field() {
     for _ in 0..6 {
         a.handle_key(Key::Down, &tx);
     }
-    assert_eq!(provider_form(&a).1, 3, "↓ went past the last field");
+    assert_eq!(provider_form(&a).1, 4, "↓ went past the last field");
 }
 
 #[test]
@@ -6357,6 +6362,7 @@ fn saving_a_built_in_change_adds_a_named_copy_and_keeps_the_built_in() {
     type_text(&mut a, &tx, "deepseek-pro");
     a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     let saved = std::fs::read_to_string(&config).unwrap();
     assert!(saved.contains("deepseek-custom") && saved.contains("deepseek-pro"), "{saved}");
@@ -6769,4 +6775,56 @@ fn ctrl_u_switches_from_a_typed_provider_picker() {
 
 fn settings_row_values(a: &App) -> Vec<(String, String)> {
     open_picker(a).items.iter().map(|i| (i.value.clone(), i.desc.clone())).collect()
+}
+
+#[test]
+fn typing_edits_a_provider_field_in_the_box() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider add work", &tx);
+    type_text(&mut a, &tx, "http://x");
+    assert_eq!(form_field(&a, "base"), "http://x", "typing did not edit base");
+    let shown = strip(&a.frame(80, 24));
+    assert!(shown.contains("http://x"), "the edited base is not on screen");
+}
+
+#[test]
+fn the_provider_form_has_an_api_key_field_that_is_masked() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    assert_eq!(form_field(&a, "api_key"), "", "the key field is missing");
+    for _ in 0..4 {
+        a.handle_key(Key::Down, &tx);
+    }
+    type_text(&mut a, &tx, "sk-typed-key-9");
+    assert_eq!(form_field(&a, "api_key"), "sk-typed-key-9");
+    let shown = strip(&a.frame(80, 24));
+    assert!(!shown.contains("sk-typed-key-9"), "the typed key was drawn: {shown:?}");
+    assert!(shown.contains("•••"), "the key is not shown as masked dots");
+}
+
+#[test]
+fn saving_with_a_key_but_no_variable_name_is_refused_and_nothing_is_saved() {
+    let (mut a, config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    for (i, text) in ["http://box/v1", "m1"].iter().enumerate() {
+        if i > 0 {
+            a.handle_key(Key::Down, &tx);
+        }
+        type_text(&mut a, &tx, text);
+    }
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Right, &tx);
+    // key_env stays empty; down to the key row.
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    type_text(&mut a, &tx, "sk-no-variable-1");
+    a.handle_key(Key::Enter, &tx);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "the form closed");
+    let shown = strip(&a.frame(90, 24));
+    assert!(shown.contains("key variable"), "no reason shown: {shown:?}");
+    assert!(!std::fs::read_to_string(&config).unwrap().contains("sk-no-variable-1"), "the key reached the config");
 }

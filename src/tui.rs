@@ -4734,7 +4734,7 @@ impl App {
                     self.push(Role::Error, format!("provider {name} already exists"));
                     return;
                 }
-                let fields = ["base".to_string(), "model".to_string(), "dialect".to_string(), "key_env".to_string()]
+                let fields = ["base".to_string(), "model".to_string(), "dialect".to_string(), "key_env".to_string(), "api_key".to_string()]
                     .into_iter()
                     .map(|label| (label, String::new()))
                     .collect();
@@ -4755,6 +4755,7 @@ impl App {
                     ("model".to_string(), profile.model),
                     ("dialect".to_string(), profile.dialect),
                     ("key_env".to_string(), profile.key_env),
+                    ("api_key".to_string(), String::new()),
                 ];
                 self.pending = Some(Pending::ProviderForm {
                     name: name.to_string(),
@@ -4842,6 +4843,7 @@ impl App {
                 ("model".to_string(), profile.model),
                 ("dialect".to_string(), profile.dialect),
                 ("key_env".to_string(), profile.key_env),
+                ("api_key".to_string(), String::new()),
             ];
             self.pending = Some(Pending::ProviderForm { name: value.to_string(), fields, at: 0 });
         } else if let Ok(provider) = crate::providers::Provider::parse(value) {
@@ -4851,6 +4853,7 @@ impl App {
                 ("model".to_string(), defaults.model.to_string()),
                 ("dialect".to_string(), value.to_string()),
                 ("key_env".to_string(), defaults.key_var.unwrap_or("").to_string()),
+                ("api_key".to_string(), String::new()),
             ];
             self.pending = Some(Pending::ProviderForm { name: format!("{value}-custom"), fields, at: 0 });
         }
@@ -5038,6 +5041,23 @@ impl App {
             });
             self.dirty = true;
             return;
+        }
+        // A typed key goes to the key store under its variable name. It is never
+        // written to the config or echoed.
+        let api_key = value(4);
+        if !api_key.is_empty() {
+            if key_env.is_empty() {
+                self.push(Role::Error, "provider: an API key needs a key variable (key_env) to save under");
+                self.pending = Some(Pending::ProviderForm { name, fields, at: 3 });
+                self.dirty = true;
+                return;
+            }
+            if let Err(e) = crate::config::save_key(&key_env, &api_key) {
+                self.push(Role::Error, e);
+                self.pending = Some(Pending::ProviderForm { name, fields, at: 4 });
+                self.dirty = true;
+                return;
+            }
         }
         let profile = crate::config::NamedProvider {
             name: name.clone(),
@@ -6646,12 +6666,32 @@ impl App {
         };
         let value = fields.get(at).map(|f| f.1.clone()).unwrap_or_default();
         let mut block: Vec<String> = vec![edge('╭', '╮', &format!("provider {name}"))];
-        let input = format!(" › {value}");
+        // The key is never drawn as text, on the input line either.
+        let typed = if fields.get(at).is_some_and(|f| f.0 == "api_key") {
+            "•".repeat(value.chars().count().min(24))
+        } else {
+            value.clone()
+        };
+        let input = format!(" › {typed}");
         block.push(format!("{wall}{}{wall}", self.boxed(&input, inner, false)));
         block.push(line(&format!("├{}┤", "─".repeat(inner))));
+        let key_env = fields.get(3).map(|f| f.1.clone()).unwrap_or_default();
+        let stored = !key_env.is_empty() && crate::config::load_keys().iter().any(|(n, _)| *n == key_env);
         for (i, (label, text)) in fields.iter().enumerate() {
             let marker = if i == at { "▸" } else { " " };
-            let row = format!("{marker} {label:<8} {text}");
+            // The key is shown as dots, or as whether one is already stored.
+            let shown = if label == "api_key" {
+                if !text.is_empty() {
+                    "•".repeat(text.chars().count().min(24))
+                } else if stored {
+                    "set (type to replace)".to_string()
+                } else {
+                    "not set".to_string()
+                }
+            } else {
+                text.clone()
+            };
+            let row = format!("{marker} {label:<8} {shown}");
             block.push(format!("{wall}{}{wall}", self.boxed(&row, inner, i == at)));
         }
         let keys = if fields.get(at).is_some_and(|f| f.0 == "dialect") {
@@ -6670,7 +6710,7 @@ impl App {
         for (i, row) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{row}", y + i, x));
         }
-        let cursor = (x + 1 + format!(" › {value}").chars().count()).min(x + width - 2);
+        let cursor = (x + 1 + format!(" › {typed}").chars().count()).min(x + width - 2);
         Some((out, cursor, y + 1, Vec::new()))
     }
 
