@@ -76,6 +76,8 @@ pub enum Ui {
         ms: u128,
     },
     Info(String),
+    /// A finished background job: an info row in the chat, a toast in a session out of view.
+    Notice(String),
     Error(String),
     /// Waiting `secs` before attempt `attempt + 1` of `of` retries.
     Retry { secs: u64, attempt: u32, of: u32 },
@@ -1023,7 +1025,7 @@ impl Session {
                     "Background job {id} finished with exit {code}; output: {}",
                     path.display()
                 );
-                hooks.ui(Ui::Info(note.clone()));
+                hooks.ui(Ui::Notice(note.clone()));
                 self.say(Message::system(note));
             }
             self.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1460,7 +1462,7 @@ impl Session {
                         for (id, code, _) in done {
                             // The listing tells the model; its end needs no wake.
                             self.notify.remove(&id);
-                            hooks.ui(Ui::Info(format!("job {id} finished, exit {code}")));
+                            hooks.ui(Ui::Notice(format!("job {id} finished, exit {code}")));
                         }
                         (true, self.jobs.list())
                     }
@@ -2520,7 +2522,7 @@ mod tests {
         struct Notes(Vec<String>);
         impl Hooks for Notes {
             fn ui(&mut self, event: Ui) {
-                if let Ui::Info(t) | Ui::Error(t) = event {
+                if let Ui::Info(t) | Ui::Notice(t) | Ui::Error(t) = event {
                     self.0.push(t);
                 }
             }
@@ -2836,7 +2838,7 @@ mod tests {
         struct Notes(Vec<String>);
         impl Hooks for Notes {
             fn ui(&mut self, event: Ui) {
-                if let Ui::Info(t) | Ui::Error(t) = event {
+                if let Ui::Info(t) | Ui::Notice(t) | Ui::Error(t) = event {
                     self.0.push(t);
                 }
             }
@@ -3914,5 +3916,56 @@ mod title_summary_tests {
             Some("one two three four five six")
         );
         assert_eq!(title_from_reply("  \"\"  "), None);
+    }
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use super::*;
+    use crate::config::Permissions;
+
+    struct Notices(Vec<String>);
+    impl Hooks for Notices {
+        fn ui(&mut self, event: Ui) {
+            if let Ui::Notice(text) = event {
+                self.0.push(text);
+            }
+        }
+        fn confirm(&mut self, _: &str) -> bool {
+            false
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_finished_job_is_reported_as_a_notice() {
+        let mut cfg = crate::config::Config::default();
+        cfg.set_permissions(Permissions::Yolo);
+        let d = std::env::temp_dir().join(format!("imp-notice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let mut s = Session::new(
+            cfg,
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            Agent::builtin(),
+            Vec::new(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        );
+        let (ok, out) = s.run_tool("bash", &serde_json::json!({"command": "true", "background": true}), &mut Notices(Vec::new()));
+        assert!(ok, "{out}");
+        let id: u64 = out.split_whitespace().nth(1).unwrap().parse().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let mut hooks = Notices(Vec::new());
+        s.run_tool("job", &serde_json::json!({"op": "list"}), &mut hooks);
+        assert!(
+            hooks.0.iter().any(|t| t == &format!("job {id} finished, exit 0")),
+            "no notice for the finished job: {:?}",
+            hooks.0
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

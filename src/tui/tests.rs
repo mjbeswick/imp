@@ -1620,6 +1620,9 @@ fn a_prompt_in_view_survives_ctrl_o() {
 #[test]
 fn sessions_out_of_view_ask_for_attention() {
     let (mut a, answers) = inbox_app("attention");
+    // The last background event raised a toast, which takes the status line for
+    // three seconds; the waiting count shows once it has gone.
+    a.status.toast = None;
     assert!(a.status_line(120).contains(" · 2 waiting"), "{}", a.status_line(120));
     assert!(a.bell_pending, "no bell for a session out of view");
     assert!(!a.panes[0].as_ref().unwrap().bell_pending, "the bell would ring again on switching");
@@ -6229,4 +6232,50 @@ fn marks_are_written_once_and_repainting_does_not_stack_them() {
     mark_rows(&mut items, &[("def".to_string(), '•')]);
     assert_eq!(items[0].desc, "  3 msgs", "a cleared mark stayed");
     assert_eq!(items[1].desc, "• 3 msgs");
+}
+
+fn toast_text(a: &App) -> Option<String> {
+    a.status.toast.as_ref().map(|(text, _)| text.clone())
+}
+
+#[test]
+fn a_background_reply_raises_a_toast_with_position_and_title() {
+    let (mut a, _answers) = inbox_app("toast-reply");
+    a.status.toast = None;
+    a.apply_to(0, Ev::Done(None));
+    assert_eq!(toast_text(&a).as_deref(), Some("1/3 run the tests: replied"));
+}
+
+#[test]
+fn the_session_in_view_raises_no_toast() {
+    let (mut a, _answers) = inbox_app("toast-view");
+    a.status.toast = None;
+    let current = a.at;
+    a.apply_to(current, Ev::Done(None));
+    assert!(toast_text(&a).is_none(), "the session in view raised a toast: {:?}", toast_text(&a));
+}
+
+#[test]
+fn the_newest_background_toast_replaces_the_older() {
+    let (mut a, _answers) = inbox_app("toast-newest");
+    a.apply_to(0, Ev::Done(None));
+    a.apply_to(1, Ev::Woke("check-in: job 3".into()));
+    assert_eq!(toast_text(&a).as_deref(), Some("2/3 summarise the log: ⏰ check-in: job 3"));
+}
+
+#[test]
+fn a_background_job_notice_raises_a_toast_and_the_chat_keeps_its_row() {
+    let (mut a, _answers) = inbox_app("toast-job");
+    a.status.toast = None;
+    a.apply_to(0, Ev::Notice("Background job 4 finished with exit 0".into()));
+    assert_eq!(
+        toast_text(&a).as_deref(),
+        Some("1/3 run the tests: Background job 4 finished with exit 0")
+    );
+    let current = a.at;
+    a.apply_to(current, Ev::Notice("Background job 5 finished with exit 0".into()));
+    assert!(
+        a.entries.iter().any(|e| e.text == "Background job 5 finished with exit 0"),
+        "the chat lost the job row"
+    );
 }

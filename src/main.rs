@@ -924,6 +924,11 @@ fn print_ui_to<W: Write>(
             let line = format!("\u{25e6} {t}");
             writeln!(out, "{}{}", new_line(), palette.paint(tui::Role::Info, &line))?;
         }
+        // A job notice is a plain line, not an info row.
+        Ui::Notice(t) => {
+            let t = render::clean(&t);
+            writeln!(out, "{}{}", new_line(), palette.paint(tui::Role::Info, &t))?;
+        }
         Ui::Error(t) => {
             let t = render::clean(&t);
             let line = format!("! {t}");

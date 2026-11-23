@@ -1131,6 +1131,9 @@ pub enum Ev {
     /// A summary of a long first message, as the session title. Ignored when
     /// the user has renamed the session.
     Title(String),
+    /// A notice from a session's work: a finished job. The chat shows it as an
+    /// info row, and a background session shows it as a toast.
+    Notice(String),
     /// Changed files for `/diff`; true for `/diff git`.
     Diff(Vec<crate::agent::FileDiff>, bool),
     /// A goal round begins.
@@ -1186,6 +1189,7 @@ impl Hooks for WorkerHooks {
                 ms,
             },
             Ui::Info(t) => Ev::Info(t),
+            Ui::Notice(t) => Ev::Notice(t),
             Ui::Retry { secs, attempt, of } => Ev::Retry { secs, attempt, of },
             Ui::Error(t) => Ev::Error(t),
             Ui::Show(t) => Ev::Show(t),
@@ -2651,6 +2655,17 @@ impl App {
         }
         let Some(mut p) = self.panes[index].take() else { return };
         self.swap_pane(&mut p);
+        // What the background session needs the user to know, named while its
+        // title is in view; the toast is set once the pane is back in place.
+        let note = match &ev {
+            Ev::Done(None) => Some("replied".to_string()),
+            Ev::Done(Some(err)) => Some(format!("error: {err}")),
+            Ev::Confirm { .. } | Ev::Question { .. } => Some("needs an answer".to_string()),
+            Ev::Woke(what) => Some(format!("⏰ {what}")),
+            Ev::Notice(text) => Some(text.clone()),
+            _ => None,
+        };
+        let toast = note.map(|note| format!("{}/{} {}: {note}", index + 1, self.panes.len(), self.session_name()));
         if matches!(ev, Ev::Done(_)) {
             self.replied = true;
             self.since = Instant::now();
@@ -2662,6 +2677,9 @@ impl App {
         self.swap_pane(&mut p);
         self.panes[index] = Some(p);
         self.bell_pending |= ring;
+        if let Some(text) = toast {
+            self.toast(text);
+        }
     }
 
     /// Sessions out of view waiting on the user, longest wait first.
@@ -2905,17 +2923,20 @@ impl App {
     }
 
     /// The top row: the session's position and title, then the local time.
-    fn title_bar(&mut self, cols: usize) -> String {
-        // The stored title wins: `/rename` sets it, and the first message sets it
-        // when the session starts. The cut first message covers a session with
-        // no stored title yet.
-        let name = if !self.title.is_empty() {
+    /// The name of the session in view: the stored title, or the cut first message
+    /// for a session that has none yet, or `imp` before any message.
+    fn session_name(&self) -> String {
+        if !self.title.is_empty() {
             self.title.clone()
         } else if self.entries.iter().any(|e| e.role == Role::User) {
             title_of(&self.entries)
         } else {
             "imp".into()
-        };
+        }
+    }
+
+    fn title_bar(&mut self, cols: usize) -> String {
+        let name = self.session_name();
         let name = if self.panes.len() > 1 { format!("{}/{} {name}", self.at + 1, self.panes.len()) } else { name };
         let time = clock();
         let room = cols.saturating_sub(time.len() + 3);
@@ -3008,6 +3029,7 @@ impl App {
                 self.status.goal = None;
                 self.dirty = true;
             }
+            Ev::Notice(text) => self.apply(Ev::Info(text)),
             Ev::Title(text) => {
                 // Only the cut title is replaced; a rename stays.
                 let first = self.entries.iter().find(|e| e.role == Role::User).map(|e| e.text.clone()).unwrap_or_default();
@@ -5821,19 +5843,6 @@ impl App {
             add(p.worker.as_ref(), asking(&p.pending), p.status.streaming, p.failed, p.replied);
         }
         out
-    }
-
-    fn working_ids(&self) -> Vec<String> {
-        (0..self.panes.len())
-            .filter_map(|i| {
-                let (worker, busy) = match &self.panes[i] {
-                    None => (self.worker.as_ref(), self.status.streaming),
-                    Some(p) => (p.worker.as_ref(), p.status.streaming),
-                };
-                let id = worker?.2.lock().ok()?.clone();
-                (busy && !id.is_empty()).then_some(id)
-            })
-            .collect()
     }
 
     /// Repaint the spinners in an open session picker, ten times a second.
