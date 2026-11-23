@@ -1493,10 +1493,11 @@ fn ctrl_n_and_p_switch_sessions_and_keep_drafts() {
     a.cursor = a.input.len();
     a.run_command("new", &tx);
     a.input = "draft two".into();
-    assert!(a.status_line(80).starts_with("2/2 new · "), "{}", a.status_line(80));
+    assert!(strip(&a.title_bar(80)).starts_with(" 2/2 imp "), "{}", strip(&a.title_bar(80)));
+    assert!(a.status_line(80).starts_with(&a.cfg.model), "the position stayed in the status line");
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
-    assert!(a.status_line(80).starts_with("1/2 fix the parser · "), "{}", a.status_line(80));
+    assert!(strip(&a.title_bar(80)).starts_with(" 1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
     a.handle_key(Key::Ctrl('p'), &tx);
     let picker = open_picker(&a);
     assert_eq!(picker.kind, PickKind::Palette, "Ctrl+P left the palette");
@@ -2044,7 +2045,8 @@ fn a_rule_sets_the_composer_apart_and_turns_are_spaced() {
     let second = rows.iter().position(|r| *r == "> second").unwrap();
     assert_eq!(rows[second - 1], "", "no gap before the second turn: {rows:?}");
     assert_ne!(rows[first - 1], "> first");
-    assert!(rows[..first].iter().all(|r| r.is_empty()), "{rows:?}");
+    assert!(rows[0].starts_with(" first") && rows[0].trim_end().len() > 70, "no title bar: {rows:?}");
+    assert!(rows[1..first].iter().all(|r| r.is_empty()), "{rows:?}");
 
     let short = strip(&a.frame(80, 7));
     assert!(!short.contains("────"), "a rule on a 7-row screen: {short:?}");
@@ -5299,6 +5301,7 @@ fn a_detached_view_holds_when_output_arrives() {
     a.frame(60, 8);
     a.handle_key(Key::PageUp, &tx);
     let before = a.frame(60, 8).replace("\x1b[K", "");
+    let was = a.unseen;
     a.push(Role::User, "brand new line");
     let after = a.frame(60, 8).replace("\x1b[K", "");
     assert!(!after.contains("brand new line"), "view jumped to the tail");
@@ -5308,7 +5311,7 @@ fn a_detached_view_holds_when_output_arrives() {
         .find(|l| before.contains(l.as_str()))
         .unwrap_or_else(|| panic!("no row visible: {before:?}"));
     assert!(after.contains(&probe), "rows moved: {after:?}");
-    assert!(a.unseen > 5, "unseen count did not grow: {}", a.unseen);
+    assert!(a.unseen > was, "unseen count did not grow: {was} then {}", a.unseen);
 }
 
 #[test]
@@ -5734,4 +5737,22 @@ fn a_toast_shows_then_goes() {
     assert!(a.expire_toast(), "a due toast stayed");
     assert_eq!(a.status_line(80), before);
     assert!(!a.expire_toast());
+}
+
+#[test]
+fn the_title_bar_names_the_session_and_the_time() {
+    let mut a = app();
+    let bar = strip(&a.title_bar(40));
+    assert_eq!(bar.chars().count(), 40);
+    assert!(bar.starts_with(" imp "), "{bar:?}");
+    let time = clock();
+    assert!(time.len() == 5 && time.as_bytes()[2] == b':', "{time:?}");
+    assert!(bar.ends_with(&format!(" {time} ")), "{bar:?}");
+    a.push(Role::User, "a very long session title that cannot fit in forty columns");
+    let bar = strip(&a.title_bar(40));
+    assert!(bar.contains('…') && bar.ends_with(&format!(" {time} ")), "{bar:?}");
+    assert!(!strip(&a.frame(40, 7)).contains(&time), "a title bar on a 7-row screen");
+    assert!(!a.clock_due(), "a repaint with the minute unchanged");
+    a.clock_shown = "99:99".into();
+    assert!(a.clock_due());
 }

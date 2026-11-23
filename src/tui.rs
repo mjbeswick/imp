@@ -1696,6 +1696,8 @@ pub struct App {
     top: usize,
     body_rows: usize,
     max_top: usize,
+    /// The time the title bar last showed, to repaint on a new minute.
+    clock_shown: String,
     unseen: usize,
     pending: Option<Pending>,
     /// The theme active when the theme picker opened, while it previews.
@@ -2436,6 +2438,7 @@ impl App {
             top: 0,
             body_rows: 1,
             max_top: 0,
+            clock_shown: String::new(),
             unseen: 0,
             pending: None,
             preview_from: None,
@@ -2797,6 +2800,24 @@ impl App {
         self.entries.clear();
         self.tool = None;
         self.done.clear();
+    }
+
+    /// The top row: the session's position and title, then the local time.
+    fn title_bar(&mut self, cols: usize) -> String {
+        let name = if self.entries.iter().any(|e| e.role == Role::User) { title_of(&self.entries) } else { "imp".into() };
+        let name = if self.panes.len() > 1 { format!("{}/{} {name}", self.at + 1, self.panes.len()) } else { name };
+        let time = clock();
+        let room = cols.saturating_sub(time.len() + 3);
+        let text = format!(" {:<room$} {time} ", fit(&name, room));
+        self.clock_shown = time;
+        self.palette.select(&text)
+    }
+
+    /// Whether the minute moved on since the title bar was drawn.
+    fn clock_due(&mut self) -> bool {
+        let due = !self.clock_shown.is_empty() && clock() != self.clock_shown;
+        self.dirty |= due;
+        due
     }
 
     /// A confirmation of what the user just did, shown in the status line.
@@ -5632,7 +5653,10 @@ impl App {
         }
         // A rule sets the composer apart, unless the screen is too short.
         let rule = usize::from(rows >= 8);
-        let body_rows = rows.saturating_sub(1 + rule + composer.len()).max(1);
+        // So does the title bar.
+        let title = rule;
+        let body_rows = rows.saturating_sub(1 + rule + title + composer.len()).max(1);
+        let bar = (title == 1).then(|| self.title_bar(cols));
 
         let markdown = self.cfg.links.supported();
         // Only entries whose text, role, width, or turn gap changed render again.
@@ -5720,6 +5744,7 @@ impl App {
         let lead = body_rows.saturating_sub(visible.len());
 
         let mut screen: Vec<String> = Vec::with_capacity(rows);
+        screen.extend(bar);
         for _ in 0..body_rows.saturating_sub(visible.len()) {
             screen.push(String::new());
         }
@@ -5744,7 +5769,7 @@ impl App {
                         let used: usize = spans.iter().map(|s| s.text.chars().count()).sum();
                         row.push_str(&" ".repeat(cols.saturating_sub(used + 1)));
                         row.push_str(&self.palette.paint(Role::Thinking, &COPY.to_string()));
-                        self.targets.push((lead + n + 1, cols.saturating_sub(1), cols, target));
+                        self.targets.push((title + lead + n + 1, cols.saturating_sub(1), cols, target));
                     }
                 }
                 Line::Diff(text, marks) => row.push_str(&self.paint_diff(*role, text, marks, cols)),
@@ -5756,7 +5781,7 @@ impl App {
                 }
             }
             if let Some(Target::Tool(i)) = &labels[n] {
-                self.targets.push((lead + n + 1, 1, cols, Target::Tool(*i)));
+                self.targets.push((title + lead + n + 1, 1, cols, Target::Tool(*i)));
             }
             screen.push(row);
         }
@@ -5794,7 +5819,7 @@ impl App {
             };
             screen.push(self.palette.paint(tone, &rule));
         }
-        let first = body_rows + rule + 1;
+        let first = title + body_rows + rule + 1;
         for (i, row) in composer.iter().enumerate() {
             screen.push(row.clone());
             if matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. })) {
@@ -6538,11 +6563,8 @@ impl App {
             format!("{} ({})", self.cfg.model, self.status.served)
         };
         // With several live sessions, which one this is comes first.
-        let place = if self.panes.len() > 1 {
-            format!("{}/{} {} · ", self.at + 1, self.panes.len(), fit(&title_of(&self.entries), 20))
-        } else {
-            String::new()
-        };
+        // Which session this is lives in the title bar.
+        let place = "";
         let waiting = match self.waiting() {
             0 => String::new(),
             n => format!(" · {n} waiting"),
@@ -6835,6 +6857,29 @@ fn edit_line(text: &mut String, caret: &mut usize, key: &Key, clip: &str) -> boo
     }
     *caret = at;
     true
+}
+
+/// The local time as `HH:MM`.
+fn clock() -> String {
+    // ponytail: the leading fields of `struct tm` match on macOS and glibc;
+    // the rest is padding we never read.
+    #[repr(C)]
+    struct Tm {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        rest: [i64; 8],
+    }
+    extern "C" {
+        fn localtime_r(time: *const i64, out: *mut Tm) -> *mut Tm;
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let mut tm = Tm { sec: 0, min: 0, hour: 0, rest: [0; 8] };
+    // SAFETY: both pointers are valid for the call; `tm` is large enough.
+    if unsafe { localtime_r(&now, &mut tm) }.is_null() {
+        return String::new();
+    }
+    format!("{:02}:{:02}", tm.hour, tm.min)
 }
 
 /// A drawn row without its escape sequences.
@@ -7537,6 +7582,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if app.expire_toast() {
+                    redraw = true;
+                }
+                if app.clock_due() {
                     redraw = true;
                 }
                 // Ten frames a second is enough for a spinner. Repainting faster
