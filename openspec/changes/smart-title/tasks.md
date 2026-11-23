@@ -2,7 +2,7 @@
 
 ## 1. Cut title
 
-- [ ] 1.1 The cut title: a word boundary, 40 characters, filler stripped; the chat holds a title that `/rename` sets and the title bar shows it; tests
+- [x] 1.1 The cut title: a word boundary, 40 characters, filler stripped; the chat holds a title that `/rename` sets and the title bar shows it; tests
 
 ## 2. Summary
 
