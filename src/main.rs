@@ -281,7 +281,7 @@ fn silent_exit_hint(prompt: bool, interactive: bool, entries: usize) -> Option<&
 
 /// The line printed when a session ends, naming the id `imp -r` accepts.
 fn resume_line(id: &str) -> String {
-    format!("imp: resume with imp -r {id}")
+    format!("resume with imp -r {id}")
 }
 
 /// Choose the root for a run: an explicit `--cwd` wins, then the directory
@@ -791,7 +791,7 @@ impl Hooks for Cli {
     }
 
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
-        println!("\n{question}");
+        println!("{}{question}", new_line());
         for (i, o) in options.iter().enumerate() {
             println!("  {}. {o}", i + 1);
         }
@@ -838,6 +838,16 @@ fn preview_lines(text: &str) -> String {
     out
 }
 
+thread_local! {
+    /// Line mode's output stopped mid-line, after part of a reply.
+    static MID_LINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A newline when output stopped mid-line, so a row never follows a blank one.
+fn new_line() -> &'static str {
+    if MID_LINE.with(|m| m.replace(false)) { "\n" } else { "" }
+}
+
 fn print_ui_to<W: Write>(
     out: &mut W,
     event: Ui,
@@ -848,7 +858,11 @@ fn print_ui_to<W: Write>(
     match event {
         Ui::Content(t) => {
             // Model text never drives the terminal, piped or not.
-            write!(out, "{}", render::clean(&t))?;
+            let t = render::clean(&t);
+            write!(out, "{t}")?;
+            if !t.is_empty() {
+                MID_LINE.with(|m| m.set(!t.ends_with('\n')));
+            }
             out.flush().ok();
         }
         Ui::Reasoning(t) => {
@@ -861,7 +875,7 @@ fn print_ui_to<W: Write>(
         Ui::ToolStart { name, summary, args } => {
             let (summary, args) = (render::clean(&summary), render::clean(&args));
             let line = format!("\u{25b8} {summary}");
-            writeln!(out, "\n{}", palette.paint(tui::Role::Tool, &line))?;
+            writeln!(out, "{}{}", new_line(), palette.paint(tui::Role::Tool, &line))?;
             if verbose && !args.is_empty() {
                 for line in args.lines() {
                     writeln!(out, "  {}", palette.paint(tui::Role::Thinking, line))?;
@@ -907,12 +921,12 @@ fn print_ui_to<W: Write>(
         Ui::Info(t) => {
             let t = render::clean(&t);
             let line = format!("\u{25e6} {t}");
-            writeln!(out, "\n{}", palette.paint(tui::Role::Info, &line))?;
+            writeln!(out, "{}{}", new_line(), palette.paint(tui::Role::Info, &line))?;
         }
         Ui::Error(t) => {
             let t = render::clean(&t);
             let line = format!("! {t}");
-            writeln!(out, "\n{}", palette.paint(tui::Role::Error, &line))?;
+            writeln!(out, "{}{}", new_line(), palette.paint(tui::Role::Error, &line))?;
         }
     }
     Ok(())
@@ -1034,7 +1048,7 @@ mod tests {
     fn resume_line_names_the_id() {
         assert_eq!(
             resume_line("3k9a0aa"),
-            "imp: resume with imp -r 3k9a0aa"
+            "resume with imp -r 3k9a0aa"
         );
     }
 
@@ -1178,5 +1192,19 @@ mod tests {
 
         let mut empty = Cursor::new(Vec::new());
         assert_eq!(read_entry(&mut empty).unwrap(), None);
+    }
+
+    #[test]
+    fn rows_follow_a_line_without_a_blank_one() {
+        let palette = tui::Palette::detect(&config::Config { color: config::ColorMode::Never, ..config::Config::default() });
+        let start = || Ui::ToolStart { name: "bash".into(), summary: "list".into(), args: String::new() };
+        let mut out = Vec::new();
+        print_ui_to(&mut out, start(), config::Verbosity::Low, &palette).unwrap();
+        assert!(String::from_utf8_lossy(&out).starts_with("\u{25b8} list\n"), "a blank line came first");
+        let mut out = Vec::new();
+        print_ui_to(&mut out, Ui::Content("Looking".into()), config::Verbosity::Low, &palette).unwrap();
+        print_ui_to(&mut out, start(), config::Verbosity::Low, &palette).unwrap();
+        print_ui_to(&mut out, Ui::Info("noted".into()), config::Verbosity::Low, &palette).unwrap();
+        assert_eq!(String::from_utf8_lossy(&out), "Looking\n\u{25b8} list\n\u{25e6} noted\n");
     }
 }
