@@ -234,6 +234,7 @@ wins when set.
 # base_url=https://api.deepseek.com
 # permissions=normal        # normal | auto | strict | yolo
 # allow_sudo=false
+# title_summary=auto        # auto | on | off: summarise a long first message as the title
 # allow=npm test          # one line per shape; written by `a` at a prompt
 # auth=api.github.com Authorization: Bearer $GITHUB_TOKEN   # one line per host
 # render.mermaid=mmd      # draw a reply's ```mermaid blocks with a command (stdin, COLUMNS)
