@@ -5164,6 +5164,17 @@ impl App {
                         self.pending = Some(Pending::ProviderForm { name, fields, at });
                         self.dirty = true;
                     }
+                    // Back to an earlier field to fix it; each field keeps its text.
+                    Key::Up | Key::BackTab => {
+                        at = at.saturating_sub(1);
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        self.dirty = true;
+                    }
+                    Key::Down => {
+                        at = (at + 1).min(fields.len().saturating_sub(1));
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        self.dirty = true;
+                    }
                     _ => {
                         self.pending = Some(Pending::ProviderForm { name, fields, at });
                     }
