@@ -5647,3 +5647,33 @@ fn reload_rereads_the_config() {
     assert!(a.cfg.allow_sudo, "the chat kept the old config");
     let _ = tx.send(Cmd::Quit);
 }
+
+#[test]
+fn a_paste_decodes_whole_even_across_reads() {
+    let mut buf = b"x\x1b[200~one\rtw".to_vec();
+    assert_eq!(decode(&mut buf), vec![Key::Char('x')], "a part paste leaked keys");
+    buf.extend_from_slice(b"o\x1b[201~y");
+    assert_eq!(decode(&mut buf), vec![Key::Paste("one\ntwo".into()), Key::Char('y')]);
+    assert!(enter_sequence(true).contains("\x1b[?2004h") && enter_sequence(false).contains("\x1b[?2004h"));
+    assert!(ALT_OFF.contains("\x1b[?2004l") && RESTORE.contains("\x1b[?2004l"));
+}
+
+#[test]
+fn a_paste_fills_the_draft_and_never_answers() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    a.handle_key(Key::Paste("one\ntwo".into()), &tx);
+    assert_eq!((a.input.as_str(), a.cursor), ("one\ntwo", 7));
+    assert!(rx.try_recv().is_err() && a.entries.is_empty(), "the paste was sent");
+    let (reply, answers) = channel();
+    a.apply(Ev::Confirm { what: "run `make`".into(), reply, always: false });
+    a.handle_key(Key::Paste("y".into()), &tx);
+    assert!(matches!(a.pending, Some(Pending::Confirm { .. })), "a paste answered");
+    assert!(answers.try_recv().is_err());
+    // A question takes it as a typed answer, digits included.
+    a.pending = None;
+    let got = asked(&mut a);
+    a.handle_key(Key::Paste("3 files\nonly".into()), &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(got.recv().unwrap().as_deref(), Some("3 files only"));
+}

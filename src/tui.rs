@@ -13,11 +13,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-const ALT_ON: &str = "\x1b[?1049h\x1b[?25l\x1b[>1u";
-const ALT_OFF: &str = "\x1b[?1006l\x1b[?1000l\x1b[<u\x1b[?25h\x1b[?1049l";
+const ALT_ON: &str = "\x1b[?1049h\x1b[?25l\x1b[>1u\x1b[?2004h";
+const ALT_OFF: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[<u\x1b[?25h\x1b[?1049l";
 /// SGR mouse reports, so the wheel reaches imp instead of the scrollback.
 const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1006h";
-const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1000l";
+const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 /// Set from the `mouse` setting before raw mode starts.
 static MOUSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -162,7 +162,7 @@ const OPOST: Flag = 0x1;
 const TCSANOW: c_int = 0;
 
 static SAVED: std::sync::Mutex<Option<Termios>> = std::sync::Mutex::new(None);
-const RESTORE: &str = "\x1b[?1006l\x1b[?1000l\x1b[<u\x1b[?25h\x1b[?1049l";
+const RESTORE: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[<u\x1b[?25h\x1b[?1049l";
 
 extern "C" {
     fn write(fd: std::ffi::c_int, buf: *const std::ffi::c_void, len: usize) -> isize;
@@ -798,6 +798,8 @@ pub enum Key {
     WheelDown,
     /// A left-button press at a 1-based column and row.
     Click(u16, u16),
+    /// Text the terminal marked as pasted, line breaks as `\n`.
+    Paste(String),
     Unknown,
 }
 
@@ -817,6 +819,14 @@ pub fn decode(buf: &mut Vec<u8>) -> Vec<Key> {
     while !buf.is_empty() {
         let b = buf[0];
         if b == 0x1b {
+            if buf.starts_with(b"\x1b[200~") {
+                // A paste may span reads: wait for its end marker.
+                let Some(end) = buf.windows(6).position(|w| w == b"\x1b[201~") else { break };
+                let text = String::from_utf8_lossy(&buf[6..end]).replace("\r\n", "\n").replace('\r', "\n");
+                buf.drain(..end + 6);
+                keys.push(Key::Paste(text));
+                continue;
+            }
             if buf.len() >= 2 && buf[1] == b'[' {
                 if let Some((len, key)) = control_sequence(buf) {
                     buf.drain(..len);
@@ -1167,7 +1177,7 @@ impl Hooks for WorkerHooks {
             std::thread::sleep(Duration::from_millis(5));
         }
         // The shell gets the mouse back, and imp takes it again after.
-        print!("{MOUSE_OFF}\x1b[?25h\x1b[?1049l");
+        print!("{MOUSE_OFF}\x1b[?2004l\x1b[?25h\x1b[?1049l");
         std::io::stdout().flush().ok();
         let saved = SAVED.lock().ok().and_then(|slot| *slot);
         if let Some(saved) = saved {
@@ -2711,6 +2721,38 @@ impl App {
     }
 
     /// Empty the transcript, and the tool rows that point into it.
+    /// A paste goes whole into what takes text: the draft keeps its line
+    /// breaks, a prompt or answer row gets spaces, a confirmation gets nothing.
+    fn paste(&mut self, text: String, tx: &Sender<Cmd>) {
+        self.dirty = true;
+        let flat: String = text.chars().map(|c| if c == '\n' || c == '\t' { ' ' } else { c }).filter(|c| !c.is_control()).collect();
+        match &mut self.pending {
+            Some(Pending::Confirm { .. } | Pending::ConfirmDelete { .. }) => {}
+            Some(Pending::Question { mode, typed, .. }) => {
+                *mode = AskMode::Custom;
+                let at = self.ask_caret.min(typed.len());
+                typed.insert_str(at, &flat);
+                self.ask_caret = at + flat.len();
+            }
+            Some(_) => {
+                for c in flat.chars() {
+                    self.handle_key_inner(Key::Char(c), tx);
+                }
+            }
+            None => {
+                self.follow_tail();
+                if let Some((from, to)) = self.selection() {
+                    self.input.replace_range(from..to, "");
+                    self.cursor = from;
+                }
+                self.anchor = None;
+                self.input.insert_str(self.cursor, &text);
+                self.cursor += text.len();
+                self.sync_menu();
+            }
+        }
+    }
+
     /// Drop the rows after the last user message and send it again.
     fn retry(&mut self, tx: &Sender<Cmd>) {
         if self.status.streaming {
@@ -3220,6 +3262,9 @@ impl App {
                 self.push(Role::Info, "Ctrl+C again to quit");
             }
             return;
+        }
+        if let Key::Paste(text) = &key {
+            return self.paste(text.clone(), tx);
         }
         if let Some(s) = self.status.suggestion.take() {
             // Right or Enter takes it into the draft; Enter never sends it.

@@ -2,7 +2,7 @@
 
 ## 1. Paste
 
-- [ ] 1.1 Bracketed paste on and off with the screen; a paste goes whole into the draft, prompt, or answer row and never answers a confirmation; tests
+- [x] 1.1 Bracketed paste on and off with the screen; a paste goes whole into the draft, prompt, or answer row and never answers a confirmation; tests
 
 ## 2. Select
 
