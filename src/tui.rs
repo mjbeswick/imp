@@ -1038,6 +1038,8 @@ pub enum Cmd {
     SetThinking(bool),
     SetEffort(Option<String>),
     SetAgent(String),
+    /// A setting changed in the `/settings` form, applied to the session.
+    SetConfig(String, String),
     SetModel(String),
     ListModels,
     ShowAgent,
@@ -1973,6 +1975,8 @@ enum PickKind {
     Mode,
     Keys,
     Palette,
+    /// The `/settings` form: each row steps its own value.
+    Settings,
 }
 
 #[derive(Clone)]
@@ -2026,6 +2030,20 @@ fn record_model(path: &std::path::Path, name: &str) {
     }
     let _ = std::fs::write(path, names.join("\n"));
 }
+
+/// The rows of the `/settings` form: config key and label.
+const SETTING_ROWS: &[(&str, &str)] = &[
+    ("permissions", "start mode"),
+    ("thinking", "thinking"),
+    ("effort", "effort"),
+    ("verbosity", "verbosity"),
+    ("mouse", "mouse"),
+    ("suggest", "suggestions"),
+    ("diffs", "diffs"),
+    ("auto_next", "next waiting session"),
+    ("title_gradient", "title gradient"),
+    ("spinner", "spinner"),
+];
 
 /// Every slash command as a picker row.
 fn command_items() -> Vec<PickItem> {
@@ -4114,6 +4132,90 @@ impl App {
         self.follow_tail();
     }
 
+    /// The `/settings` form: ten settings, each row showing its value.
+    fn open_settings(&mut self) {
+        let items = SETTING_ROWS
+            .iter()
+            .map(|(key, label)| PickItem {
+                label: label.to_string(),
+                value: key.to_string(),
+                desc: self.setting_value(key),
+                actions: Vec::new(),
+            })
+            .collect();
+        self.pending = Some(Pending::Pick(Picker::new("settings", items, PickKind::Settings)));
+        self.dirty = true;
+    }
+
+    /// The current value of a settings row, as the form shows it.
+    fn setting_value(&self, key: &str) -> String {
+        let onoff = |on: bool| if on { "on" } else { "off" }.to_string();
+        match key {
+            "permissions" => self.cfg.live_permissions().as_str().into(),
+            "thinking" => onoff(self.cfg.thinking),
+            "effort" => self.cfg.effort.clone().unwrap_or_else(|| "default".into()),
+            "verbosity" => self.verbosity.as_str().into(),
+            "mouse" => onoff(self.cfg.mouse),
+            "suggest" => onoff(self.cfg.suggest),
+            "diffs" => onoff(self.cfg.diffs),
+            "auto_next" => onoff(self.cfg.auto_next),
+            "title_gradient" => onoff(self.cfg.title_gradient),
+            "spinner" => crate::config::SPINNERS.get(self.cfg.spinner).map_or(String::new(), |s| s.0.into()),
+            _ => String::new(),
+        }
+    }
+
+    /// The values a settings row steps through, in order.
+    fn setting_choices(key: &str) -> Vec<String> {
+        let words = |list: &[&str]| list.iter().map(|s| s.to_string()).collect();
+        match key {
+            "permissions" => words(&["normal", "strict", "yolo"]),
+            "effort" => words(&["default", "low", "medium", "high"]),
+            "verbosity" => words(&["low", "medium", "high"]),
+            "thinking" | "mouse" | "suggest" | "diffs" | "auto_next" | "title_gradient" => words(&["off", "on"]),
+            "spinner" => crate::config::SPINNERS.iter().map(|s| s.0.to_string()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Step the highlighted row by `dir`, apply it to the session, save it
+    /// when the config names a file, and refresh the row's value.
+    fn step_setting(&mut self, picker: &mut Picker, dir: i64, tx: &Sender<Cmd>) {
+        let Some(key) = picker.items.get(picker.index).map(|item| item.value.clone()) else {
+            return;
+        };
+        let choices = Self::setting_choices(&key);
+        if choices.is_empty() {
+            return;
+        }
+        let current = self.setting_value(&key);
+        let at = choices.iter().position(|c| *c == current).unwrap_or(0) as i64;
+        let next = choices[(at + dir).rem_euclid(choices.len() as i64) as usize].clone();
+        if let Err(e) = self.cfg.set(&key, &next) {
+            self.toast(e);
+            return;
+        }
+        if key == "verbosity" {
+            self.verbosity = Verbosity::parse(&next).unwrap_or(self.verbosity);
+        }
+        if key == "permissions" {
+            if let Ok(mode) = crate::config::Permissions::parse(&next) {
+                let _ = tx.send(Cmd::SetPermissions(mode));
+            }
+        } else {
+            let _ = tx.send(Cmd::SetConfig(key.clone(), next.clone()));
+        }
+        if let Some(file) = self.cfg.file.clone() {
+            if let Err(e) = crate::config::save_setting(&file, &key, &next) {
+                self.toast(e);
+            }
+        }
+        if let Some(item) = picker.items.get_mut(picker.index) {
+            item.desc = self.setting_value(&key);
+        }
+        self.dirty = true;
+    }
+
     /// The keys card, for `?` and `/keys`.
     fn open_keys(&mut self) {
         let rows = crate::help::KEYS
@@ -4725,6 +4827,7 @@ impl App {
             }
             "quit" | "exit" => self.quit = true,
             "keys" => self.open_keys(),
+            "settings" => self.open_settings(),
             other if other == "diff" || other.starts_with("diff ") => {
                 let _ = tx.send(Cmd::Diff(other["diff".len()..].trim().to_string()));
             }
@@ -5273,6 +5376,14 @@ impl App {
                         self.dirty = true;
                         return;
                     }
+                    // The settings form steps a value on Space or the arrows; Space
+                    // never reaches the filter there.
+                    Key::Char(' ') | Key::Right | Key::Left if picker.kind == PickKind::Settings => {
+                        let dir = if matches!(key, Key::Left) { -1 } else { 1 };
+                        self.step_setting(&mut picker, dir, tx);
+                        self.pending = Some(Pending::Pick(picker));
+                        return;
+                    }
                     Key::Char(c) => picker.filter_push(c),
                     Key::Tab if picker.kind == PickKind::Command => {
                         if let Some(choice) = picker.selected() {
@@ -5372,6 +5483,11 @@ impl App {
                             }
                             PickKind::Mode => self.set_mode(&choice.value, tx),
                             PickKind::Keys => {}
+                            PickKind::Settings => {
+                                self.step_setting(&mut picker, 1, tx);
+                                self.pending = Some(Pending::Pick(picker));
+                                return;
+                            }
                             PickKind::Verbosity => {
                                 self.verbosity = Verbosity::parse(&choice.value).unwrap_or(self.verbosity);
                                 self.toast(format!("verbosity: {}", choice.value));
@@ -7459,6 +7575,9 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         }
                     }
                     let _ = ev_tx.send(Ev::Done(None));
+                }
+                Ok(Cmd::SetConfig(key, value)) => {
+                    let _ = worker_session.cfg.set(&key, &value);
                 }
                 Ok(Cmd::SetPermissions(mode)) => {
                     worker_session.set_permissions(mode);

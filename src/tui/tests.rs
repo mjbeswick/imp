@@ -5867,3 +5867,91 @@ fn the_status_line_keeps_the_percent_inside_a_narrow_width() {
     a.status.tokens = 12_300;
     assert!(a.status_line(40).chars().count() <= 40, "{}", a.status_line(40));
 }
+
+fn focus_setting(a: &mut App, key: &str) -> usize {
+    let at = match &a.pending {
+        Some(Pending::Pick(p)) => p.items.iter().position(|i| i.value == key).expect("no such setting row"),
+        _ => panic!("no picker is open"),
+    };
+    if let Some(Pending::Pick(p)) = &mut a.pending {
+        p.index = at;
+    }
+    at
+}
+
+fn setting_desc(a: &App, key: &str) -> String {
+    let picker = open_picker(a);
+    picker.items.iter().find(|i| i.value == key).expect("no such setting row").desc.clone()
+}
+
+#[test]
+fn settings_lists_ten_settings_with_their_values() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    let picker = open_picker(&a);
+    assert_eq!(picker.kind, PickKind::Settings);
+    assert_eq!(picker.items.len(), 10);
+    assert_eq!(setting_desc(&a, "thinking"), "off");
+    assert_eq!(setting_desc(&a, "effort"), "default");
+}
+
+#[test]
+fn enter_toggles_thinking_and_the_row_shows_it() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "thinking");
+    a.handle_key(Key::Enter, &tx);
+    assert!(a.cfg.thinking, "thinking did not switch on");
+    assert_eq!(setting_desc(&a, "thinking"), "on");
+    assert!(
+        matches!(rx.try_recv(), Ok(Cmd::SetConfig(k, v)) if k == "thinking" && v == "on"),
+        "the session was not told"
+    );
+}
+
+#[test]
+fn space_and_the_arrows_step_a_value_and_space_does_not_type() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "effort");
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Right, &tx);
+    assert_eq!(setting_desc(&a, "effort"), "medium");
+    a.handle_key(Key::Left, &tx);
+    assert_eq!(setting_desc(&a, "effort"), "low");
+    a.handle_key(Key::Char(' '), &tx);
+    assert_eq!(setting_desc(&a, "effort"), "medium");
+    assert_eq!(open_picker(&a).filter, "", "Space went into the filter");
+}
+
+#[test]
+fn a_change_is_saved_to_the_config_file_keeping_comments() {
+    let dir = std::env::temp_dir().join(format!("imp-settings-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config");
+    std::fs::write(&path, "# keep\nthinking=false\n").unwrap();
+    let mut a = app();
+    a.cfg.file = Some(path.clone());
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "thinking");
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\nthinking = on\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn esc_closes_the_form_and_keeps_the_values() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "thinking");
+    a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Esc, &tx);
+    assert!(a.pending.is_none(), "the form stayed open");
+    assert!(a.cfg.thinking, "Esc reverted the value");
+}
