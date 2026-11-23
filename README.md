@@ -99,7 +99,7 @@ one 16 MB output buffer budget.
 ```
 /help      the commands          /keys      the keys
 /agent     switch profile
-/new       another live session  /reload    re-read instructions and skills
+/new       another live session  /reload    re-read config, instructions, skills
 /sessions  pick a session        /compact   compact now
 /think     thinking toggle       /mode      normal, strict, or yolo
 /verbosity low, medium, high     /cwd       show the session directory
