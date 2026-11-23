@@ -1015,6 +1015,7 @@ pub enum Cmd {
     /// `/diff` with its arguments.
     Diff(String),
     SetThinking(bool),
+    SetEffort(Option<String>),
     SetAgent(String),
     SetModel(String),
     ListModels,
@@ -1697,6 +1698,8 @@ pub struct App {
     body_rows: usize,
     max_top: usize,
     /// The time the title bar last showed, to repaint on a new minute.
+    /// The provider-has-no-effort note was shown this run.
+    effort_noted: bool,
     clock_shown: String,
     unseen: usize,
     pending: Option<Pending>,
@@ -2440,6 +2443,7 @@ impl App {
             top: 0,
             body_rows: 1,
             max_top: 0,
+            effort_noted: false,
             clock_shown: String::new(),
             unseen: 0,
             pending: None,
@@ -4772,6 +4776,25 @@ impl App {
                 self.push(Role::Info, "compacting…");
             }
             "retry" => self.retry(tx),
+            other if other == "effort" || other.starts_with("effort ") => {
+                let value = other.strip_prefix("effort").unwrap_or("").trim();
+                if value.is_empty() {
+                    let now = self.cfg.effort.as_deref().unwrap_or("default");
+                    return self.toast(format!("effort: {now}"));
+                }
+                match crate::config::parse_effort(value) {
+                    Ok(level) => {
+                        if level.is_some() && !self.effort_noted && !crate::providers::has_effort(self.cfg.provider) {
+                            self.effort_noted = true;
+                            self.push(Role::Info, format!("{:?} has no effort setting; it is kept for other providers", self.cfg.provider).to_lowercase());
+                        }
+                        let _ = tx.send(Cmd::SetEffort(level.clone()));
+                        self.toast(format!("effort: {}", level.as_deref().unwrap_or("default")));
+                        self.cfg.effort = level;
+                    }
+                    Err(e) => self.push(Role::Error, e),
+                }
+            }
             "think" => {
                 self.cfg.thinking = !self.cfg.thinking;
                 let _ = tx.send(Cmd::SetThinking(self.cfg.thinking));
@@ -7277,6 +7300,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     }
                 }
                 Ok(Cmd::SetThinking(on)) => worker_session.cfg.thinking = on,
+                Ok(Cmd::SetEffort(level)) => worker_session.cfg.effort = level,
                 Ok(Cmd::SetAgent(name)) => {
                     let name = crate::store::resolve_agent(&name).to_string();
                     let found = worker_session

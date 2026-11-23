@@ -5760,3 +5760,24 @@ fn the_title_bar_names_the_session_and_the_time() {
     a.clock_shown = "99:99".into();
     assert!(a.clock_due());
 }
+
+#[test]
+fn effort_is_set_shown_and_noted_once() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    a.run_command("effort high", &tx);
+    assert_eq!(a.cfg.effort.as_deref(), Some("high"));
+    assert!(matches!(rx.try_recv(), Ok(Cmd::SetEffort(Some(l))) if l == "high"));
+    a.run_command("effort", &tx);
+    assert_eq!(a.status.toast.as_ref().map(|(t, _)| t.as_str()), Some("effort: high"));
+    a.run_command("effort default", &tx);
+    assert_eq!(a.cfg.effort, None);
+    a.run_command("effort huge", &tx);
+    assert_eq!(a.entries.last().unwrap().role, Role::Error);
+    a.entries.clear();
+    a.cfg.set_provider(crate::providers::Provider::Ollama);
+    a.run_command("effort low", &tx);
+    a.run_command("effort medium", &tx);
+    let notes = a.entries.iter().filter(|e| e.text.contains("has no effort setting")).count();
+    assert_eq!(notes, 1, "the note was not shown exactly once");
+}

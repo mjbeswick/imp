@@ -57,14 +57,14 @@ impl Adapter for OpenAi {
                     json!({ "type": if opts.thinking { "enabled" } else { "disabled" } }),
                 );
                 if opts.thinking {
-                    map.insert("reasoning_effort".into(), json!("low"));
+                    map.insert("reasoning_effort".into(), json!(opts.effort.as_deref().unwrap_or("low")));
                 } else if let Some(t) = opts.temperature {
                     map.insert("temperature".into(), json!(t));
                 }
             }
             Thinking::Effort => {
                 if opts.thinking {
-                    map.insert("reasoning_effort".into(), json!("low"));
+                    map.insert("reasoning_effort".into(), json!(opts.effort.as_deref().unwrap_or("low")));
                 } else if let Some(t) = opts.temperature {
                     map.insert("temperature".into(), json!(t));
                 }
@@ -107,6 +107,7 @@ mod tests {
             max_tokens: 10,
             thinking,
             temperature: Some(0.2),
+            effort: None,
         }
     }
 
@@ -142,6 +143,17 @@ mod tests {
         assert!(w.body.get("max_tokens").is_none());
         assert!(w.body.get("thinking").is_none());
         assert!(w.body["messages"][0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn effort_is_sent_when_chosen() {
+        let mut o = opts(true);
+        o.effort = Some("high".into());
+        let mut adapter = OpenAi::new("https://api.deepseek.com", "k", Provider::DeepSeek.caps());
+        let w = adapter.wire(&o, &[Message::user("hi")], &[]);
+        assert_eq!(w.body["reasoning_effort"], "high");
+        let w = adapter.wire(&opts(true), &[Message::user("hi")], &[]);
+        assert_eq!(w.body["reasoning_effort"], "low", "unset no longer sends low");
     }
 
     #[test]

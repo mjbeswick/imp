@@ -132,6 +132,8 @@ pub struct Config {
     /// The live mode, shared with the worker so a change applies mid-turn.
     pub mode: Arc<AtomicU8>,
     pub allow_sudo: bool,
+    /// Reasoning effort: `low`, `medium` or `high`; `None` is the provider's.
+    pub effort: Option<String>,
     /// Command shapes answered `a`: shared by every session, saved in the file.
     pub allow: Arc<std::sync::Mutex<Vec<String>>>,
     /// The file this was loaded from; `None` keeps `allow` in memory only.
@@ -185,6 +187,7 @@ impl Default for Config {
             permissions: Permissions::Normal,
             mode: Arc::new(AtomicU8::new(Permissions::Normal.code())),
             allow_sudo: false,
+            effort: None,
             allow: Arc::default(),
             file: None,
             pairs: Vec::new(),
@@ -264,6 +267,7 @@ impl Config {
             "base_url" => self.base_url = value.trim_end_matches('/').to_string(),
             "permissions" => self.set_permissions(Permissions::parse(value)?),
             "allow_sudo" => self.allow_sudo = parse_bool(value)?,
+            "effort" => self.effort = parse_effort(value)?,
             "allow" => self.allows(value),
             "verbosity" => self.verbosity = Verbosity::parse(value)?,
             "auth" => {
@@ -680,6 +684,15 @@ fn read_keys(path: &Path) -> Vec<(String, String)> {
 }
 
 /// The keys file, read when it exists.
+/// An effort level, or `None` for `default` or nothing.
+pub fn parse_effort(value: &str) -> Result<Option<String>, String> {
+    match value.trim() {
+        "" | "default" => Ok(None),
+        v @ ("low" | "medium" | "high") => Ok(Some(v.to_string())),
+        v => Err(format!("effort is low, medium, high, or default (got {v:?})")),
+    }
+}
+
 /// One line naming config keys imp ignored, or `None` when there are none.
 pub fn unknown_note(keys: &[String]) -> Option<String> {
     match keys {
@@ -1270,5 +1283,12 @@ mod tests {
         let gone = Config::from_str("model = a\n").unwrap();
         let (_, removed) = live.reload_from(&gone);
         assert_eq!(removed, vec!["allow_sudo", "max_steps"]);
+    }
+
+    #[test]
+    fn effort_takes_three_levels_or_default() {
+        assert_eq!(Config::from_str("effort = high\n").unwrap().effort.as_deref(), Some("high"));
+        assert_eq!(Config::from_str("effort = default\n").unwrap().effort, None);
+        assert!(Config::from_str("effort = max\n").is_err());
     }
 }

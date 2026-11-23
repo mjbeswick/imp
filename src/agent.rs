@@ -594,6 +594,9 @@ impl Session {
         if let Some(thinking) = agent.thinking {
             self.cfg.thinking = thinking;
         }
+        if agent.effort.is_some() {
+            self.cfg.effort = agent.effort.clone();
+        }
         self.agent = agent;
     }
 
@@ -632,6 +635,7 @@ impl Session {
                 max_tokens: self.cfg.max_tokens,
                 thinking: self.cfg.thinking,
                 temperature: Some(0.2),
+                effort: self.cfg.effort.clone(),
             };
             let tools = self.active_tools();
             let mut adapter = crate::providers::adapter(
@@ -932,6 +936,7 @@ impl Session {
             max_tokens,
             thinking: false,
             temperature: Some(0.0),
+            effort: None,
         };
         let mut adapter = crate::providers::adapter(
             self.cfg.provider,
@@ -2559,6 +2564,7 @@ mod tests {
             max_tokens: 10,
             thinking: true,
             temperature: None,
+            effort: None,
         };
         let mut adapter = crate::providers::adapter(
             crate::providers::Provider::DeepSeek,

@@ -12,6 +12,8 @@ pub struct Agent {
     pub tools: Option<Vec<String>>,
     pub model: Option<String>,
     pub thinking: Option<bool>,
+    /// The effort level this agent asks for, if any.
+    pub effort: Option<String>,
     pub source: Option<PathBuf>,
 }
 
@@ -40,6 +42,7 @@ impl Agent {
         let mut tools = None;
         let mut model = None;
         let mut thinking = None;
+        let mut effort = None;
         let mut description = String::new();
         let mut body = String::new();
         let mut in_fm = false;
@@ -69,6 +72,7 @@ impl Agent {
                         }
                         "model" => model = Some(v.to_string()),
                         "thinking" => thinking = Some(matches!(v, "true" | "yes" | "on")),
+                        "effort" => effort = crate::config::parse_effort(v).ok().flatten(),
                         "description" => description = v.to_string(),
                         _ => {}
                     }
@@ -95,6 +99,7 @@ impl Agent {
             tools,
             model,
             thinking,
+            effort,
             source,
         }
     }
@@ -317,6 +322,13 @@ mod tests {
         assert_eq!(Agent::builtin().name, "build");
         assert_eq!(resolve_agent("default"), "build");
         assert_eq!(resolve_agent("plan"), "plan");
+    }
+
+    #[test]
+    fn an_agent_can_ask_for_effort() {
+        let a = Agent::from_text("deep".into(), "---\neffort: high\n---\nThink hard.\n", None);
+        assert_eq!(a.effort.as_deref(), Some("high"));
+        assert_eq!(Agent::from_text("x".into(), "---\neffort: huge\n---\n", None).effort, None);
     }
 
     #[test]

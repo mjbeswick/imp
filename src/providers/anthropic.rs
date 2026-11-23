@@ -49,6 +49,9 @@ impl Adapter for Anthropic {
             map.insert("system".into(), json!(system));
         }
         // No temperature: current Claude models reject sampling parameters.
+        if let Some(effort) = &opts.effort {
+            map.insert("output_config".into(), json!({ "effort": effort }));
+        }
         let defs = tool_defs(tools);
         if !defs.is_empty() {
             map.insert("tools".into(), Value::Array(defs));
@@ -382,6 +385,7 @@ mod tests {
                 max_tokens: 100,
                 thinking: true,
                 temperature: Some(0.2),
+                effort: None,
             },
             &history,
             &tools,
@@ -393,6 +397,7 @@ mod tests {
         assert!(w.body.get("thinking").is_none());
         // Current Claude models reject sampling parameters with a 400.
         assert!(w.body.get("temperature").is_none(), "temperature sent to Anthropic");
+        assert!(w.body.get("output_config").is_none(), "effort sent while unset");
         assert_eq!(w.body["tools"][0]["input_schema"]["type"], "object");
         let last = w.body["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(last["content"][0]["type"], "tool_result");
@@ -401,5 +406,13 @@ mod tests {
             w.body["messages"][1]["content"][0]["type"],
             "tool_use"
         );
+    }
+
+    #[test]
+    fn effort_goes_in_output_config() {
+        let mut adapter = crate::providers::adapter(Provider::Anthropic, "https://api.anthropic.com", "k");
+        let opts = RequestOptions { model: "claude-opus-5-5".into(), max_tokens: 100, thinking: false, temperature: None, effort: Some("high".into()) };
+        let w = adapter.wire(&opts, &[Message::user("hi")], &[]);
+        assert_eq!(w.body["output_config"]["effort"], "high");
     }
 }

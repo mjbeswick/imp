@@ -112,6 +112,7 @@ one 16 MB output buffer budget.
 /rename    rename this session   /quit      leave
 /next      next session waiting on you
 /retry     send the last message again, dropping its reply
+/effort    low, medium, high, or default
 ```
 
 Tab on an empty draft switches agent and Shift+Tab steps the mode through

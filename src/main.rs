@@ -431,6 +431,18 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     session.cfg.thinking = !session.cfg.thinking;
                     println!("thinking: {}", if session.cfg.thinking { "on" } else { "off" });
                 }
+                other if other == "effort" || other.starts_with("effort ") => {
+                    match other.strip_prefix("effort").unwrap_or("").trim() {
+                        "" => println!("effort: {}", session.cfg.effort.as_deref().unwrap_or("default")),
+                        value => match config::parse_effort(value) {
+                            Ok(level) => {
+                                println!("effort: {}", level.as_deref().unwrap_or("default"));
+                                session.cfg.effort = level;
+                            }
+                            Err(e) => eprintln!("imp: {e}"),
+                        },
+                    }
+                }
                 other if other == "mode" || other.starts_with("mode ") => {
                     match other.strip_prefix("mode").unwrap_or("").trim() {
                         "" => print!(

@@ -319,6 +319,7 @@ mod tests {
                 max_tokens: 100,
                 thinking: true,
                 temperature: Some(0.2),
+                effort: None,
             },
             &history,
             &tools,

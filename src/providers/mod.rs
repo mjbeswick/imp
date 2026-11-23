@@ -173,6 +173,11 @@ pub struct Caps {
     pub reasoning: bool,
 }
 
+/// Whether the provider takes an effort level at all.
+pub fn has_effort(provider: Provider) -> bool {
+    provider == Provider::Anthropic || !matches!(provider.caps().thinking, Thinking::None)
+}
+
 /// A curated list for the picker before a fetch answers, and after a failure.
 pub fn catalog(provider: Provider) -> Vec<String> {
     let names: &[&str] = match provider {

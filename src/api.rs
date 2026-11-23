@@ -367,6 +367,8 @@ pub struct RequestOptions {
     pub max_tokens: u32,
     pub thinking: bool,
     pub temperature: Option<f32>,
+    /// `low`, `medium` or `high`; `None` leaves the provider's default.
+    pub effort: Option<String>,
 }
 
 /// Rough wire-size estimate: four bytes per token plus per-message overhead.
@@ -569,6 +571,7 @@ mod tests {
             max_tokens: 10,
             thinking: true,
             temperature: Some(0.2),
+            effort: None,
         };
         let mut adapter = crate::providers::adapter(
             crate::providers::Provider::DeepSeek,
