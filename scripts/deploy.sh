@@ -32,10 +32,11 @@ native_build() {
 }
 
 cross_build() {
-    # The device says its architecture and glibc; its libcurl is the sysroot.
+    # The device says its architecture and glibc; its own libcurl is the
+    # sysroot, kept per host because devices ship different libcurl builds.
     set -- "$1" $(ssh "$1" 'uname -m; ldd --version | sed -n "1s/.* //p"')
     host=$1 arch=$2 glibc=$3
-    sysroot=target/sysroot/$arch
+    sysroot=target/sysroot/$host
     if [ ! -f "$sysroot/libcurl.so" ]; then
         mkdir -p "$sysroot"
         ssh "$host" 'cat "$(ls /usr/lib/*/libcurl.so.4 /usr/lib/libcurl.so.4 2>/dev/null | head -1)"' \
