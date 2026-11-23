@@ -2,8 +2,8 @@
 
 ## 1. Slash command
 
-- [ ] 1.1 `/goal pause` and `/goal resume` keep the goal and stop or restart its rounds; `/goal clear` removes it and `/goal off` is an alias; tests
-- [ ] 1.2 The status line shows `goal n/m` or `goal paused`; tests
+- [x] 1.1 `/goal pause` and `/goal resume` keep the goal and stop or restart its rounds; `/goal clear` removes it and `/goal off` is an alias; tests
+- [x] 1.2 The status line shows `goal n/m` or `goal paused`; tests
 
 ## 2. Agent tool
 
@@ -16,7 +16,7 @@
 
 ## 4. Goal UX
 
-- [ ] 4.0 `/goal` shows text, round, limit and state; `/goal edit` changes the text without a round; `/goal <text>` asks before replacing; tests
+- [x] 4.0 `/goal` shows text, round, limit and state; `/goal edit` changes the text without a round; `/goal <text>` asks before replacing; tests
 
 ## 5. Docs
 
