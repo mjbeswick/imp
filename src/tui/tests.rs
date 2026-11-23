@@ -2086,15 +2086,16 @@ fn the_status_line_shortens_a_long_directory() {
     a.agents.clear();
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
     a.root = home.join("Projects/imp/src/providers");
-    let left = "deepseek-flash · 0 tok · $0.00";
+    let left = "deepseek-flash · 0 tok (0%) · $0.00";
     let at = |a: &App, cols: usize| {
         let line = a.status_line(cols);
         assert!(line.starts_with(left) && line.chars().count() <= cols, "{line}");
         line
     };
     assert!(at(&a, 100).ends_with("~/Projects/imp/src/providers"));
-    assert!(at(&a, 54).ends_with("  ~/P/i/src/providers"));
-    assert!(at(&a, 40).ends_with("  …oviders"));
+    // The percent adds four columns to the left part, so the directory gives way sooner.
+    assert!(at(&a, 54).ends_with("  …/providers"), "{}", a.status_line(54));
+    assert_eq!(at(&a, 40), left, "the directory is dropped before the left part");
     assert_eq!(at(&a, 38), left, "6 columns left: left out");
 }
 
@@ -3027,7 +3028,7 @@ fn status_shows_the_served_model_when_it_differs() {
         a.status_line(120)
     );
     a.status.served = "deepseek-flash".into();
-    assert!(!a.status_line(120).contains('('), "{}", a.status_line(120));
+    assert!(!a.status_line(120).contains("deepseek-flash ("), "{}", a.status_line(120));
 }
 
 #[test]
@@ -5830,4 +5831,39 @@ fn the_title_gradient_is_optional_and_needs_truecolor() {
     assert_eq!(strip(&bar).chars().count(), 40, "the gradient changed the text");
     a.palette.truecolor = false;
     assert!(!a.title_bar(40).contains("\x1b[48;2;"), "a gradient without truecolor");
+}
+
+#[test]
+fn the_status_line_shows_the_context_percent_when_the_window_is_known() {
+    let mut a = app();
+    a.cfg.context_window = Some(200_000);
+    a.status.tokens = 12_300;
+    assert!(a.status_line(120).contains("12.3K tok (6%)"), "{}", a.status_line(120));
+    a.status.tokens = 1_200_000;
+    assert!(a.status_line(120).contains("1.2M tok (100%)"), "{}", a.status_line(120));
+}
+
+#[test]
+fn the_status_line_omits_the_percent_when_the_window_is_unknown() {
+    let mut a = app();
+    a.cfg.model = "some-other-model".into();
+    a.status.tokens = 7_700;
+    let line = a.status_line(120);
+    assert!(line.contains("7.7K tok") && !line.contains('%'), "{line}");
+}
+
+#[test]
+fn the_status_line_uses_the_configured_window() {
+    let mut a = app();
+    a.cfg.model = "some-other-model".into();
+    a.cfg.context_window = Some(32_000);
+    a.status.tokens = 8_000;
+    assert!(a.status_line(120).contains("8K tok (25%)"), "{}", a.status_line(120));
+}
+
+#[test]
+fn the_status_line_keeps_the_percent_inside_a_narrow_width() {
+    let mut a = app();
+    a.status.tokens = 12_300;
+    assert!(a.status_line(40).chars().count() <= 40, "{}", a.status_line(40));
 }

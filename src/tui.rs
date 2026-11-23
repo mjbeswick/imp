@@ -6658,8 +6658,13 @@ impl App {
             crate::config::Permissions::Normal => String::new(),
             other => format!("{} · ", other.as_str()),
         };
+        // The share of the window in use, shown only when the window is known.
+        let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
+        let percent = crate::context::percent(self.status.tokens, window)
+            .map(|p| format!(" ({p}%)"))
+            .unwrap_or_default();
         let left = format!(
-            "{place}{model} · {agent}{mode}{} tok{money}{goal}{paused}{unseen}{thinking}{waiting}",
+            "{place}{model} · {agent}{mode}{} tok{percent}{money}{goal}{paused}{unseen}{thinking}{waiting}",
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
