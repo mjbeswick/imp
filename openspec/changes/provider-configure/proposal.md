@@ -20,8 +20,14 @@ command and the syntax.
 
 ## Out of Scope
 
-- Entering the API key value from this form. The form stores the name of the
-  variable that holds the key, as it does now.
+- Replacing the key check that onboarding runs. A key typed in this form is saved
+  without that check.
+
+## Added later
+
+- The form has an `api_key` field, shown as dots. Saving the form stores a typed
+  key under the provider's variable name in the key store. The config file never
+  holds it, and the key is not written to the transcript.
 
 ## Keyboard and resources
 

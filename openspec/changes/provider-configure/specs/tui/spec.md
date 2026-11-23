@@ -51,3 +51,19 @@ The system SHALL open the configuration form for the highlighted provider when t
 #### Scenario: Footer after typing
 - **WHEN** the provider picker was opened by a typed `/provider`
 - **THEN** its footer reads `^E configure`, and no `e configure` hint is shown
+
+### Requirement: The provider form saves an API key to the key store
+
+The system SHALL offer an `api_key` field in the provider form, SHALL show its value only as dots, SHALL save a typed key under the provider's variable name in the key store when the form is saved, SHALL refuse a key when no variable name is set, and SHALL NOT write the key to the config file or the transcript.
+
+#### Scenario: Typed key is masked
+- **WHEN** the user types a key into the `api_key` field
+- **THEN** the field and the form's input line show only dots
+
+#### Scenario: Key without a variable name
+- **WHEN** the user saves a form with a key but an empty `key_env`
+- **THEN** the form stays open with the reason, and nothing is saved
+
+#### Scenario: Saved key
+- **WHEN** the user saves a form with a key and a variable name
+- **THEN** the key is stored under that variable, and the config file gains the provider without the key

@@ -13,3 +13,7 @@
 ## 3. Docs
 
 - [x] 3.1 README's provider section describes `e` on a provider row
+
+## 4. API key
+
+- [x] 4.1 The provider form has a masked `api_key` field that is saved under `key_env`, and refused without one; tests
