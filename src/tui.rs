@@ -1977,6 +1977,13 @@ enum Pending {
         fields: Vec<(String, String)>,
         at: usize,
     },
+    /// One text or number setting, typed in the settings modal. `error` holds the
+    /// reason the config refused the last value.
+    SettingField {
+        key: String,
+        value: String,
+        error: String,
+    },
     /// A typed command shape for an `allow` line.
     AllowRule {
         value: String,
@@ -2091,7 +2098,29 @@ const SETTING_ROWS: &[(&str, &str)] = &[
     ("auto_next", "next waiting session"),
     ("title_gradient", "title gradient"),
     ("spinner", "spinner"),
+    ("allow_sudo", "allow sudo"),
+    ("color", "colour"),
+    ("links", "links"),
+    ("title_summary", "title summary"),
+    ("api_key", "API key"),
+    ("model", "model"),
+    ("base_url", "base URL"),
+    ("context_window", "context window"),
+    ("max_tokens", "max tokens"),
+    ("max_steps", "max steps"),
+    ("goal_rounds", "goal rounds"),
+    ("compact_at", "compact at"),
+    ("prune_at", "prune at"),
+    ("skills_dir", "skills folder"),
 ];
+
+/// Settings a row edits in a one-field form rather than stepping.
+fn is_text_setting(key: &str) -> bool {
+    matches!(
+        key,
+        "model" | "base_url" | "context_window" | "max_tokens" | "max_steps" | "goal_rounds" | "compact_at" | "prune_at" | "skills_dir"
+    )
+}
 
 /// Every slash command as a picker row.
 fn command_items() -> Vec<PickItem> {
@@ -2356,6 +2385,9 @@ impl Picker {
                 "Esc close".into(),
             ],
             PickKind::Keys => return "? or Esc close".into(),
+            PickKind::Settings => {
+                return "Enter step or edit · Esc close · more in the config file".into()
+            }
             _ => vec!["Enter choose".into(), "Esc close".into()],
         };
         if let Some(item) = self.selected().or_else(|| self.items.first()) {
@@ -4231,6 +4263,11 @@ impl App {
 
     /// The `/settings` form: ten settings, each row showing its value.
     fn open_settings(&mut self) {
+        self.open_settings_at(None);
+    }
+
+    /// The settings modal, with the row for `focus` highlighted.
+    fn open_settings_at(&mut self, focus: Option<&str>) {
         let items = SETTING_ROWS
             .iter()
             .map(|(key, label)| PickItem {
@@ -4240,7 +4277,11 @@ impl App {
                 actions: Vec::new(),
             })
             .collect();
-        self.pending = Some(Pending::Pick(Picker::new("settings", items, PickKind::Settings)));
+        let mut picker = Picker::new("settings", items, PickKind::Settings);
+        if let Some(key) = focus {
+            picker.index = picker.items.iter().position(|i| i.value == key).unwrap_or(0);
+        }
+        self.pending = Some(Pending::Pick(picker));
         self.dirty = true;
     }
 
@@ -4258,6 +4299,20 @@ impl App {
             "auto_next" => onoff(self.cfg.auto_next),
             "title_gradient" => onoff(self.cfg.title_gradient),
             "spinner" => crate::config::SPINNERS.get(self.cfg.spinner).map_or(String::new(), |s| s.0.into()),
+            "allow_sudo" => onoff(self.cfg.allow_sudo),
+            "color" => self.cfg.color.as_str().into(),
+            "links" => self.cfg.links.as_str().into(),
+            "title_summary" => self.cfg.title_summary.as_str().into(),
+            "model" => self.cfg.model.clone(),
+            "base_url" => self.cfg.base_url.clone(),
+            "context_window" => self.cfg.context_window.map_or("unset".into(), |n| n.to_string()),
+            "max_tokens" => self.cfg.max_tokens.to_string(),
+            "max_steps" => self.cfg.max_steps.to_string(),
+            "goal_rounds" => self.cfg.goal_rounds.to_string(),
+            "compact_at" => self.cfg.compact_at.to_string(),
+            "prune_at" => self.cfg.prune_at.to_string(),
+            "skills_dir" => self.cfg.skills_dir.as_ref().map_or("unset".into(), |p| p.display().to_string()),
+            "api_key" => if self.cfg.api_key.is_empty() { "not set" } else { "set" }.into(),
             _ => String::new(),
         }
     }
@@ -4269,7 +4324,10 @@ impl App {
             "permissions" => words(&["normal", "auto", "strict", "yolo"]),
             "effort" => words(&["default", "low", "medium", "high"]),
             "verbosity" => words(&["low", "medium", "high"]),
-            "thinking" | "mouse" | "suggest" | "diffs" | "auto_next" | "title_gradient" => words(&["off", "on"]),
+            "thinking" | "mouse" | "suggest" | "diffs" | "auto_next" | "title_gradient" | "allow_sudo" => words(&["off", "on"]),
+            "color" => words(&["auto", "always", "never"]),
+            "links" => words(&["auto", "always", "never"]),
+            "title_summary" => words(&["auto", "on", "off"]),
             "spinner" => crate::config::SPINNERS.iter().map(|s| s.0.to_string()).collect(),
             _ => Vec::new(),
         }
@@ -5230,6 +5288,36 @@ impl App {
                 }
                 return;
             }
+            Pending::SettingField { key: name, mut value, error } => {
+                match key {
+                    Key::Esc => self.open_settings_at(Some(&name)),
+                    Key::Enter => match self.cfg.set(&name, &value) {
+                        Ok(()) => {
+                            let _ = tx.send(Cmd::SetConfig(name.clone(), value.clone()));
+                            if let Some(file) = self.cfg.file.clone() {
+                                if let Err(e) = crate::config::save_setting(&file, &name, &value) {
+                                    self.toast(e);
+                                }
+                            }
+                            self.open_settings_at(Some(&name));
+                        }
+                        Err(reason) => {
+                            self.pending = Some(Pending::SettingField { key: name, value, error: reason });
+                        }
+                    },
+                    Key::Char(c) if !c.is_control() => {
+                        value.push(c);
+                        self.pending = Some(Pending::SettingField { key: name, value, error: String::new() });
+                    }
+                    Key::Backspace => {
+                        value.pop();
+                        self.pending = Some(Pending::SettingField { key: name, value, error: String::new() });
+                    }
+                    _ => self.pending = Some(Pending::SettingField { key: name, value, error }),
+                }
+                self.dirty = true;
+                return;
+            }
             Pending::ProviderForm {
                 name,
                 mut fields,
@@ -5627,8 +5715,30 @@ impl App {
                             PickKind::Mode => self.set_mode(&choice.value, tx),
                             PickKind::Keys => {}
                             PickKind::Settings => {
-                                self.step_setting(&mut picker, 1, tx);
-                                self.pending = Some(Pending::Pick(picker));
+                                let key = choice.value.clone();
+                                if is_text_setting(&key) {
+                                    // Starts empty: the row shows the current value, and typing gives the new one.
+                                    self.pending = Some(Pending::SettingField { key, value: String::new(), error: String::new() });
+                                } else if key == "api_key" {
+                                    match self.provider_key_var(&self.cfg.active_name.clone()) {
+                                        Some(var) => {
+                                            self.pending = Some(Pending::KeyEntry {
+                                                provider: self.cfg.active_name.clone(),
+                                                var,
+                                                value: String::new(),
+                                                status: String::new(),
+                                            });
+                                        }
+                                        None => {
+                                            self.push(Role::Error, "this provider has no key to set");
+                                            self.pending = Some(Pending::Pick(picker));
+                                        }
+                                    }
+                                } else {
+                                    self.step_setting(&mut picker, 1, tx);
+                                    self.pending = Some(Pending::Pick(picker));
+                                }
+                                self.dirty = true;
                                 return;
                             }
                             PickKind::Verbosity => {
@@ -6362,6 +6472,11 @@ impl App {
                         .cloned()
                         .unwrap_or_else(|| ("field".into(), String::new()));
                     format!("provider {name} · {label}: {value}{CARET}  (Enter next · Esc cancel)")
+                }
+                Pending::SettingField { key, value, error } => {
+                    let now = self.setting_value(key);
+                    let refused = if error.is_empty() { String::new() } else { format!("  refused: {error}") };
+                    format!("{key} (now {now}): {value}{CARET}{refused}  (Enter save · Esc back)")
                 }
                 Pending::AllowRule { value } => {
                     format!("allow = {value}{CARET}  (Enter save · Esc cancel)")

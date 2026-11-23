@@ -5927,7 +5927,8 @@ fn settings_lists_ten_settings_with_their_values() {
     a.run_command("settings", &tx);
     let picker = open_picker(&a);
     assert_eq!(picker.kind, PickKind::Settings);
-    assert_eq!(picker.items.len(), 10);
+    // Ten from the first form, four enumerable rows, the API key, and nine text or number rows.
+    assert_eq!(picker.items.len(), 24);
     assert_eq!(setting_desc(&a, "thinking"), "off");
     assert_eq!(setting_desc(&a, "effort"), "default");
 }
@@ -6377,4 +6378,131 @@ fn enter_still_switches_and_the_footer_offers_configure() {
     assert!(shown.contains("e configure"), "the footer has no configure hint: {shown:?}");
     a.handle_key(Key::Enter, &tx);
     assert_eq!(a.cfg.active_name, "ollama", "Enter did not switch");
+}
+
+fn settings_row_values(a: &App) -> Vec<(String, String)> {
+    open_picker(a).items.iter().map(|i| (i.value.clone(), i.desc.clone())).collect()
+}
+
+#[test]
+fn the_settings_modal_lists_the_four_enumerable_rows_and_the_key() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    let keys: Vec<String> = open_picker(&a).items.iter().map(|i| i.value.clone()).collect();
+    for key in ["allow_sudo", "color", "links", "title_summary", "api_key"] {
+        assert!(keys.iter().any(|k| k == key), "no {key} row: {keys:?}");
+    }
+}
+
+#[test]
+fn enter_steps_color_and_saves_it_to_the_file() {
+    let dir = std::env::temp_dir().join(format!("imp-sf-color-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config");
+    std::fs::write(&path, "# keep\n").unwrap();
+    let mut a = app();
+    a.cfg.file = Some(path.clone());
+    a.cfg.color = crate::config::ColorMode::Auto;
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "color");
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(a.cfg.color, crate::config::ColorMode::Always);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\ncolor = always\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn file_config(name: &str, text: &str) -> (App, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("imp-sf-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config");
+    std::fs::write(&path, text).unwrap();
+    let mut a = app();
+    a.cfg.file = Some(path.clone());
+    (a, path)
+}
+
+#[test]
+fn a_number_row_opens_a_form_that_saves_a_valid_value_and_keeps_comments() {
+    let (mut a, path) = file_config("tokens", "# keep\n");
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "max_tokens");
+    a.handle_key(Key::Enter, &tx);
+    assert!(matches!(a.pending, Some(Pending::SettingField { .. })), "no form opened");
+    type_text(&mut a, &tx, "4096");
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(a.cfg.max_tokens, 4096, "the value did not apply");
+    assert!(matches!(a.pending, Some(Pending::Pick(_))), "the modal did not return");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\nmax_tokens = 4096\n");
+}
+
+#[test]
+fn a_refused_number_keeps_the_form_open_with_the_reason() {
+    let (mut a, path) = file_config("steps", "# keep\n");
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "max_steps");
+    a.handle_key(Key::Enter, &tx);
+    type_text(&mut a, &tx, "0");
+    a.handle_key(Key::Enter, &tx);
+    match &a.pending {
+        Some(Pending::SettingField { error, .. }) => assert!(!error.is_empty(), "no reason shown"),
+        _ => panic!("the form closed on a refused value"),
+    }
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\n", "a refused value was saved");
+}
+
+#[test]
+fn esc_on_a_text_form_saves_nothing() {
+    let (mut a, path) = file_config("cancel", "# keep\nmodel = old\n");
+    a.cfg.model = "old".into();
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "model");
+    a.handle_key(Key::Enter, &tx);
+    type_text(&mut a, &tx, "x");
+    a.handle_key(Key::Esc, &tx);
+    assert!(matches!(a.pending, Some(Pending::Pick(_))), "Esc did not return to the modal");
+    assert_eq!(a.cfg.model, "old");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\nmodel = old\n");
+}
+
+#[test]
+fn the_api_key_row_shows_set_or_not_set_and_never_the_value() {
+    let mut a = app();
+    a.cfg.api_key = format!("sk-{}", "secret-value-123");
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    let rows = settings_row_values(&a);
+    let desc = rows.iter().find(|(k, _)| k == "api_key").map(|(_, d)| d.clone()).unwrap();
+    assert!(desc.contains("set") && !desc.contains("sk-"), "{desc}");
+    let shown = strip(&a.frame(100, 30));
+    assert!(!shown.contains("sk-secret"), "the key was drawn: {shown:?}");
+}
+
+#[test]
+fn the_settings_footer_names_the_config_file_for_grouped_settings() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    let shown = strip(&a.frame(120, 30));
+    assert!(shown.contains("config file"), "the footer does not name the file: {shown:?}");
+}
+
+#[test]
+fn the_api_key_row_opens_a_masked_field_that_never_draws_the_typed_key() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("settings", &tx);
+    focus_setting(&mut a, "api_key");
+    a.handle_key(Key::Enter, &tx);
+    assert!(matches!(a.pending, Some(Pending::KeyEntry { .. })), "the key row did not open the key entry");
+    type_text(&mut a, &tx, "typed-secret-abc");
+    let shown = strip(&a.frame(100, 30));
+    assert!(!shown.contains("typed-secret-abc"), "the typed key was drawn: {shown:?}");
+    assert!(!shown.contains("typed-secret"), "part of the typed key was drawn: {shown:?}");
 }
