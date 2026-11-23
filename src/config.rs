@@ -668,6 +668,31 @@ pub fn save_named(path: &Path, named: &[NamedProvider]) -> Result<(), String> {
     std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
+/// `text` with the last uncommented `key=` line set to `key = value`, or the
+/// line added at the end. Every other line, comments included, is unchanged.
+pub fn set_line(text: &str, key: &str, value: &str) -> String {
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let at = lines.iter().rposition(|l| {
+        let l = l.trim();
+        !l.starts_with('#') && l.split_once('=').is_some_and(|(k, _)| k.trim() == key)
+    });
+    let line = format!("{key} = {value}");
+    match at {
+        Some(i) => lines[i] = line,
+        None => lines.push(line),
+    }
+    lines.join("\n") + "\n"
+}
+
+/// Save one setting to the config file at `path`, creating it if need be.
+pub fn save_setting(path: &Path, key: &str, value: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, set_line(&text, key, value)).map_err(|e| e.to_string())
+}
+
 /// Stored provider keys: `NAME=value`, one per line, owner only.
 pub fn keys_path() -> PathBuf {
     dirs_config().join("imp").join("keys")
@@ -1294,5 +1319,31 @@ mod tests {
         assert_eq!(Config::from_str("effort = high\n").unwrap().effort.as_deref(), Some("high"));
         assert_eq!(Config::from_str("effort = default\n").unwrap().effort, None);
         assert!(Config::from_str("effort = max\n").is_err());
+    }
+
+    #[test]
+    fn a_setting_replaces_its_line_and_keeps_the_rest() {
+        let text = "# mine\nthinking=false\n# thinking=true\nmodel = a\n\n# >>> providers\nprovider.w.base = x\n# <<< providers\n";
+        let out = set_line(text, "thinking", "on");
+        assert_eq!(out, text.replace("thinking=false", "thinking = on"), "{out}");
+        // A key not in the file is appended; a comment is not that key.
+        let out = set_line("# effort=default\nmodel = a", "effort", "high");
+        assert_eq!(out, "# effort=default\nmodel = a\neffort = high\n");
+        // Duplicates: the last line is the one that counts, so it is the one changed.
+        let out = set_line("mouse=on\nmouse=off\n", "mouse", "on");
+        assert_eq!(out, "mouse=on\nmouse = on\n");
+        assert_eq!(set_line("", "mouse", "off"), "mouse = off\n");
+    }
+
+    #[test]
+    fn a_setting_is_saved_to_the_file() {
+        let dir = std::env::temp_dir().join(format!("imp-setting-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config");
+        std::fs::write(&path, "# keep\nthinking=false\n").unwrap();
+        save_setting(&path, "thinking", "on").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\nthinking = on\n");
+        assert!(Config::load(&path).unwrap().thinking);
     }
 }
