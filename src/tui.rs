@@ -4709,11 +4709,10 @@ impl App {
 
     /// First run: ask for a provider and its key before the first turn.
     fn begin_onboard(&mut self, var: String) {
+        // The provider picker is the setup: it says what to do, so no line
+        // names the missing key.
+        let _ = var;
         self.onboard = true;
-        self.push(
-            Role::Info,
-            format!("no key for {} ({var}); choose a provider", self.cfg.active_name),
-        );
         self.pending = Some(Pending::Pick(self.value_picker(
             "provider",
             self.provider_items(),

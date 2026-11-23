@@ -3717,7 +3717,9 @@ fn a_missing_key_opens_the_provider_picker() {
     assert!(a.onboard);
     assert_eq!(open_picker(&a).kind, PickKind::Provider);
     let frame = strip(&a.frame(80, 20));
-    assert!(frame.contains("no key for deepseek (DEEPSEEK_API_KEY)"), "{frame}");
+    assert!(!frame.contains("no key for"), "the missing-key line is shown: {frame}");
+    assert!(!frame.contains("choose a provider"), "the missing-key line is shown: {frame}");
+    assert!(frame.contains("provider"), "the provider setup is not shown: {frame}");
 }
 
 #[test]
@@ -6092,4 +6094,74 @@ fn a_summary_replaces_the_cut_title_unless_it_was_renamed() {
     b.apply(Ev::Title("Flaky rsync test on slow network".into()));
     let shown = strip(&b.frame(70, 10));
     assert!(shown.split("\r\n").next().unwrap_or("").contains(" fix sync "), "a summary replaced a rename: {shown:?}");
+}
+
+fn provider_form(a: &App) -> (Vec<(String, String)>, usize) {
+    match &a.pending {
+        Some(Pending::ProviderForm { fields, at, .. }) => (fields.clone(), *at),
+        _ => panic!("no provider form is open"),
+    }
+}
+
+fn type_text(a: &mut App, tx: &Sender<Cmd>, text: &str) {
+    for c in text.chars() {
+        a.handle_key(Key::Char(c), tx);
+    }
+}
+
+#[test]
+fn up_and_shift_tab_move_back_and_keep_every_fields_text() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider add work", &tx);
+    type_text(&mut a, &tx, "http://box/v1");
+    a.handle_key(Key::Enter, &tx);
+    type_text(&mut a, &tx, "m1");
+    a.handle_key(Key::Enter, &tx);
+    type_text(&mut a, &tx, "openai");
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(provider_form(&a).1, 3, "Enter did not reach key_env");
+
+    a.handle_key(Key::Up, &tx);
+    a.handle_key(Key::Up, &tx);
+    let (fields, at) = provider_form(&a);
+    assert_eq!(at, 1, "↑ did not move back to model");
+    assert_eq!(fields[1].1, "m1");
+
+    a.handle_key(Key::Backspace, &tx);
+    a.handle_key(Key::Char('2'), &tx);
+    let (fields, _) = provider_form(&a);
+    assert_eq!(fields[1].1, "m2", "the edited model was not kept");
+    assert_eq!(fields[0].1, "http://box/v1", "base changed");
+    assert_eq!(fields[2].1, "openai", "dialect changed");
+
+    a.handle_key(Key::BackTab, &tx);
+    assert_eq!(provider_form(&a).1, 0, "Shift+Tab did not move back");
+    a.handle_key(Key::Down, &tx);
+    assert_eq!(provider_form(&a).1, 1, "↓ did not move forward");
+}
+
+#[test]
+fn the_provider_form_stops_at_the_first_and_last_field() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider add work", &tx);
+    a.handle_key(Key::Up, &tx);
+    assert_eq!(provider_form(&a).1, 0, "↑ went past the first field");
+    for _ in 0..6 {
+        a.handle_key(Key::Down, &tx);
+    }
+    assert_eq!(provider_form(&a).1, 3, "↓ went past the last field");
+}
+
+#[test]
+fn esc_on_the_provider_form_cancels_everything() {
+    let (mut a, config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider add work", &tx);
+    type_text(&mut a, &tx, "http://box/v1");
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Esc, &tx);
+    assert!(a.pending.is_none(), "Esc left the form open");
+    assert!(!std::fs::read_to_string(&config).unwrap_or_default().contains("work"), "Esc saved the provider");
 }
