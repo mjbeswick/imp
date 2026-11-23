@@ -8,6 +8,6 @@
 
 ## 2. Percent on the status line
 
-- [ ] 2.1 `context_percent(tokens, window)` returns `min(100, tokens * 100 / window)` and nothing for an unknown window; tests for rounding down, the cap, and unknown
-- [ ] 2.2 `status_line` shows `NN%` after the context tokens when known and omits it when not; tests for the scenarios "Context percent", "Percent rounds down", "Percent capped", "Window from config", and "Window unknown"
-- [ ] 2.3 Status line stays within the width when the percent is added; test at 40 columns
+- [x] 2.1 `context_percent(tokens, window)` returns `min(100, tokens * 100 / window)` and nothing for an unknown window; tests for rounding down, the cap, and unknown
+- [x] 2.2 `status_line` shows `NN%` after the context tokens when known and omits it when not; tests for the scenarios "Context percent", "Percent rounds down", "Percent capped", "Window from config", and "Window unknown"
+- [x] 2.3 Status line stays within the width when the percent is added; test at 40 columns
