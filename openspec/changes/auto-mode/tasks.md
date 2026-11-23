@@ -8,6 +8,6 @@
 
 - [ ] 2.1 The development list and its classifier: runs a listed command, asks for installs, chains and pushes, refuses on the deny list; tests
 
-## 3. Docs
+## 3. Roles and docs
 
-- [ ] 3.1 The `/mode` picker, README and getting started describe `auto`
+- [ ] 3.1 The `/mode` picker and the line written on a switch carry each mode's role line; README and getting started describe `auto`

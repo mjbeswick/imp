@@ -1,14 +1,10 @@
 # Tasks
 
-## 1. Default
+## 1. Keys
 
-- [ ] 1.1 `send_mode` in the config, queue by default; a new session starts in it; Ctrl+Q still toggles; tests
+- [ ] 1.1 Enter queues during a turn, Ctrl+S steers and sends when idle, an empty draft does nothing; the send mode and Ctrl+Q go; tests
+- [ ] 1.2 The queue editor sends on Ctrl+S and its rule reads `^S steer|send`; tests
 
-## 2. Steer key
+## 2. Docs
 
-- [ ] 2.1 Ctrl+S steers in either mode and sends when idle; an empty draft does nothing; tests
-- [ ] 2.2 The queue editor sends on Ctrl+S and its rule reads `^S steer|send`; tests
-
-## 3. Docs
-
-- [ ] 3.1 Keys card and palette list Ctrl+S; README and getting started say queue is the default; `every_listed_key_acts` covers it
+- [ ] 2.1 Keys card and palette list Ctrl+S and `steer now`; README and getting started say Enter queues and Ctrl+S steers; `every_listed_key_acts` covers Ctrl+S

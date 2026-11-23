@@ -2,17 +2,15 @@
 
 ## Approaches
 
-- **Queue by default, Ctrl+S to steer (chosen).** The common act is the safe
-  one; the rarer correction has its own key.
-- **Keep steering by default.** Surprises people who type ahead.
-- **A different key for steer.** Ctrl+S is free and pairs with Ctrl+Q; both
-  reach imp because raw mode turns flow control off.
+- **Queue on Enter, steer on Ctrl+S, no mode (chosen).** Each key does one
+  thing; nothing to remember or check.
+- **Keep a mode and flip the default.** Leaves the hidden state.
 
 ## Details
 
-`App::queue_mode` starts from `send_mode`. Ctrl+S runs the steer path of
-`submit` whatever the mode; in the queue editor it runs `send_queued`, the
-path Ctrl+Q used. The rule label becomes `editing n/m · Enter save · ^S
-steer|send · ^X del`. A goal still ends on any message, as before.
-
-`/settings` can gain a send mode row later; it is not part of this change.
+`App::queue_mode` and its field in each pane go, as do the Ctrl+Q handler,
+the `steer or queue` palette row and its keys card line. Ctrl+S runs the
+steer path of `submit`; in the queue editor it runs `send_queued`. The rule
+label becomes `editing n/m · Enter save · ^S steer|send · ^X del`. A goal
+still ends on any message, as before. People who liked steering on Enter use
+Ctrl+S.

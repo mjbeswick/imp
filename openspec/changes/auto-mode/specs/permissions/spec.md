@@ -97,3 +97,15 @@ The system SHALL provide an `auto` mode between `normal` and `yolo`, SHALL run w
 #### Scenario: Deny list
 - **WHEN** the mode is `auto` and the model runs `git push --force`
 - **THEN** it is refused without a prompt
+
+### Requirement: Each mode has one role
+
+The system SHALL describe each mode in one line wherever the modes are listed: `strict` asks before every command and change, `normal` asks before commands that are not plainly read-only, `auto` runs the build and test loop and asks about the rest, and `yolo` asks about nothing but the deny list.
+
+#### Scenario: Mode picker
+- **WHEN** the user opens `/mode`
+- **THEN** the four modes are listed in that order of trust, each with its role line
+
+#### Scenario: Switching
+- **WHEN** the user presses Shift+Tab into `auto`
+- **THEN** the line written says `auto` and its role
