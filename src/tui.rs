@@ -8087,7 +8087,8 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     }
                 },
                 Ok(Cmd::GoalOff) => {
-                    if worker_session.goal.take().is_some() {
+                    if worker_session.goal.is_some() {
+                        worker_session.clear_goal();
                         let _ = ev_tx.send(Ev::GoalEnd("goal cleared".into()));
                     }
                 }
