@@ -112,7 +112,7 @@ one 16 MB output buffer budget.
 /agent     switch profile
 /new       another live session  /reload    re-read config, instructions, skills
 /sessions  pick a session        /compact   compact now
-/think     thinking toggle       /mode      normal, strict, or yolo
+/think     thinking toggle       /mode      normal, auto, strict, or yolo
 /verbosity low, medium, high     /cwd       show the session directory
 /cd        browse or change cwd  /image     browse or attach an image
 /fork      copy the session      /theme     set the colour theme
@@ -127,7 +127,7 @@ one 16 MB output buffer budget.
 ```
 
 Tab on an empty draft switches agent and Shift+Tab steps the mode through
-normal, strict, and yolo. Ctrl+C clears a draft or stops a turn; idle, a
+normal, auto, yolo, and strict. Ctrl+C clears a draft or stops a turn; idle, a
 second Ctrl+C within two seconds quits. In the draft, Option or Alt with ←/→ moves by
 word, Option+Backspace or Ctrl+W deletes one, Shift with the arrows selects,
 and Ctrl+A, Ctrl+U, and Ctrl+K act on the row.
@@ -232,7 +232,7 @@ wins when set.
 # provider=deepseek
 # model=deepseek-flash
 # base_url=https://api.deepseek.com
-# permissions=normal        # normal | strict | yolo
+# permissions=normal        # normal | auto | strict | yolo
 # allow_sudo=false
 # allow=npm test          # one line per shape; written by `a` at a prompt
 # auth=api.github.com Authorization: Bearer $GITHUB_TOKEN   # one line per host
@@ -324,8 +324,17 @@ other providers show tokens and no cost.
 | mode | reads | writes | shell |
 |---|---|---|---|
 | `normal` | allow | allow in the directory | ask unless safe-listed |
+| `auto` | allow | allow in the directory | allow listed development commands (builds, tests, linters, formatters, local git), ask otherwise |
 | `strict` | allow | ask in the directory | ask |
 | `yolo` | allow | allow, jail off | allow |
+
+`auto` runs `cargo build|check|test|clippy|fmt|doc`, `npm`/`pnpm`/`yarn`
+`test|run|lint|build`, `make` (not `make install`), `pytest`, `go build|test|vet|fmt`,
+and local `git` (`status`, `diff`, `log`, `show`, `add`, `commit`, `branch`
+creation, `stash`). Installs, `git push`, `git checkout`, `rm`, and everything
+else ask. The deny list, the path jail, `sudo`, and the chain and redirect rules
+hold in `auto`. A build or test runs the project's own code, so use `auto` only
+for projects you trust.
 
 File tools reach only the session directory, imp's config folder, and its
 output folder; other paths are refused without a prompt. `yolo` turns this
