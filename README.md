@@ -88,7 +88,8 @@ Ctrl+O next waiting · Ctrl+N next session · Ctrl+P palette · ? keys, from an 
 current one, up to four; the oldest idle one closes to make room and stays in
 `/sessions`, and its background jobs stop, as every session's do when imp exits. Ctrl+N moves to the next one.
 The title bar shows which one is in view, such as `2/3 fix the parser`, and
-the status line how many others are `waiting`. There is no close
+the status line how many others are `waiting`. Set `title_gradient = on` for a
+title bar that shades toward the accent on a truecolor terminal; it is off by default. There is no close
 command: `/new` moves on, and the pool makes room by itself.
 
 In `/sessions`, a spinner marks a live session that is still working. When the
@@ -120,6 +121,7 @@ one 16 MB output buffer budget.
 /provider  manage providers      /queue     messages waiting to send
 /rename    rename this session   /quit      leave
 /next      next session waiting on you
+/settings  the settings form: change ten settings, saved to the config
 /retry     send the last message again, dropping its reply
 /effort    low, medium, high, or default
 ```

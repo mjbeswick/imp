@@ -106,6 +106,12 @@ are not plainly read-only, `strict` asks before every change and command, and
 `/think` turns thinking on or off, and `/effort low|medium|high` sets how hard
 the model works where the provider supports it.
 
+`/settings` opens a form of ten settings with their current values. Right,
+Enter or Space steps a value forward, Left steps back, and Esc closes it. Each
+change applies at once and is saved to the config file, with its comments kept.
+One of the ten is `title_gradient`, off by default: on a truecolor terminal the
+title bar shades from the select colour toward the accent.
+
 ## Everyday keys
 
 | Key | Does |
