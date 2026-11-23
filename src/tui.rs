@@ -4708,7 +4708,7 @@ impl App {
                         let _ = tx.send(Cmd::ShowAgent);
                     }
                     name => {
-                        let _ = tx.send(Cmd::SetAgent(name.to_string()));
+                        let _ = tx.send(Cmd::SetAgent(crate::store::resolve_agent(name).to_string()));
                     }
                 }
             }
@@ -7278,6 +7278,7 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                 }
                 Ok(Cmd::SetThinking(on)) => worker_session.cfg.thinking = on,
                 Ok(Cmd::SetAgent(name)) => {
+                    let name = crate::store::resolve_agent(&name).to_string();
                     let found = worker_session
                         .roster
                         .iter()

@@ -182,17 +182,11 @@ fn run() -> Result<(), String> {
     let system = system_prompt(&root, &cfg);
     let tui_cfg = cfg.clone();
     let roster = store::load_agents(&cfg, &root);
-    let agent = match &agent_name {
-        Some(name) => roster
-            .iter()
-            .find(|a| &a.name == name)
-            .cloned()
-            .ok_or_else(|| format!("unknown agent {name}"))?,
-        None => roster
-            .iter()
-            .find(|a| a.name == "default")
-            .cloned()
-            .unwrap_or_else(store::Agent::builtin),
+    let name = store::resolve_agent(agent_name.as_deref().unwrap_or("build"));
+    let agent = match roster.iter().find(|a| a.name == name).cloned() {
+        Some(agent) => agent,
+        None if agent_name.is_none() => store::Agent::builtin(),
+        None => return Err(format!("unknown agent {name}")),
     };
     let cols = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(
         std::env::var("COLUMNS")

@@ -458,6 +458,7 @@ impl Session {
         let agent = log.last_event("agent");
         self.attach_log(log);
         if let Some(name) = agent {
+            let name = crate::store::resolve_agent(&name);
             if let Some(found) = self.roster.iter().find(|a| a.name == name).cloned() {
                 self.apply_agent(found);
             }
@@ -3544,6 +3545,27 @@ mod tests {
         );
         session.resume_id(&sessions, &log.id).unwrap();
         assert_eq!(session.agent.name, "reviewer");
+    }
+
+    #[test]
+    fn a_saved_default_resumes_as_build() {
+        let d = tmp();
+        let sessions = d.join("sessions");
+        let log = Log::create(&sessions, &d, "deepseek-flash");
+        log.event("agent", "default");
+        let mut start = crate::store::builtin_agents().swap_remove(1);
+        start.name = "plan".into();
+        let mut session = Session::new(
+            crate::config::Config::default(),
+            d.clone(),
+            d.join("out"),
+            String::new(),
+            start,
+            crate::store::builtin_agents(),
+            std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        );
+        session.resume_id(&sessions, &log.id).unwrap();
+        assert_eq!(session.agent.name, "build");
     }
 
     #[test]

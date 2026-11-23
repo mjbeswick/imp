@@ -16,16 +16,9 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// `build`: all tools, no extra instructions, the agent a session starts in.
     pub fn builtin() -> Self {
-        Self {
-            name: "default".into(),
-            description: "all tools, no extra instructions".into(),
-            instructions: String::new(),
-            tools: None,
-            model: None,
-            thinking: None,
-            source: None,
-        }
+        builtin_agents().swap_remove(0)
     }
 
     /// Tools this agent may use; `None` means all of them.
@@ -38,6 +31,12 @@ impl Agent {
 
     pub fn from_file(path: &Path) -> Option<Self> {
         let text = std::fs::read_to_string(path).ok()?;
+        let name = path.file_stem()?.to_string_lossy().to_string();
+        Some(Self::from_text(name, &text, Some(path.to_path_buf())))
+    }
+
+    /// Parse an agent file's text: optional frontmatter, then instructions.
+    pub fn from_text(name: String, text: &str, source: Option<PathBuf>) -> Self {
         let mut tools = None;
         let mut model = None;
         let mut thinking = None;
@@ -80,7 +79,6 @@ impl Agent {
             body.push('\n');
         }
 
-        let name = path.file_stem()?.to_string_lossy().to_string();
         if description.is_empty() {
             description = body
                 .lines()
@@ -90,16 +88,33 @@ impl Agent {
                 .take(80)
                 .collect();
         }
-        Some(Self {
+        Self {
             name,
             description,
             instructions: body.trim().to_string(),
             tools,
             model,
             thinking,
-            source: Some(path.to_path_buf()),
-        })
+            source,
+        }
     }
+}
+
+/// Agents compiled in, in the order Tab cycles them; a file replaces one.
+pub fn builtin_agents() -> Vec<Agent> {
+    [
+        ("build", include_str!("../assets/agents/build.md")),
+        ("plan", include_str!("../assets/agents/plan.md")),
+        ("review", include_str!("../assets/agents/review.md")),
+    ]
+    .into_iter()
+    .map(|(name, text)| Agent::from_text(name.into(), text, None))
+    .collect()
+}
+
+/// An agent name as typed or saved; the old `default` is now `build`.
+pub fn resolve_agent(name: &str) -> &str {
+    if name == "default" { "build" } else { name }
 }
 
 /// Skills compiled in, available without any files on disk.
@@ -171,8 +186,10 @@ pub fn load_agents(cfg: &Config, root: &Path) -> Vec<Agent> {
             }
         }
     }
-    if !found.iter().any(|a| a.name == "default") {
-        found.push(Agent::builtin());
+    for agent in builtin_agents() {
+        if !found.iter().any(|a| a.name == agent.name) {
+            found.push(agent);
+        }
     }
     found.sort_by(|a, b| a.name.cmp(&b.name));
     found
@@ -284,13 +301,34 @@ mod tests {
     }
 
     #[test]
-    fn default_is_always_available() {
+    fn three_agents_are_built_in() {
         let d = tmp();
         let cfg = Config::default();
         let agents = load_agents(&cfg, &d);
-        let default = agents.iter().find(|a| a.name == "default").unwrap();
-        assert!(default.allows("write"));
-        assert!(agents.iter().any(|a| a.name == "default"));
+        let get = |n: &str| agents.iter().find(|a| a.name == n).unwrap_or_else(|| panic!("no {n}"));
+        assert!(get("build").allows("write") && get("build").allows("edit"));
+        for name in ["plan", "review"] {
+            let a = get(name);
+            assert!(a.allows("read") && a.allows("bash") && a.allows("ask"), "{name} cannot look");
+            assert!(!a.allows("write") && !a.allows("edit") && !a.allows("memory"), "{name} can write");
+            assert!(!a.instructions.is_empty() && !a.description.is_empty());
+        }
+        assert!(!agents.iter().any(|a| a.name == "default"), "the old name is still listed");
+        assert_eq!(Agent::builtin().name, "build");
+        assert_eq!(resolve_agent("default"), "build");
+        assert_eq!(resolve_agent("plan"), "plan");
+    }
+
+    #[test]
+    fn a_file_replaces_a_built_in() {
+        let d = tmp();
+        let dir = d.join(".agents").join("agents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plan.md"), "My own planner.\n").unwrap();
+        let agents = load_agents(&Config::default(), &d);
+        let plans: Vec<&Agent> = agents.iter().filter(|a| a.name == "plan").collect();
+        assert_eq!(plans.len(), 1, "plan is listed twice");
+        assert_eq!(plans[0].instructions, "My own planner.");
     }
 
     #[test]
