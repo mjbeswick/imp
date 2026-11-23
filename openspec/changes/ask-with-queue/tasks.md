@@ -2,8 +2,8 @@
 
 ## 1. Hint
 
-- [ ] 1.1 No `↑ edit queue` while a question or confirmation is open; the question hint ends `· n queued`; tests
+- [x] 1.1 No `↑ edit queue` while a question or confirmation is open; the question hint ends `· n queued`; tests
 
 ## 2. Guard
 
-- [ ] 2.1 Tests: a question never takes a queued message, Esc keeps the queue, the oldest message starts when the turn ends after the answer
+- [x] 2.1 Tests: a question never takes a queued message, Esc keeps the queue, the oldest message starts when the turn ends after the answer
