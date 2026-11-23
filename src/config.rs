@@ -1257,7 +1257,7 @@ mod tests {
 
     #[test]
     fn allow_lines_load_append_and_survive_a_profile_save() {
-        let dir = std::env::temp_dir().join(format!("imp-allow-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("imp-allow-save-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config");
