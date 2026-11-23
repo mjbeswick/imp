@@ -2702,15 +2702,22 @@ impl App {
         self.dirty = true;
     }
 
+    /// A new session from the factory, with the config as `/reload` left it
+    /// rather than as it was at startup. `None` without a factory.
+    fn fresh_session(&self) -> Option<Session> {
+        let mut session = (self.fresh.as_ref()?)(&self.root);
+        session.cfg.reload_from(&self.cfg);
+        Some(session)
+    }
+
     /// Start another live session, or reset this one without a factory.
     fn new_session(&mut self, tx: &Sender<Cmd>) {
-        let Some(fresh) = &self.fresh else {
+        let Some(mut session) = self.fresh_session() else {
             let _ = tx.send(Cmd::Reset);
             self.clear_entries();
             self.push(Role::Info, "new conversation");
             return;
         };
-        let mut session = fresh(&self.root);
         session.attach_log(crate::store::Log::create(&self.sessions_dir, &self.root, &session.cfg.model));
         if self.open(session) {
             self.push(Role::Info, "new conversation");
@@ -2729,13 +2736,12 @@ impl App {
 
     /// Resume a stored session in another live pane, or in this one.
     fn resume(&mut self, id: String, tx: &Sender<Cmd>) {
-        let Some(fresh) = &self.fresh else {
+        let Some(mut session) = self.fresh_session() else {
             self.clear_entries();
             self.push(Role::Info, format!("resuming {id}"));
             let _ = tx.send(Cmd::Resume(id));
             return;
         };
-        let mut session = fresh(&self.root);
         match session.resume_id(&self.sessions_dir, &id) {
             Ok(()) => {
                 if self.open(session) {
@@ -2753,7 +2759,8 @@ impl App {
         self.dirty = true;
         let flat: String = text.chars().map(|c| if c == '\n' || c == '\t' { ' ' } else { c }).filter(|c| !c.is_control()).collect();
         match &mut self.pending {
-            Some(Pending::Confirm { .. } | Pending::ConfirmDelete { .. }) => {}
+            // A picker's letters can act on rows, such as `d` revoking an allow.
+            Some(Pending::Confirm { .. } | Pending::ConfirmDelete { .. } | Pending::Pick(_)) => {}
             Some(Pending::Question { mode, typed, .. }) => {
                 *mode = AskMode::Custom;
                 let at = self.ask_caret.min(typed.len());
@@ -4789,7 +4796,12 @@ impl App {
                             self.push(Role::Info, format!("{:?} has no effort setting; it is kept for other providers", self.cfg.provider).to_lowercase());
                         }
                         let _ = tx.send(Cmd::SetEffort(level.clone()));
-                        self.toast(format!("effort: {}", level.as_deref().unwrap_or("default")));
+                        // OpenAI-compatible providers take effort only while thinking.
+                        let gated = level.is_some()
+                            && !self.cfg.thinking
+                            && !matches!(self.cfg.provider.caps().thinking, crate::providers::Thinking::None);
+                        let note = if gated { " · applies with thinking on" } else { "" };
+                        self.toast(format!("effort: {}{note}", level.as_deref().unwrap_or("default")));
                         self.cfg.effort = level;
                     }
                     Err(e) => self.push(Role::Error, e),
@@ -5603,10 +5615,15 @@ impl App {
     /// long otherwise, an open prompt included. `quiet` is the time since
     /// the last key or event.
     fn loop_wait(&self, quiet: Duration) -> Duration {
-        // A toast wakes the loop when it is due to go.
-        if let Some((_, at)) = &self.status.toast {
-            return TOAST.saturating_sub(at.elapsed()).clamp(Duration::from_millis(50), Duration::from_secs(5));
+        let wait = self.usual_wait(quiet);
+        // A toast also wakes the loop when it is due to go, never later.
+        match &self.status.toast {
+            Some((_, at)) => wait.min(TOAST.saturating_sub(at.elapsed()).max(Duration::from_millis(50))),
+            None => wait,
         }
+    }
+
+    fn usual_wait(&self, quiet: Duration) -> Duration {
         let streaming = self.status.streaming || self.panes.iter().flatten().any(|p| p.status.streaming);
         if streaming || self.tool.as_ref().is_some_and(|row| row.running) || quiet < Duration::from_secs(2) {
             Duration::from_millis(50)
@@ -6908,7 +6925,12 @@ fn clock() -> String {
     }
     extern "C" {
         fn localtime_r(time: *const i64, out: *mut Tm) -> *mut Tm;
+        fn tzset();
     }
+    // `localtime_r` need not read `TZ` itself; `tzset` makes it.
+    static ZONE: std::sync::Once = std::sync::Once::new();
+    // SAFETY: no arguments; sets libc's zone globals once.
+    ZONE.call_once(|| unsafe { tzset() });
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let mut tm = Tm { sec: 0, min: 0, hour: 0, rest: [0; 8] };
     // SAFETY: both pointers are valid for the call; `tm` is large enough.
@@ -7065,12 +7087,19 @@ fn history_path() -> std::path::PathBuf {
 }
 
 fn load_history() -> Vec<String> {
+    // Tests neither read nor write the user's real history.
+    if cfg!(test) {
+        return Vec::new();
+    }
     std::fs::read_to_string(history_path())
         .map(|t| t.lines().map(str::to_string).collect())
         .unwrap_or_default()
 }
 
 fn save_history(history: &[String]) {
+    if cfg!(test) {
+        return;
+    }
     let path = history_path();
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);

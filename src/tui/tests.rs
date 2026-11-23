@@ -5678,6 +5678,11 @@ fn a_paste_fills_the_draft_and_never_answers() {
     a.handle_key(Key::Paste("y".into()), &tx);
     assert!(matches!(a.pending, Some(Pending::Confirm { .. })), "a paste answered");
     assert!(answers.try_recv().is_err());
+    // Nor does it act on a picker's rows.
+    a.pending = None;
+    a.run_command("mode", &tx);
+    a.handle_key(Key::Paste("da".into()), &tx);
+    assert!(matches!(&a.pending, Some(Pending::Pick(p)) if p.kind == PickKind::Mode), "a paste acted on the picker");
     // A question takes it as a typed answer, digits included.
     a.pending = None;
     let got = asked(&mut a);
@@ -5737,6 +5742,9 @@ fn a_toast_shows_then_goes() {
     assert_eq!(a.entries.len(), rows, "the confirmation went to the transcript");
     assert_eq!(a.status_line(80).trim_end(), " verbosity: high");
     assert!(a.loop_wait(Duration::from_secs(9)) <= TOAST, "the loop sleeps past the toast");
+    a.status.streaming = true;
+    assert!(a.loop_wait(Duration::from_secs(9)) <= Duration::from_millis(50), "a toast slowed a streaming turn");
+    a.status.streaming = false;
     a.status.toast.as_mut().unwrap().1 -= TOAST;
     assert!(a.expire_toast(), "a due toast stayed");
     assert_eq!(a.status_line(80), before);
@@ -5765,8 +5773,10 @@ fn the_title_bar_names_the_session_and_the_time() {
 fn effort_is_set_shown_and_noted_once() {
     let mut a = app();
     let (tx, rx) = channel();
+    a.cfg.thinking = false;
     a.run_command("effort high", &tx);
     assert_eq!(a.cfg.effort.as_deref(), Some("high"));
+    assert_eq!(a.status.toast.as_ref().map(|(t, _)| t.as_str()), Some("effort: high · applies with thinking on"));
     assert!(matches!(rx.try_recv(), Ok(Cmd::SetEffort(Some(l))) if l == "high"));
     a.run_command("effort", &tx);
     assert_eq!(a.status.toast.as_ref().map(|(t, _)| t.as_str()), Some("effort: high"));
@@ -5780,4 +5790,26 @@ fn effort_is_set_shown_and_noted_once() {
     a.run_command("effort medium", &tx);
     let notes = a.entries.iter().filter(|e| e.text.contains("has no effort setting")).count();
     assert_eq!(notes, 1, "the note was not shown exactly once");
+}
+
+#[test]
+fn a_new_session_takes_the_reloaded_config() {
+    let mut a = multi_app("reload-new");
+    let new = Config::from_str("allow_sudo = true\n").unwrap();
+    a.apply(Ev::Config(Box::new(new)));
+    assert!(a.cfg.allow_sudo);
+    let s = a.fresh_session().expect("a factory");
+    assert!(s.cfg.allow_sudo, "a new session kept the startup config");
+}
+
+#[test]
+fn the_clock_matches_date_in_this_zone() {
+    // Run under any `TZ`: both sides read the same zone.
+    let date = std::process::Command::new("date").arg("+%H:%M").output().unwrap();
+    let date = String::from_utf8_lossy(&date.stdout).trim().to_string();
+    let ours = clock();
+    // A minute may turn between the two reads.
+    let again = std::process::Command::new("date").arg("+%H:%M").output().unwrap();
+    let again = String::from_utf8_lossy(&again.stdout).trim().to_string();
+    assert!(ours == date || ours == again, "clock {ours} but date {date}");
 }
