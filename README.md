@@ -165,7 +165,9 @@ Nothing is written to the config.
 Bare `/provider` picks from built-in and custom profiles. `add <name>`, `edit <name>`,
 `delete <name>`, and `use <name>` manage custom profiles in a managed
 `# >>> providers` block in the config file; comments and other keys survive,
-and the active profile cannot be deleted.
+and the active profile cannot be deleted. While `add` or `edit` is open, ↑ or
+Shift+Tab goes back to an earlier field to fix it, ↓ goes forward, and Enter
+saves from the last field; Esc cancels the form.
 
 While a turn runs, Enter queues the message for after the turn, and Ctrl+S
 steers it into the turn before its next step; with no turn running, both send.
