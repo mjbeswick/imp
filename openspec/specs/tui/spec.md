@@ -1683,7 +1683,7 @@ The system SHALL copy the last assistant reply for `/copy` and the last fenced c
 
 #### Scenario: Last reply
 - **WHEN** the user runs `/copy` after a 120-character reply
-- **THEN** that reply is copied and an info row reads `copied 120 characters`
+- **THEN** that reply is copied and a toast reads `copied 120 characters`
 
 #### Scenario: Last code block
 - **WHEN** the user runs `/copy code`
@@ -2084,3 +2084,15 @@ The system SHALL, when `mouse` is on, highlight the text from where a left press
 #### Scenario: Click
 - **WHEN** the user presses and releases on one cell of a picker row
 - **THEN** the row acts as before and nothing is copied
+
+### Requirement: Confirmations are toasts
+
+The system SHALL show confirmations of what the user just did, namely how much was copied and the new thinking setting, theme, verbosity, or model, in the status line for three seconds instead of the transcript, SHALL then restore the status line with one repaint, SHALL keep errors and notes the user must act on in the transcript, and SHALL print confirmations as lines in line mode.
+
+#### Scenario: Copy
+- **WHEN** the user copies a 42-character reply
+- **THEN** the status line reads `copied 42 characters` and the transcript gains no row
+
+#### Scenario: Expiry
+- **WHEN** three seconds pass with no key
+- **THEN** the status line shows its usual content again
