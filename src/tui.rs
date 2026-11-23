@@ -2406,6 +2406,7 @@ impl Picker {
         let typed_provider = self.kind == PickKind::Provider && self.prefix.is_some();
         if typed_provider {
             if self.selected().is_some() {
+                parts.push("^U use".into());
                 parts.push("^E configure".into());
             }
         } else if let Some(item) = self.selected().or_else(|| self.items.first()) {
@@ -4011,7 +4012,7 @@ impl App {
                 desc: mark_current(name == self.cfg.active_name, &about),
                 label: name.clone(),
                 value: name.clone(),
-                actions: vec![('e', "configure")],
+                actions: vec![('u', "use"), ('e', "configure")],
             });
         }
         for profile in &self.cfg.named {
@@ -4022,7 +4023,7 @@ impl App {
                     profile.name == self.cfg.active_name,
                     &format!("{}  {}  {}", profile.base, profile.model, profile.dialect),
                 ),
-                actions: vec![('e', "configure")],
+                actions: vec![('u', "use"), ('e', "configure")],
             });
         }
         items
@@ -4819,6 +4820,18 @@ impl App {
         self.pending = Some(Pending::Pick(picker));
     }
 
+    /// Switch the session to a provider and report it.
+    fn use_provider(&mut self, name: &str, tx: &Sender<Cmd>) {
+        match self.set_provider(name, tx) {
+            Ok(()) => {
+                self.pending = None;
+                self.push(Role::Info, format!("provider: {name}"));
+            }
+            Err(e) => self.push(Role::Error, e),
+        }
+        self.dirty = true;
+    }
+
     /// `e` on a provider row: the form for its configuration. A named profile
     /// opens as saved; a built-in opens from its defaults, to be saved as a
     /// named copy so the built-in stays as it is.
@@ -5603,6 +5616,13 @@ impl App {
                     }
                     // Ctrl+E configures the highlighted provider from a typed
                     // `/provider`, where letters filter the list.
+                    Key::Ctrl('u') if picker.kind == PickKind::Provider => {
+                        if let Some(choice) = picker.selected().cloned() {
+                            self.use_provider(&choice.value, tx);
+                        }
+                        self.dirty = true;
+                        return;
+                    }
                     Key::Ctrl('e') if picker.kind == PickKind::Provider => {
                         if let Some(choice) = picker.selected().cloned() {
                             self.configure_provider(&choice.value);
@@ -5640,6 +5660,11 @@ impl App {
                             Some("configure") => {
                                 if let Some(choice) = picker.selected().cloned() {
                                     self.configure_provider(&choice.value);
+                                }
+                            }
+                            Some("use") => {
+                                if let Some(choice) = picker.selected().cloned() {
+                                    self.use_provider(&choice.value, tx);
                                 }
                             }
                             Some("allow") => {
@@ -5853,12 +5878,12 @@ impl App {
                             PickKind::Provider if self.onboard => {
                                 self.choose_onboard_provider(&choice.value, tx);
                             }
-                            PickKind::Provider => match self.set_provider(&choice.value, tx) {
-                                Ok(()) => {
-                                    self.push(Role::Info, format!("provider: {}", choice.value))
-                                }
-                                Err(e) => self.push(Role::Error, e),
-                            },
+                            // Enter opens the form; switching is `u`.
+                            PickKind::Provider => {
+                                self.configure_provider(&choice.value);
+                                self.dirty = true;
+                                return;
+                            }
                             PickKind::Dir => {
                                 // Enter chooses. The typed command keeps the jail
                                 // and root-change logic in one place.

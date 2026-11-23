@@ -6378,19 +6378,14 @@ fn a_built_in_name_is_refused_for_a_new_provider() {
 }
 
 #[test]
-fn enter_still_switches_and_the_footer_offers_configure() {
+fn the_provider_footer_offers_use_and_configure() {
     let (mut a, _config) = provider_app();
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
     provider_row(&mut a, "ollama");
     let shown = strip(&a.frame(100, 30));
-    assert!(shown.contains("e configure"), "the footer has no configure hint: {shown:?}");
-    a.handle_key(Key::Enter, &tx);
-    assert_eq!(a.cfg.active_name, "ollama", "Enter did not switch");
-}
-
-fn settings_row_values(a: &App) -> Vec<(String, String)> {
-    open_picker(a).items.iter().map(|i| (i.value.clone(), i.desc.clone())).collect()
+    assert!(shown.contains("u use") && shown.contains("e configure"), "footer: {shown:?}");
+    assert_ne!(a.cfg.active_name, "ollama", "showing the footer switched the provider");
 }
 
 #[test]
@@ -6726,3 +6721,52 @@ fn the_provider_form_shows_every_field_in_a_box() {
 }
 
 
+
+#[test]
+fn enter_on_a_provider_row_opens_its_configuration_form() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "ollama");
+    a.handle_key(Key::Enter, &tx);
+    match &a.pending {
+        Some(Pending::ProviderForm { name, fields, .. }) => {
+            assert_eq!(name, "ollama-custom");
+            assert_eq!(fields[0].1, crate::providers::Provider::Ollama.profile().base_url);
+        }
+        _ => panic!("Enter did not open the configuration form"),
+    }
+    assert_ne!(a.cfg.active_name, "ollama", "Enter switched the provider");
+}
+
+#[test]
+fn u_on_a_provider_row_switches_to_it() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "ollama");
+    let shown = strip(&a.frame(100, 30));
+    assert!(shown.contains("u use"), "the footer has no use hint: {shown:?}");
+    a.handle_key(Key::Char('u'), &tx);
+    assert_eq!(a.cfg.active_name, "ollama", "u did not switch");
+    assert!(a.pending.is_none(), "the picker stayed open");
+}
+
+#[test]
+fn ctrl_u_switches_from_a_typed_provider_picker() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.input = "/provider ".into();
+    a.cursor = a.input.len();
+    a.sync_menu();
+    provider_row(&mut a, "ollama");
+    let shown = strip(&a.frame(100, 30));
+    assert!(shown.contains("^U use"), "the typed footer has no use hint: {shown:?}");
+    a.handle_key(Key::Ctrl('u'), &tx);
+    assert_eq!(a.cfg.active_name, "ollama", "Ctrl+U did not switch");
+    assert_eq!(a.input, "/provider ", "a letter reached the composer");
+}
+
+fn settings_row_values(a: &App) -> Vec<(String, String)> {
+    open_picker(a).items.iter().map(|i| (i.value.clone(), i.desc.clone())).collect()
+}
