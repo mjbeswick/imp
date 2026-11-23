@@ -590,6 +590,31 @@ impl Log {
         out
     }
 
+    /// Every saved session, blank ones included: a session counts once its
+    /// metadata exists, even before its first message. Resume and `--list`
+    /// keep using `list`, which needs a transcript.
+    pub fn listing(dir: &Path) -> Vec<Meta> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let id = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let log = Log {
+                path: dir.join(format!("{id}.jsonl")),
+                meta_path: path.clone(),
+                id,
+            };
+            out.push(log.meta());
+        }
+        out.sort_by_key(|m| std::cmp::Reverse(m.updated));
+        out
+    }
+
     /// Give this open log a new title.
     pub fn retitle(&self, title: &str) -> Result<(), String> {
         let title = title.trim();
@@ -1306,6 +1331,22 @@ mod title_tests {
         let log = Log::create(&dir, &dir, "deepseek-flash");
         log.append(&Message::user(LONG));
         assert_eq!(log.meta().title, "look at why the rsync test keeps…");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod listing_tests {
+    use super::*;
+
+    #[test]
+    fn a_blank_session_is_listed_but_not_by_list() {
+        let dir = std::env::temp_dir().join(format!("imp-listing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _blank = Log::create(&dir, &dir, "deepseek-flash");
+        assert_eq!(Log::listing(&dir).len(), 1, "the blank session was not listed");
+        assert!(Log::list(&dir).is_empty(), "list changed: resume would see blank sessions");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
