@@ -174,7 +174,10 @@ and leaves the built-in as it is. `add <name>`, `edit <name>`,
 `# >>> providers` block in the config file; comments and other keys survive,
 and the active profile cannot be deleted. While `add` or `edit` is open, ↑ or
 Shift+Tab goes back to an earlier field to fix it, ↓ goes forward, and Enter
-saves from the last field; Esc cancels the form.
+saves from the last field; Esc cancels the form. The dialect steps through
+`deepseek`, `openai`, `anthropic`, `gemini`, `ollama` and `custom` with Left,
+Right or Space, and typed text is ignored there. Tab on the model field opens
+the dialect's default model and recent models, or `type another` to type a name.
 
 While a turn runs, Enter queues the message for after the turn, and Ctrl+S
 steers it into the turn before its next step; with no turn running, both send.
