@@ -6506,3 +6506,69 @@ fn the_api_key_row_opens_a_masked_field_that_never_draws_the_typed_key() {
     assert!(!shown.contains("typed-secret-abc"), "the typed key was drawn: {shown:?}");
     assert!(!shown.contains("typed-secret"), "part of the typed key was drawn: {shown:?}");
 }
+
+#[test]
+fn e_on_the_custom_provider_row_shows_the_form() {
+    let (mut a, _config) = provider_app();
+    a.cfg.named.push(crate::config::NamedProvider {
+        name: "work".into(),
+        base: "http://box/v1".into(),
+        model: "m1".into(),
+        key_env: String::new(),
+        dialect: "openai".into(),
+    });
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "work");
+    a.handle_key(Key::Char('e'), &tx);
+    let shown = strip(&a.frame(100, 30));
+    assert!(shown.contains("provider work"), "the form is not on screen: {shown:?}");
+}
+
+#[test]
+fn e_on_the_built_in_custom_row_shows_the_form_at_a_narrow_width() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "custom");
+    a.handle_key(Key::Char('e'), &tx);
+    let shown = strip(&a.frame(60, 20));
+    assert!(shown.contains("provider custom-custom"), "the form is not on screen: {shown:?}");
+}
+
+#[test]
+fn ctrl_e_configures_the_row_after_slash_provider() {
+    let (mut a, _config) = provider_app();
+    a.cfg.named.push(crate::config::NamedProvider {
+        name: "work".into(),
+        base: "http://box/v1".into(),
+        model: "m1".into(),
+        key_env: String::new(),
+        dialect: "openai".into(),
+    });
+    let (tx, _rx) = channel();
+    a.input = "/provider ".into();
+    a.cursor = a.input.len();
+    a.sync_menu();
+    provider_row(&mut a, "work");
+    a.handle_key(Key::Ctrl('e'), &tx);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "Ctrl+E did not open the form: input {:?}", a.input);
+    assert_eq!(a.input, "/provider ", "a letter reached the composer");
+}
+
+#[test]
+fn the_provider_footer_names_the_key_for_the_way_the_picker_opened() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "ollama");
+    assert!(strip(&a.frame(100, 30)).contains("e configure"), "bare picker footer");
+    let (mut b, _config) = provider_app();
+    b.input = "/provider ".into();
+    b.cursor = b.input.len();
+    b.sync_menu();
+    provider_row(&mut b, "ollama");
+    let shown = strip(&b.frame(100, 30));
+    assert!(shown.contains("^E configure"), "typed picker footer: {shown:?}");
+    assert!(!shown.contains(" e configure"), "typed picker offers e: {shown:?}");
+}

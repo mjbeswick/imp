@@ -2390,7 +2390,13 @@ impl Picker {
             }
             _ => vec!["Enter choose".into(), "Esc close".into()],
         };
-        if let Some(item) = self.selected().or_else(|| self.items.first()) {
+        // Typed `/provider` filters with letters, so the key there is Ctrl+E.
+        let typed_provider = self.kind == PickKind::Provider && self.prefix.is_some();
+        if typed_provider {
+            if self.selected().is_some() {
+                parts.push("^E configure".into());
+            }
+        } else if let Some(item) = self.selected().or_else(|| self.items.first()) {
             for (key, label) in &item.actions {
                 parts.push(format!("{key} {label}"));
             }
@@ -5523,6 +5529,15 @@ impl App {
                         // A typed path takes over from the browser.
                         self.input.push(c);
                         self.cursor = self.input.len();
+                        self.dirty = true;
+                        return;
+                    }
+                    // Ctrl+E configures the highlighted provider from a typed
+                    // `/provider`, where letters filter the list.
+                    Key::Ctrl('e') if picker.kind == PickKind::Provider => {
+                        if let Some(choice) = picker.selected().cloned() {
+                            self.configure_provider(&choice.value);
+                        }
                         self.dirty = true;
                         return;
                     }
