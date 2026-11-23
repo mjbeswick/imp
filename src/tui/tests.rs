@@ -3379,17 +3379,20 @@ fn provider_add_edits_the_managed_block() {
     let (tx, _rx) = channel();
     a.run_command("provider add work", &tx);
     assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })));
-    for key in [
-        "http://box:8080/v1",
-        "local-coder",
-        "openai",
-        "WORK_KEY",
-    ] {
+    for key in ["http://box:8080/v1", "local-coder"] {
         for c in key.chars() {
             a.handle_key(Key::Char(c), &tx);
         }
         a.handle_key(Key::Enter, &tx);
     }
+    // The dialect steps from the list: deepseek, then openai.
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Enter, &tx);
+    for c in "WORK_KEY".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    a.handle_key(Key::Enter, &tx);
     assert!(a.pending.is_none(), "the form stayed open");
     let text = std::fs::read_to_string(&config).unwrap();
     assert!(text.starts_with("# keep me\nmodel = old\n"), "{text}");
@@ -3401,11 +3404,9 @@ fn provider_add_edits_the_managed_block() {
     for _ in 0..2 {
         a.handle_key(Key::Enter, &tx);
     }
-    for _ in 0.."openai".len() {
-        a.handle_key(Key::Backspace, &tx);
-    }
-    for c in "ollama".chars() {
-        a.handle_key(Key::Char(c), &tx);
+    // openai steps on through anthropic and gemini to ollama.
+    for _ in 0..3 {
+        a.handle_key(Key::Right, &tx);
     }
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
@@ -3423,12 +3424,19 @@ fn provider_use_reaches_the_worker_and_delete_refuses_the_active_one() {
     let (mut a, _config) = provider_app();
     let (tx, rx) = channel();
     a.run_command("provider add work", &tx);
-    for key in ["http://box/v1", "m", "openai", "K"] {
+    for key in ["http://box/v1", "m"] {
         for c in key.chars() {
             a.handle_key(Key::Char(c), &tx);
         }
         a.handle_key(Key::Enter, &tx);
     }
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Enter, &tx);
+    for c in "K".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    a.handle_key(Key::Enter, &tx);
 
     a.run_command("provider use work", &tx);
     match rx.try_recv() {
@@ -6122,7 +6130,8 @@ fn up_and_shift_tab_move_back_and_keep_every_fields_text() {
     a.handle_key(Key::Enter, &tx);
     type_text(&mut a, &tx, "m1");
     a.handle_key(Key::Enter, &tx);
-    type_text(&mut a, &tx, "openai");
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Right, &tx);
     a.handle_key(Key::Enter, &tx);
     assert_eq!(provider_form(&a).1, 3, "Enter did not reach key_env");
 
@@ -6571,4 +6580,134 @@ fn the_provider_footer_names_the_key_for_the_way_the_picker_opened() {
     let shown = strip(&b.frame(100, 30));
     assert!(shown.contains("^E configure"), "typed picker footer: {shown:?}");
     assert!(!shown.contains(" e configure"), "typed picker offers e: {shown:?}");
+}
+
+fn form_field(a: &App, label: &str) -> String {
+    match &a.pending {
+        Some(Pending::ProviderForm { fields, .. }) => {
+            fields.iter().find(|(l, _)| l == label).map(|(_, v)| v.clone()).unwrap_or_default()
+        }
+        _ => panic!("no provider form is open"),
+    }
+}
+
+fn form_at(a: &App) -> usize {
+    match &a.pending {
+        Some(Pending::ProviderForm { at, .. }) => *at,
+        _ => panic!("no provider form is open"),
+    }
+}
+
+fn open_add_form(a: &mut App, tx: &Sender<Cmd>) {
+    a.run_command("provider add work", tx);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })));
+}
+
+#[test]
+fn the_dialect_steps_through_the_six_values() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    assert_eq!(form_at(&a), 2);
+    a.handle_key(Key::Right, &tx);
+    assert_eq!(form_field(&a, "dialect"), "deepseek");
+    a.handle_key(Key::Right, &tx);
+    assert_eq!(form_field(&a, "dialect"), "openai");
+    a.handle_key(Key::Left, &tx);
+    assert_eq!(form_field(&a, "dialect"), "deepseek");
+    a.handle_key(Key::Left, &tx);
+    assert_eq!(form_field(&a, "dialect"), "custom", "Left did not wrap");
+    a.handle_key(Key::Char(' '), &tx);
+    assert_eq!(form_field(&a, "dialect"), "deepseek", "Space did not step");
+}
+
+#[test]
+fn typed_text_is_ignored_in_the_dialect() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Right, &tx);
+    let before = form_field(&a, "dialect");
+    type_text(&mut a, &tx, "xyz");
+    a.handle_key(Key::Backspace, &tx);
+    assert_eq!(form_field(&a, "dialect"), before, "typed text reached the dialect");
+}
+
+#[test]
+fn tab_on_the_model_opens_the_default_recents_and_type_another() {
+    let (mut a, _config) = provider_app();
+    let recents = a.config_path.parent().unwrap().join("models");
+    std::fs::write(&recents, "deepseek-pro\n").unwrap();
+    a.models_path = recents;
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Up, &tx);
+    a.handle_key(Key::Tab, &tx);
+    let picker = match &a.pending {
+        Some(Pending::Pick(p)) if p.kind == PickKind::ProviderModel => p,
+        _ => panic!("Tab on the model did not open the model picker"),
+    };
+    let values: Vec<String> = picker.items.iter().map(|i| i.value.clone()).collect();
+    assert_eq!(values.first().map(String::as_str), Some("deepseek-flash"), "{values:?}");
+    assert!(values.iter().any(|v| v == "deepseek-pro"), "no recent model: {values:?}");
+    assert_eq!(values.last().map(String::as_str), Some("::type-another"), "{values:?}");
+}
+
+#[test]
+fn choosing_a_recent_model_fills_the_field_and_returns_to_the_form() {
+    let (mut a, _config) = provider_app();
+    let recents = a.config_path.parent().unwrap().join("models2");
+    std::fs::write(&recents, "deepseek-pro\n").unwrap();
+    a.models_path = recents;
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Up, &tx);
+    a.handle_key(Key::Tab, &tx);
+    provider_row(&mut a, "deepseek-pro");
+    a.handle_key(Key::Enter, &tx);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "the form did not return");
+    assert_eq!(form_field(&a, "model"), "deepseek-pro");
+    assert_eq!(form_at(&a), 1);
+}
+
+#[test]
+fn type_another_and_esc_return_to_the_form_with_the_text_unchanged() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    a.handle_key(Key::Down, &tx);
+    type_text(&mut a, &tx, "kept");
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Right, &tx);
+    a.handle_key(Key::Up, &tx);
+    a.handle_key(Key::Tab, &tx);
+    a.handle_key(Key::Esc, &tx);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "Esc did not return to the form");
+    assert_eq!(form_field(&a, "model"), "kept");
+    a.handle_key(Key::Tab, &tx);
+    provider_row(&mut a, "::type-another");
+    a.handle_key(Key::Enter, &tx);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "type another did not return");
+    assert_eq!(form_field(&a, "model"), "kept");
+}
+
+#[test]
+fn the_model_field_still_takes_typed_names() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    a.handle_key(Key::Down, &tx);
+    type_text(&mut a, &tx, "my-model-7");
+    assert_eq!(form_field(&a, "model"), "my-model-7");
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "typing opened a picker");
 }

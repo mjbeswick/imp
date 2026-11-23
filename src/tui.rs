@@ -2032,6 +2032,8 @@ enum PickKind {
     Palette,
     /// The `/settings` form: each row steps its own value.
     Settings,
+    /// The models offered for a provider's model field.
+    ProviderModel,
 }
 
 #[derive(Clone)]
@@ -2047,6 +2049,9 @@ struct PickItem {
 
 /// The one picker: a title, a filter, a scrolling list, and a selection.
 struct Picker {
+    /// The provider form to return to when this picker closes, as
+    /// `(name, fields, at)`. Set only by the model picker of a provider form.
+    form: Option<Box<(String, Vec<(String, String)>, usize)>>,
     title: String,
     filter: String,
     items: Vec<PickItem>,
@@ -2113,6 +2118,12 @@ const SETTING_ROWS: &[(&str, &str)] = &[
     ("prune_at", "prune at"),
     ("skills_dir", "skills folder"),
 ];
+
+/// The stream dialects a provider form offers, in the order they step.
+const DIALECTS: &[&str] = &["deepseek", "openai", "anthropic", "gemini", "ollama", "custom"];
+
+/// The row of the model picker that types a name instead of choosing one.
+const TYPE_ANOTHER: &str = "::type-another";
 
 /// Settings a row edits in a one-field form rather than stepping.
 fn is_text_setting(key: &str) -> bool {
@@ -2272,6 +2283,7 @@ impl Picker {
             }
         }
         Self {
+            form: None,
             title: title.into(),
             filter: String::new(),
             items,
@@ -4780,6 +4792,33 @@ impl App {
         }
     }
 
+    /// Tab on a provider form's model field: the dialect's default model, the
+    /// recent models, then a row that types a name instead.
+    fn open_model_picker(&mut self, name: String, fields: Vec<(String, String)>, at: usize) {
+        let dialect = fields.iter().find(|f| f.0 == "dialect").map(|f| f.1.clone()).unwrap_or_default();
+        let mut names: Vec<String> = Vec::new();
+        if let Ok(provider) = crate::providers::Provider::parse(&dialect) {
+            names.push(provider.profile().model.to_string());
+        }
+        names.extend(load_models(&self.models_path));
+        let mut items: Vec<PickItem> = Vec::new();
+        for model in names {
+            if model.is_empty() || items.iter().any(|i| i.value == model) {
+                continue;
+            }
+            items.push(PickItem { label: model.clone(), value: model, actions: Vec::new(), desc: String::new() });
+        }
+        items.push(PickItem {
+            label: "type another".into(),
+            value: TYPE_ANOTHER.into(),
+            actions: Vec::new(),
+            desc: "keep typing in the form".into(),
+        });
+        let mut picker = Picker::new("model", items, PickKind::ProviderModel);
+        picker.form = Some(Box::new((name, fields, at)));
+        self.pending = Some(Pending::Pick(picker));
+    }
+
     /// `e` on a provider row: the form for its configuration. A named profile
     /// opens as saved; a built-in opens from its defaults, to be saved as a
     /// named copy so the built-in stays as it is.
@@ -5329,9 +5368,31 @@ impl App {
                 mut fields,
                 mut at,
             } => {
+                let label = fields.get(at).map(|f| f.0.clone()).unwrap_or_default();
                 match key {
                     Key::Esc => {
                         self.push(Role::Info, "provider cancelled");
+                        self.dirty = true;
+                    }
+                    // The dialect is chosen from a list: Left, Right and Space step it.
+                    Key::Left | Key::Right | Key::Char(' ') if label == "dialect" => {
+                        let current = fields[at].1.clone();
+                        let next = match DIALECTS.iter().position(|d| *d == current) {
+                            None => 0,
+                            Some(i) if matches!(key, Key::Left) => (i + DIALECTS.len() - 1) % DIALECTS.len(),
+                            Some(i) => (i + 1) % DIALECTS.len(),
+                        };
+                        fields[at].1 = DIALECTS[next].to_string();
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        self.dirty = true;
+                    }
+                    // Typed text cannot reach the dialect.
+                    Key::Char(_) | Key::Backspace if label == "dialect" => {
+                        self.pending = Some(Pending::ProviderForm { name, fields, at });
+                    }
+                    // Tab on the model opens the models to choose from.
+                    Key::Tab if label == "model" => {
+                        self.open_model_picker(name, fields, at);
                         self.dirty = true;
                     }
                     Key::Enter => {
@@ -5497,6 +5558,14 @@ impl App {
             }
             Pending::Pick(mut picker) => {
                 match key {
+                    Key::Esc if picker.form.is_some() => {
+                        if let Some(form) = picker.form.take() {
+                            let (name, fields, at) = *form;
+                            self.pending = Some(Pending::ProviderForm { name, fields, at });
+                        }
+                        self.dirty = true;
+                        return;
+                    }
                     Key::Up => picker.move_by(-1),
                     Key::Down => picker.move_by(1),
                     Key::PageUp => picker.move_by(-(PICK_ROWS as isize)),
@@ -5729,6 +5798,18 @@ impl App {
                             }
                             PickKind::Mode => self.set_mode(&choice.value, tx),
                             PickKind::Keys => {}
+                            PickKind::ProviderModel => {
+                                if let Some(form) = picker.form.take() {
+                                    let (name, mut fields, _) = *form;
+                                    let model_at = fields.iter().position(|f| f.0 == "model").unwrap_or(1);
+                                    if choice.value != TYPE_ANOTHER {
+                                        fields[model_at].1 = choice.value.clone();
+                                    }
+                                    self.pending = Some(Pending::ProviderForm { name, fields, at: model_at });
+                                }
+                                self.dirty = true;
+                                return;
+                            }
                             PickKind::Settings => {
                                 let key = choice.value.clone();
                                 if is_text_setting(&key) {
