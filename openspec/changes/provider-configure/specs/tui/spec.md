@@ -35,3 +35,15 @@ The system SHALL keep Enter switching the session to the highlighted provider, a
 #### Scenario: Footer
 - **WHEN** the provider picker is open with a row highlighted
 - **THEN** the footer reads `e configure` alongside the existing hints
+
+### Requirement: Ctrl+E configures a row of a typed provider picker
+
+The system SHALL open the configuration form for the highlighted provider when the user presses Ctrl+E in the provider picker opened by a typed `/provider`, where letters filter the list, SHALL NOT send the key to the composer, and SHALL show `^E configure` in that picker's footer.
+
+#### Scenario: Ctrl+E after typing
+- **WHEN** the user types `/provider`, highlights `work`, and presses Ctrl+E
+- **THEN** the form for `work` opens and the composer still reads `/provider `
+
+#### Scenario: Footer after typing
+- **WHEN** the provider picker was opened by a typed `/provider`
+- **THEN** its footer reads `^E configure`, and no `e configure` hint is shown
