@@ -1847,7 +1847,7 @@ The system SHALL cycle the permission mode through `normal`, `strict`, and `yolo
 
 #### Scenario: Agent before the prompt
 - **WHEN** more than one agent exists and `plan` is active
-- **THEN** the composer's first row starts with `plan >` and no `agent:` line is written on a switch
+- **THEN** the composer's first row starts with `plan>` and no `agent:` line is written on a switch
 
 #### Scenario: One agent
 - **WHEN** only one agent exists
