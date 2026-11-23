@@ -170,6 +170,8 @@ pub struct Config {
     pub title_gradient: bool,
     /// The model's context window in tokens, overriding the built-in table.
     pub context_window: Option<u64>,
+    /// Summarise a long first message as the session title.
+    pub title_summary: TitleSummary,
     /// Secret-looking variables the agent's commands may still see.
     pub pass_env: Vec<String>,
     /// How much of each tool step the interface shows.
@@ -216,6 +218,7 @@ impl Default for Config {
             auto_next: true,
             title_gradient: false,
             context_window: None,
+            title_summary: TitleSummary::Auto,
             pass_env: Vec::new(),
             verbosity: Verbosity::Medium,
             auth: Vec::new(),
@@ -293,6 +296,7 @@ impl Config {
             "prune_at" => self.prune_at = parse_u32(key, value)?,
             "compact_at" => self.compact_at = parse_u32(key, value)?,
             "max_tokens" => self.max_tokens = parse_u32(key, value)?,
+            "title_summary" => self.title_summary = TitleSummary::parse(value)?,
             "context_window" => {
                 let tokens: u64 = value
                     .trim()
@@ -1391,5 +1395,38 @@ mod auto_mode_tests {
     fn an_unknown_permissions_value_names_all_four() {
         let err = Permissions::parse("sometimes").unwrap_err();
         assert!(err.contains("normal, strict, auto, or yolo"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod title_summary_setting_tests {
+    use super::*;
+
+    #[test]
+    fn title_summary_is_auto_on_or_off() {
+        assert_eq!(Config::from_str("").unwrap().title_summary, TitleSummary::Auto);
+        assert_eq!(Config::from_str("title_summary = on").unwrap().title_summary, TitleSummary::On);
+        assert_eq!(Config::from_str("title_summary = off").unwrap().title_summary, TitleSummary::Off);
+        assert!(Config::from_str("title_summary = maybe").is_err());
+    }
+}
+
+/// Whether a long first message gets a summary as the session title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitleSummary {
+    /// On for hosted providers, off for Ollama and custom endpoints.
+    Auto,
+    On,
+    Off,
+}
+
+impl TitleSummary {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "on" => Ok(Self::On),
+            "off" => Ok(Self::Off),
+            _ => Err(format!("title_summary must be auto, on, or off (got {s:?})")),
+        }
     }
 }

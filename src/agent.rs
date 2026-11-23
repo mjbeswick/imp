@@ -930,6 +930,23 @@ impl Session {
         Some((clean_suggestion(&text)?, usage))
     }
 
+    /// A summary title for the session, after its first turn: one request
+    /// holding only the first message. `None` when it is not wanted or fails.
+    pub fn title_summary(&self) -> Option<(String, (u64, u64, u64))> {
+        let users: Vec<&Message> = self.history.iter().filter(|m| m.role == crate::api::Role::User).collect();
+        // Only after the first turn, so a failed try is never repeated.
+        if users.len() != 1 {
+            return None;
+        }
+        let first = users[0].content.clone();
+        let stored = self.log.as_ref()?.meta().title;
+        if !title_wanted(self.cfg.title_summary, self.cfg.provider, &first, &stored) {
+            return None;
+        }
+        let (text, usage) = self.complete_once(&title_messages(&first), 24).ok()?;
+        Some((title_from_reply(&text)?, usage))
+    }
+
     fn complete_once(&self, messages: &[Message], max_tokens: u32) -> Result<(String, (u64, u64, u64)), String> {
         let opts = RequestOptions {
             model: self.cfg.model.clone(),
@@ -3001,6 +3018,56 @@ mod tests {
         assert_eq!(s.history.len(), before);
     }
 
+    fn session_with_log(script: Vec<Script>) -> (Session, Arc<Fake>, std::path::PathBuf) {
+        let (mut s, fake) = scripted(script);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("imp-summary-{}-{nanos}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        s.attach_log(crate::store::Log::create(&dir, &dir, "deepseek-flash"));
+        s.cfg.provider = crate::providers::Provider::DeepSeek;
+        (s, fake, dir)
+    }
+
+    #[test]
+    fn a_long_first_message_gets_one_summary_title() {
+        let long = "Can you please look at why the rsync test keeps failing on the Pi when the network is slow";
+        let (mut s, _fake, dir) = session_with_log(vec![
+            Script::Ok(text_reply("Done.")),
+            Script::Ok(text_reply("\"Flaky rsync test on slow network.\"")),
+        ]);
+        s.turn(long, &mut Null).unwrap();
+        let (title, _) = s.title_summary().expect("no summary title");
+        assert_eq!(title, "Flaky rsync test on slow network");
+        // The worker stores the title; a stored summary is never asked for again.
+        s.log.as_ref().unwrap().retitle(&title).unwrap();
+        assert!(s.title_summary().is_none(), "a second summary was requested");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_short_first_message_asks_for_no_summary() {
+        let (mut s, _fake, dir) = session_with_log(vec![Script::Ok(text_reply("Done."))]);
+        s.turn("fix the parser", &mut Null).unwrap();
+        assert!(s.title_summary().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_summary_keeps_the_cut_title() {
+        let long = "Can you please look at why the rsync test keeps failing on the Pi when the network is slow";
+        let (mut s, _fake, dir) = session_with_log(vec![
+            Script::Ok(text_reply("Done.")),
+            Script::Fails(429, "slow down".into()),
+            Script::Fails(429, "slow down".into()),
+            Script::Fails(429, "slow down".into()),
+        ]);
+        s.turn(long, &mut Null).unwrap();
+        assert!(s.title_summary().is_none(), "a failed request produced a title");
+        assert_eq!(s.log.as_ref().unwrap().meta().title, "look at why the rsync test keeps…");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_cat_read_lets_a_write_overwrite() {
         let (mut s, _fake) = scripted(vec![]);
@@ -3757,4 +3824,95 @@ mod tests {
         assert!(s.tools.jail, "the jail did not come back");
     }
 
+}
+
+/// Whether the session title should be summarised: the first message is
+/// longer than a cut title, the title is still the cut one (not renamed and
+/// not summarised yet), and the setting allows it for this provider.
+pub fn title_wanted(setting: crate::config::TitleSummary, provider: crate::providers::Provider, first: &str, stored: &str) -> bool {
+    use crate::config::TitleSummary;
+    use crate::providers::Provider;
+    if first.chars().count() <= 40 || stored != crate::store::cut_title(first) {
+        return false;
+    }
+    match setting {
+        TitleSummary::Off => false,
+        TitleSummary::On => true,
+        TitleSummary::Auto => !matches!(provider, Provider::Ollama | Provider::Custom),
+    }
+}
+
+/// The request for a summary: the first message alone, no history, no tools.
+pub fn title_messages(first: &str) -> Vec<Message> {
+    vec![
+        Message::system("Write a title for the request below in at most six words. Reply with only the title."),
+        Message::user(first),
+    ]
+}
+
+/// A reply as a title: quotes and end punctuation stripped, at most six words.
+pub fn title_from_reply(text: &str) -> Option<String> {
+    let cleaned: String = text
+        .trim()
+        .trim_matches(|c| c == '"' || c == '\'' || c == '.')
+        .split_whitespace()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
+#[cfg(test)]
+mod title_summary_tests {
+    use super::*;
+    use crate::config::TitleSummary;
+    use crate::providers::Provider;
+
+    const LONG: &str = "Can you please look at why the rsync test keeps failing on the Pi when the network is slow";
+
+    #[test]
+    fn a_long_first_message_wants_a_summary_on_a_hosted_provider() {
+        let stored = crate::store::cut_title(LONG);
+        assert!(title_wanted(TitleSummary::Auto, Provider::DeepSeek, LONG, &stored));
+    }
+
+    #[test]
+    fn a_short_message_never_wants_one() {
+        assert!(!title_wanted(TitleSummary::On, Provider::DeepSeek, "fix the parser", "fix the parser"));
+    }
+
+    #[test]
+    fn a_rename_or_an_earlier_summary_is_kept() {
+        assert!(!title_wanted(TitleSummary::On, Provider::DeepSeek, LONG, "fix sync"));
+        assert!(!title_wanted(TitleSummary::On, Provider::DeepSeek, LONG, "Flaky rsync test on slow network"));
+    }
+
+    #[test]
+    fn auto_is_off_for_local_and_custom_endpoints_and_on_or_off_is_explicit() {
+        let stored = crate::store::cut_title(LONG);
+        assert!(!title_wanted(TitleSummary::Auto, Provider::Ollama, LONG, &stored));
+        assert!(!title_wanted(TitleSummary::Auto, Provider::Custom, LONG, &stored));
+        assert!(title_wanted(TitleSummary::On, Provider::Ollama, LONG, &stored));
+        assert!(!title_wanted(TitleSummary::Off, Provider::DeepSeek, LONG, &stored));
+    }
+
+    #[test]
+    fn the_request_holds_only_the_first_message() {
+        let messages = title_messages(LONG);
+        assert_eq!(messages.len(), 2, "history or other text went in");
+        assert_eq!(messages[1].content, LONG);
+    }
+
+    #[test]
+    fn a_reply_becomes_a_clean_title_of_at_most_six_words() {
+        assert_eq!(
+            title_from_reply("\"Flaky rsync test on slow network.\"").as_deref(),
+            Some("Flaky rsync test on slow network")
+        );
+        assert_eq!(
+            title_from_reply("one two three four five six seven eight").as_deref(),
+            Some("one two three four five six")
+        );
+        assert_eq!(title_from_reply("  \"\"  "), None);
+    }
 }

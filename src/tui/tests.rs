@@ -6075,3 +6075,21 @@ fn a_rename_shows_in_the_title_bar() {
     assert!(title_row.contains(" fix sync "), "the rename did not show: {title_row:?}");
     assert!(!title_row.contains("look at why"), "the old title stayed: {title_row:?}");
 }
+
+#[test]
+fn a_summary_replaces_the_cut_title_unless_it_was_renamed() {
+    let mut a = app();
+    let long = "Can you please look at why the rsync test keeps failing on the Pi when the network is slow";
+    a.push(Role::User, long);
+    a.apply(Ev::Title("Flaky rsync test on slow network".into()));
+    let shown = strip(&a.frame(70, 10));
+    assert!(shown.split("\r\n").next().unwrap_or("").contains("Flaky rsync test on slow network"), "{shown:?}");
+
+    let mut b = app();
+    b.push(Role::User, long);
+    let (tx, _cmds) = channel();
+    b.run_command("rename fix sync", &tx);
+    b.apply(Ev::Title("Flaky rsync test on slow network".into()));
+    let shown = strip(&b.frame(70, 10));
+    assert!(shown.split("\r\n").next().unwrap_or("").contains(" fix sync "), "a summary replaced a rename: {shown:?}");
+}

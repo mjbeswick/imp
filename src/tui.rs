@@ -1128,6 +1128,9 @@ pub enum Ev {
     Config(Box<Config>),
     /// The user's likely next message, drawn greyed out in an empty input.
     Suggest(String),
+    /// A summary of a long first message, as the session title. Ignored when
+    /// the user has renamed the session.
+    Title(String),
     /// Changed files for `/diff`; true for `/diff git`.
     Diff(Vec<crate::agent::FileDiff>, bool),
     /// A goal round begins.
@@ -2957,6 +2960,14 @@ impl App {
                 self.push(Role::Info, format!("◎ {why}"));
                 self.status.goal = None;
                 self.dirty = true;
+            }
+            Ev::Title(text) => {
+                // Only the cut title is replaced; a rename stays.
+                let first = self.entries.iter().find(|e| e.role == Role::User).map(|e| e.text.clone()).unwrap_or_default();
+                if self.title.is_empty() || self.title == crate::store::cut_title(&first) {
+                    self.title = text;
+                    self.dirty = true;
+                }
             }
             Ev::Suggest(text) => {
                 // Late: the user has typed, or another turn began.
@@ -7491,6 +7502,23 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         if let Some((text, (hit, miss, output))) = worker_session.suggest() {
                             let _ = ev_tx.send(Ev::Usage { tokens: None, hit, miss, output, model: None });
                             let _ = ev_tx.send(Ev::Suggest(text));
+                        }
+                    }
+                    // A summary title after the first turn, but never while the user
+                    // has sent something: that message is kept and runs first.
+                    if ok && !cancelled {
+                        match cmd_rx.try_recv() {
+                            Ok(cmd) => queued.push_back(cmd),
+                            Err(_) if queued.is_empty() => {
+                                if let Some((title, (hit, miss, output))) = worker_session.title_summary() {
+                                    let _ = ev_tx.send(Ev::Usage { tokens: None, hit, miss, output, model: None });
+                                    if let Some(log) = &worker_session.log {
+                                        let _ = log.retitle(&title);
+                                    }
+                                    let _ = ev_tx.send(Ev::Title(title));
+                                }
+                            }
+                            Err(_) => {}
                         }
                     }
                 }
