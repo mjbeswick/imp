@@ -83,7 +83,7 @@ impl Provider {
             },
             Self::Anthropic => Profile {
                 base_url: "https://api.anthropic.com",
-                model: "claude-sonnet-4-5",
+                model: "claude-opus-5-5",
                 key_var: Some("ANTHROPIC_API_KEY"),
             },
             Self::Gemini => Profile {
@@ -185,7 +185,7 @@ pub fn catalog(provider: Provider) -> Vec<String> {
             "o3",
             "o4-mini",
         ],
-        Provider::Anthropic => &["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+        Provider::Anthropic => &["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
         Provider::Gemini => &["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
         Provider::Ollama => &["llama3.2", "qwen2.5-coder", "mistral"],
         Provider::Custom => &[],
@@ -288,6 +288,12 @@ mod tests {
             Provider::DeepSeek.profile().key_var,
             Some("DEEPSEEK_API_KEY")
         );
+    }
+
+    #[test]
+    fn anthropic_lists_current_models() {
+        assert_eq!(catalog(Provider::Anthropic), vec!["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
+        assert_eq!(Provider::Anthropic.profile().model, "claude-opus-5-5");
     }
 
     #[test]
