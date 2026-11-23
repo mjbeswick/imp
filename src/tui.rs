@@ -6562,13 +6562,8 @@ impl App {
                 }
                 Pending::Prompt { label, value, .. } => format!("{label}: {value}{CARET}"),
                 Pending::RenameCurrent { value } => format!("new title: {value}{CARET}"),
-                Pending::ProviderForm { name, fields, at } => {
-                    let (label, value) = fields
-                        .get(*at)
-                        .cloned()
-                        .unwrap_or_else(|| ("field".into(), String::new()));
-                    format!("provider {name} · {label}: {value}{CARET}  (Enter next · Esc cancel)")
-                }
+                // The boxed form draws every field, so the composer row stays free.
+                Pending::ProviderForm { .. } => return None,
                 Pending::SettingField { key, value, error } => {
                     let now = self.setting_value(key);
                     let refused = if error.is_empty() { String::new() } else { format!("  refused: {error}") };
@@ -6602,7 +6597,62 @@ impl App {
     /// Absolute cursor addressing paints the rectangle without disturbing the
     /// transcript, and the next full frame replaces it, leaving no residue.
     #[allow(clippy::type_complexity)]
+    /// The provider form as a box: every field with its value, the field being
+    /// typed in on the top line, and the keys below.
+    fn provider_form_overlay(
+        &self,
+        name: &str,
+        fields: &[(String, String)],
+        at: usize,
+        cols: usize,
+        rows: usize,
+    ) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
+        let width = (cols * 80 / 100).clamp(40, 72).min(cols);
+        if width < 4 || rows < 9 {
+            return None;
+        }
+        let inner = width.saturating_sub(2);
+        let wall = self.palette.paint(Role::Border, "│");
+        let line = |t: &str| self.palette.paint(Role::Border, t);
+        let edge = |l: char, r: char, text: &str| {
+            let label = fit(text, inner.saturating_sub(4));
+            let fill = inner.saturating_sub(label.chars().count() + 3);
+            line(&format!("{l}─ {label} {}{r}", "─".repeat(fill)))
+        };
+        let value = fields.get(at).map(|f| f.1.clone()).unwrap_or_default();
+        let mut block: Vec<String> = vec![edge('╭', '╮', &format!("provider {name}"))];
+        let input = format!(" › {value}");
+        block.push(format!("{wall}{}{wall}", self.boxed(&input, inner, false)));
+        block.push(line(&format!("├{}┤", "─".repeat(inner))));
+        for (i, (label, text)) in fields.iter().enumerate() {
+            let marker = if i == at { "▸" } else { " " };
+            let row = format!("{marker} {label:<8} {text}");
+            block.push(format!("{wall}{}{wall}", self.boxed(&row, inner, i == at)));
+        }
+        let keys = if fields.get(at).is_some_and(|f| f.0 == "dialect") {
+            "↑↓ field · ←→ dialect · Enter next · Esc cancel"
+        } else if fields.get(at).is_some_and(|f| f.0 == "model") {
+            "↑↓ field · Tab models · Enter next · Esc cancel"
+        } else {
+            "↑↓ field · Enter next · Esc cancel"
+        };
+        block.push(edge('╰', '╯', keys));
+        let height = block.len();
+        let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
+        let x = (cols.saturating_sub(width)) / 2 + 1;
+        let y = (body.saturating_sub(height)) / 2 + 1;
+        let mut out = String::new();
+        for (i, row) in block.iter().enumerate() {
+            out.push_str(&format!("\x1b[{};{}H{row}", y + i, x));
+        }
+        let cursor = (x + 1 + format!(" › {value}").chars().count()).min(x + width - 2);
+        Some((out, cursor, y + 1, Vec::new()))
+    }
+
     fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
+        if let Some(Pending::ProviderForm { name, fields, at }) = &self.pending {
+            return self.provider_form_overlay(name, fields, *at, cols, rows);
+        }
         let picker = match &self.pending {
             Some(Pending::Pick(picker)) => picker,
             Some(Pending::ConfirmDelete { picker, .. }) => &**picker,

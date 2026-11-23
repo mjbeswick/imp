@@ -6711,3 +6711,18 @@ fn the_model_field_still_takes_typed_names() {
     assert_eq!(form_field(&a, "model"), "my-model-7");
     assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "typing opened a picker");
 }
+
+#[test]
+fn the_provider_form_shows_every_field_in_a_box() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.run_command("provider add work", &tx);
+    let shown = strip(&a.frame(80, 24));
+    for label in ["base", "model", "dialect", "key_env"] {
+        assert!(shown.split("\r\n").any(|row| row.contains(label)), "no {label} row on screen: {shown:?}");
+    }
+    assert!(shown.contains("╭─ provider work"), "the form has no box: {shown:?}");
+    assert!(shown.contains("Esc cancel"), "the form has no keys line: {shown:?}");
+}
+
+
