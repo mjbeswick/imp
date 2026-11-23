@@ -26,8 +26,22 @@ impl Transport for Live {
         cancel: &std::sync::atomic::AtomicBool,
         on_chunk: &mut dyn FnMut(&[u8]),
     ) -> Result<u16, String> {
-        crate::http::post_stream(url, headers, body, cancel, on_chunk).map(|r| r.status)
+        crate::http::post_stream(url, headers, body, cancel, on_chunk).map(|r| {
+            let secs = r.headers.iter().find_map(|h| h.to_ascii_lowercase().strip_prefix("retry-after:")?.trim().parse().ok());
+            RETRY_AFTER.with(|c| c.set(secs));
+            r.status
+        })
     }
+}
+
+thread_local! {
+    /// The last response's `Retry-After` in seconds, read once by the agent.
+    static RETRY_AFTER: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Take the `Retry-After` of the last response on this thread.
+pub fn take_retry_after() -> Option<u64> {
+    RETRY_AFTER.with(|c| c.take())
 }
 
 /// One scripted reply: either chunks delivered as a 200, or a status failure.
@@ -35,6 +49,8 @@ impl Transport for Live {
 pub enum Script {
     Ok(Vec<String>),
     Fails(u16, String),
+    /// A failure carrying `Retry-After`, in seconds.
+    Wait(u16, u64),
     Transport(String),
     /// The user cancels mid-request: sets the flag, as the cancel key does.
     Cancel,
@@ -95,6 +111,10 @@ impl Transport for Fake {
             }
             Script::Fails(status, body) => {
                 on_chunk(body.as_bytes());
+                Ok(status)
+            }
+            Script::Wait(status, secs) => {
+                RETRY_AFTER.with(|c| c.set(Some(secs)));
                 Ok(status)
             }
             Script::Transport(message) => Err(message),

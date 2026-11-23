@@ -5704,3 +5704,17 @@ fn drags_decode_and_copy_on_release() {
     a.handle_key(Key::Release(x, y), &tx);
     assert!(a.clip.is_empty());
 }
+
+#[test]
+fn a_retry_counts_down_and_a_failure_offers_ctrl_r() {
+    let mut a = app();
+    a.status.streaming = true;
+    a.apply(Ev::Retry { secs: 4, attempt: 2, of: 5 });
+    assert_eq!(a.status_line(80).trim_end(), " retrying in 4s · 2/5 · Esc stop");
+    a.apply(Ev::Retry { secs: 0, attempt: 2, of: 5 });
+    assert!(!a.status_line(80).contains("retrying"), "the countdown stayed");
+    a.apply(Ev::Retry { secs: 2, attempt: 3, of: 5 });
+    a.apply(Ev::Done(Some("HTTP 401: bad key".into())));
+    assert_eq!(a.entries.last().unwrap().text, "HTTP 401: bad key · Ctrl+R retry");
+    assert!(!a.status_line(80).contains("retrying"));
+}

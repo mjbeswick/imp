@@ -850,6 +850,8 @@ fn print_ui_to<W: Write>(
         }
         // Totalled by the session; printed once the task ends.
         Ui::Usage { .. } => {}
+        // The first retry already printed why; a countdown needs a screen.
+        Ui::Retry { .. } => {}
         Ui::ToolStart { name, summary, args } => {
             let (summary, args) = (render::clean(&summary), render::clean(&args));
             let line = format!("\u{25b8} {summary}");

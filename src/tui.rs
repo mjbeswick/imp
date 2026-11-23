@@ -1096,6 +1096,8 @@ pub enum Ev {
         reply: Sender<Option<String>>,
     },
     Done(Option<String>),
+    /// A failed request waits `secs` before retry `attempt` of `of`.
+    Retry { secs: u64, attempt: u32, of: u32 },
     /// The config as re-read by `/reload`; the chat applies what changed.
     Config(Box<Config>),
     /// The user's likely next message, drawn greyed out in an empty input.
@@ -1155,6 +1157,7 @@ impl Hooks for WorkerHooks {
                 ms,
             },
             Ui::Info(t) => Ev::Info(t),
+            Ui::Retry { secs, attempt, of } => Ev::Retry { secs, attempt, of },
             Ui::Error(t) => Ev::Error(t),
             Ui::Show(t) => Ev::Show(t),
             Ui::Usage { hit, miss, output, model, context } => Ev::Usage { tokens: Some(context), hit, miss, output, model },
@@ -2357,6 +2360,8 @@ fn is_image_name(name: &str) -> bool {
 
 #[derive(Default)]
 struct Status {
+    /// A retry's countdown: seconds left, attempt, and how many.
+    retry: Option<(u64, u32, u32)>,
     tokens: u64,
     hit: u64,
     miss: u64,
@@ -3045,6 +3050,10 @@ impl App {
             Ev::Config(new) => {
                 self.cfg.reload_from(&new);
             }
+            Ev::Retry { secs, attempt, of } => {
+                self.status.retry = (secs > 0).then_some((secs, attempt, of));
+                self.dirty = true;
+            }
             Ev::Done(err) => {
                 if let Some(next) = self.agent_next.take() {
                     self.agent = next;
@@ -3058,8 +3067,9 @@ impl App {
                         self.push(Role::Thinking, task_line(start.elapsed(), self.status.steps, hit, miss, out, cost));
                     }
                 }
+                self.status.retry = None;
                 if let Some(e) = err {
-                    self.push(Role::Error, e);
+                    self.push(Role::Error, format!("{e} · Ctrl+R retry"));
                 }
                 self.dirty = true;
                 // The next queued message starts, unless one is being edited or
@@ -6472,6 +6482,9 @@ impl App {
     fn status_line(&self, cols: usize) -> String {
         if self.released {
             return fit(" mouse released · any key to take it back", cols);
+        }
+        if let (Some((secs, attempt, of)), true) = (self.status.retry, self.status.streaming) {
+            return fit(&format!(" retrying in {secs}s · {attempt}/{of} · Esc stop"), cols);
         }
         if self.input.starts_with('!') && !self.status.streaming {
             return fit(" shell · local · not sent to the model", cols);

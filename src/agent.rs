@@ -77,6 +77,8 @@ pub enum Ui {
     },
     Info(String),
     Error(String),
+    /// Waiting `secs` before attempt `attempt + 1` of `of` retries.
+    Retry { secs: u64, attempt: u32, of: u32 },
     /// Output shown to the user with its colours; the model gets text.
     Show(String),
     /// One request's usage, sent after every request.
@@ -207,6 +209,8 @@ fn for_model(shown: &str) -> String {
 
 /// Check-ins one session may have waiting.
 const MAX_CHECKINS: usize = 4;
+/// Retries after a failed request, each waiting twice the last.
+const RETRIES: u32 = 5;
 
 pub fn schema() -> Vec<Value> {
     vec![
@@ -294,6 +298,8 @@ pub fn describe_agent(agent: &Agent, cfg: &Config) -> String {
 
 pub struct Session {
     pub cfg: Config,
+    /// The first backoff wait; doubled on each retry. Short in tests.
+    pub retry_base: std::time::Duration,
     pub tools: Tools,
     pub history: Vec<Message>,
     pub cancel: std::sync::Arc<AtomicBool>,
@@ -359,6 +365,7 @@ impl Session {
         let memory = Memory::discover(&cfg, &root);
         let skills = crate::store::load_skills(&cfg, &root);
         Self {
+            retry_base: std::time::Duration::from_secs(1),
             cfg,
             tools: {
                 let mut t = Tools::new(root, out_dir);
@@ -668,9 +675,8 @@ impl Session {
                     }
                 }
                 Err(e) => {
-                    if attempt == 1 && !self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        hooks.ui(Ui::Info(format!("retrying after: {e}")));
-                        std::thread::sleep(std::time::Duration::from_millis(800));
+                    if attempt <= RETRIES && !self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        self.backoff(attempt, &e, hooks)?;
                         continue;
                     }
                     return Err(e);
@@ -715,20 +721,55 @@ impl Session {
                 Ok(()) if status == 200 => return Ok(acc),
                 Ok(()) => {}
                 Err(f) => {
-                    if f.retry == api::Retry::Once && attempt == 1 {
-                        hooks.ui(Ui::Info(format!("retrying: {}", f.message)));
-                        std::thread::sleep(std::time::Duration::from_millis(800));
+                    if f.retry == api::Retry::Once && attempt <= RETRIES {
+                        self.backoff(attempt, &f.message, hooks)?;
                         continue;
                     }
                     return Err(f.message);
                 }
             }
-            if attempt == 1 && acc.finish.is_none() && acc.content.is_empty() {
-                hooks.ui(Ui::Info("empty stream; retrying".into()));
+            if attempt <= RETRIES && acc.finish.is_none() && acc.content.is_empty() {
+                self.backoff(attempt, "empty stream", hooks)?;
                 continue;
             }
             return Ok(acc);
         }
+    }
+
+    /// Wait before retry `attempt`: the provider's `Retry-After` when it gave
+    /// one, capped at a minute, else 1, 2, 4, 8, 16 times the base plus up to a
+    /// quarter of it in jitter. Counts down each second; Esc ends it at once.
+    fn backoff(&self, attempt: u32, why: &str, hooks: &mut dyn Hooks) -> Result<(), String> {
+        use std::sync::atomic::Ordering::Relaxed;
+        use std::time::{Duration, Instant};
+        if attempt == 1 {
+            hooks.ui(Ui::Info(format!("retrying: {why}")));
+        }
+        let wait = match crate::transport::take_retry_after() {
+            Some(secs) => Duration::from_secs(secs.min(60)),
+            None => {
+                let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+                self.retry_base * 2u32.pow(attempt - 1) + self.retry_base.mul_f64(0.25 * f64::from(nanos % 1000) / 1000.0)
+            }
+        };
+        let end = Instant::now() + wait;
+        let mut shown = u64::MAX;
+        while let Some(left) = end.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
+            if self.cancel.load(Relaxed) {
+                return Err("cancelled".into());
+            }
+            let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+            if secs != shown {
+                shown = secs;
+                hooks.ui(Ui::Retry { secs, attempt, of: RETRIES });
+            }
+            std::thread::sleep(left.min(Duration::from_millis(100)));
+        }
+        hooks.ui(Ui::Retry { secs: 0, attempt, of: RETRIES });
+        if self.cancel.load(Relaxed) {
+            return Err("cancelled".into());
+        }
+        Ok(())
     }
 
     /// Collapse old tool output to stubs once the wire gets large.
@@ -2161,6 +2202,7 @@ mod tests {
         let fake = Arc::new(Fake::new(script));
         let mut s = session(crate::config::Config::default());
         s.transport = Box::new(fake.clone());
+        s.retry_base = std::time::Duration::from_millis(1);
         (s, fake)
     }
 
@@ -2579,6 +2621,65 @@ mod tests {
             "{}",
             seen.join(" | ")
         );
+    }
+
+    /// Collects retry countdowns.
+    struct Waits(Vec<(u64, u32)>);
+    impl Hooks for Waits {
+        fn ui(&mut self, event: Ui) {
+            if let Ui::Retry { secs, attempt, .. } = event {
+                self.0.push((secs, attempt));
+            }
+        }
+        fn confirm(&mut self, _: &str) -> bool {
+            true
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn retries_back_off_until_success_or_five() {
+        let (mut s, fake) = scripted(vec![
+            Script::Fails(429, "slow".into()),
+            Script::Transport("connection reset".into()),
+            Script::Fails(503, "busy".into()),
+            Script::Ok(text_reply("done")),
+        ]);
+        let mut waits = Waits(Vec::new());
+        s.turn("hi", &mut waits).unwrap();
+        assert_eq!(fake.attempts(), 4);
+        let attempts: Vec<u32> = waits.0.iter().filter(|(secs, _)| *secs == 0).map(|(_, a)| *a).collect();
+        assert_eq!(attempts, vec![1, 2, 3], "one wait per retry");
+        let (mut s, fake) = scripted((0..7).map(|_| Script::Fails(500, "down".into())).collect());
+        assert!(s.turn("hi", &mut Null).is_err());
+        assert_eq!(fake.attempts(), 6, "the first try and five retries");
+    }
+
+    #[test]
+    fn retry_after_sets_the_wait() {
+        let (mut s, _fake) = scripted(vec![Script::Wait(429, 1), Script::Ok(text_reply("done"))]);
+        let mut waits = Waits(Vec::new());
+        let start = std::time::Instant::now();
+        s.turn("hi", &mut waits).unwrap();
+        assert!(start.elapsed() >= std::time::Duration::from_millis(900), "Retry-After was ignored");
+        assert_eq!(waits.0.first(), Some(&(1, 1)));
+    }
+
+    #[test]
+    fn esc_ends_a_wait() {
+        let (mut s, fake) = scripted(vec![Script::Wait(429, 30), Script::Ok(text_reply("done"))]);
+        let cancel = s.cancel.clone();
+        let stop = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let start = std::time::Instant::now();
+        s.turn("hi", &mut Null).unwrap();
+        stop.join().unwrap();
+        assert!(start.elapsed() < std::time::Duration::from_secs(2), "the wait outlived Esc");
+        assert_eq!(fake.attempts(), 1, "a request was sent after Esc");
     }
 
     #[test]
