@@ -48,9 +48,7 @@ impl Adapter for Anthropic {
         if let Some(system) = system {
             map.insert("system".into(), json!(system));
         }
-        if let Some(t) = opts.temperature {
-            map.insert("temperature".into(), json!(t));
-        }
+        // No temperature: current Claude models reject sampling parameters.
         let defs = tool_defs(tools);
         if !defs.is_empty() {
             map.insert("tools".into(), Value::Array(defs));
@@ -393,6 +391,8 @@ mod tests {
         assert!(w.headers.iter().any(|h| h == "anthropic-version: 2023-06-01"));
         assert_eq!(w.body["system"], "be terse");
         assert!(w.body.get("thinking").is_none());
+        // Current Claude models reject sampling parameters with a 400.
+        assert!(w.body.get("temperature").is_none(), "temperature sent to Anthropic");
         assert_eq!(w.body["tools"][0]["input_schema"]["type"], "object");
         let last = w.body["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(last["content"][0]["type"], "tool_result");
