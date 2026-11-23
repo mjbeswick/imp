@@ -1,0 +1,37 @@
+## ADDED Requirements
+
+### Requirement: A provider row opens its configuration form
+
+The system SHALL open the provider form when the user presses `e` on a row of the provider picker, and SHALL seed the form from the named profile when one exists, otherwise from the built-in profile's base URL, model, dialect, and key variable.
+
+#### Scenario: Configure a custom provider
+- **WHEN** the user highlights a named provider `work` and presses `e`
+- **THEN** the form shows its saved base, model, dialect and key variable
+
+#### Scenario: Configure a built-in provider
+- **WHEN** the user highlights `deepseek` and presses `e`
+- **THEN** the form shows the built-in base URL, model, dialect and key variable
+
+### Requirement: A built-in provider is configured as a named copy
+
+The system SHALL save a provider form for a built-in provider as a named profile, SHALL leave the built-in profile unchanged, and SHALL refuse a name that is a built-in provider name.
+
+#### Scenario: Save a built-in change
+- **WHEN** the user highlights `deepseek`, presses `e`, changes the model to `deepseek-pro`, and saves under the name `deepseek-custom`
+- **THEN** the config gains that named provider with the new model, the picker still lists the built-in `deepseek`, and its model is unchanged
+
+#### Scenario: Built-in name refused
+- **WHEN** the user saves the form with the name `openai`
+- **THEN** the form reports that the name is a built-in provider and nothing is saved
+
+### Requirement: Enter still switches and the footer offers configure
+
+The system SHALL keep Enter switching the session to the highlighted provider, and SHALL show `e configure` in the footer of the provider picker when a row is highlighted.
+
+#### Scenario: Enter switches
+- **WHEN** the user highlights `ollama` and presses Enter
+- **THEN** the session switches to `ollama`, as before
+
+#### Scenario: Footer
+- **WHEN** the provider picker is open with a row highlighted
+- **THEN** the footer reads `e configure` alongside the existing hints
