@@ -6055,3 +6055,23 @@ fn after_the_answer_the_oldest_queued_message_starts_when_the_turn_ends() {
     assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "use pnpm"), "the oldest message did not start");
     assert_eq!(a.queued, vec!["also add tests"]);
 }
+
+#[test]
+fn the_title_bar_shows_the_cut_first_message() {
+    let mut a = app();
+    a.push(Role::User, "Can you please look at why the rsync test keeps failing on the Pi when the network is slow");
+    let shown = strip(&a.frame(60, 10));
+    assert!(shown.contains(" look at why the rsync test keeps… "), "{shown:?}");
+}
+
+#[test]
+fn a_rename_shows_in_the_title_bar() {
+    let mut a = app();
+    a.push(Role::User, "Can you please look at why the rsync test keeps failing");
+    let (tx, _cmds) = channel();
+    a.run_command("rename fix sync", &tx);
+    let shown = strip(&a.frame(60, 10));
+    let title_row = shown.split("\r\n").next().unwrap_or("");
+    assert!(title_row.contains(" fix sync "), "the rename did not show: {title_row:?}");
+    assert!(!title_row.contains("look at why"), "the old title stayed: {title_row:?}");
+}

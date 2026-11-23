@@ -1706,6 +1706,8 @@ pub struct App {
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
     queue_at: Option<usize>,
+    /// The stored title: set by `/rename`, or cut from the first message.
+    title: String,
     /// The turn ended while a queued message was open; send on close.
     queue_due: bool,
     /// Shared with the session: messages that join the running turn, and
@@ -1824,6 +1826,8 @@ struct Pane {
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
     queue_at: Option<usize>,
+    /// The stored title: set by `/rename`, or cut from the first message.
+    title: String,
     /// The turn ended while a queued message was open; send on close.
     queue_due: bool,
     /// Shared with the session: messages that join the running turn, and
@@ -1868,6 +1872,7 @@ impl Pane {
             ask_marked: Vec::new(),
             queued: Vec::new(),
             queue_at: None,
+            title: session.log.as_ref().map(|log| log.meta().title).unwrap_or_default(),
             queue_due: false,
             steer: session_steer.clone(),
             hold: session_hold.clone(),
@@ -2467,6 +2472,7 @@ impl App {
             ask_caret: 0,
             queued: Vec::new(),
             queue_at: None,
+            title: String::new(),
             queue_due: false,
             steer: session_steer.clone(),
             hold: session_hold.clone(),
@@ -2549,6 +2555,7 @@ impl App {
         swap(&mut self.ask_marked, &mut p.ask_marked);
         swap(&mut self.queued, &mut p.queued);
         swap(&mut self.queue_at, &mut p.queue_at);
+        swap(&mut self.title, &mut p.title);
         swap(&mut self.queue_due, &mut p.queue_due);
         swap(&mut self.steer, &mut p.steer);
         swap(&mut self.hold, &mut p.hold);
@@ -2849,7 +2856,16 @@ impl App {
 
     /// The top row: the session's position and title, then the local time.
     fn title_bar(&mut self, cols: usize) -> String {
-        let name = if self.entries.iter().any(|e| e.role == Role::User) { title_of(&self.entries) } else { "imp".into() };
+        // The stored title wins: `/rename` sets it, and the first message sets it
+        // when the session starts. The cut first message covers a session with
+        // no stored title yet.
+        let name = if !self.title.is_empty() {
+            self.title.clone()
+        } else if self.entries.iter().any(|e| e.role == Role::User) {
+            title_of(&self.entries)
+        } else {
+            "imp".into()
+        };
         let name = if self.panes.len() > 1 { format!("{}/{} {name}", self.at + 1, self.panes.len()) } else { name };
         let time = clock();
         let room = cols.saturating_sub(time.len() + 3);
@@ -5045,6 +5061,7 @@ impl App {
                     });
                     self.dirty = true;
                 } else {
+                    self.title = rest.to_string();
                     let _ = tx.send(Cmd::RenameCurrent(rest.to_string()));
                     self.push(Role::Info, format!("renamed to {rest:?}"));
                 }
@@ -5082,6 +5099,7 @@ impl App {
                             self.push(Role::Error, "the title is empty");
                             self.pending = Some(Pending::RenameCurrent { value });
                         } else {
+                            self.title = title.clone();
                             let _ = tx.send(Cmd::RenameCurrent(title.clone()));
                             self.push(Role::Info, format!("renamed to {title:?}"));
                         }
@@ -6814,7 +6832,7 @@ fn title_of(entries: &[Entry]) -> String {
     entries
         .iter()
         .find(|e| e.role == Role::User)
-        .map(|e| e.text.lines().next().unwrap_or("").to_string())
+        .map(|e| crate::store::cut_title(&e.text))
         .unwrap_or_else(|| "new".into())
 }
 
