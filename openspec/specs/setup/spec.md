@@ -11,7 +11,7 @@ The system SHALL provide `imp init`, which creates the config directory, the sta
 
 #### Scenario: Fresh machine
 - **WHEN** the user runs `imp init` with no config present
-- **THEN** the directories and two example files are created and each is reported
+- **THEN** the directories and the example skill are created and each is reported
 
 #### Scenario: Second run
 - **WHEN** the user runs it again
@@ -19,15 +19,19 @@ The system SHALL provide `imp init`, which creates the config directory, the sta
 
 ### Requirement: Only two files are written
 
-The system SHALL write exactly one agent example and one skill example, SHALL write a commented config template containing no API key, and SHALL NOT write any session, memory note, or agent other than the examples.
+The system SHALL write exactly one skill example and a commented config template containing no API key, and SHALL NOT write any session, memory note, or agent: the built-in agents serve as examples.
 
 #### Scenario: Template contents
 - **WHEN** the config template is created
 - **THEN** every meaningful key is present and commented, including `links`, and `api_key` is absent
 
 #### Scenario: Examples are real
-- **WHEN** the two example files are read
-- **THEN** they are valid files of their kind and would load without edits
+- **WHEN** the example skill is read
+- **THEN** it is a valid skill and would load without edits
+
+#### Scenario: No agent file
+- **WHEN** `imp init` runs on a fresh machine
+- **THEN** the agents directory is created empty
 
 ### Requirement: Init is offline and silent about secrets
 
