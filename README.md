@@ -170,6 +170,10 @@ highlighted one's configuration form, `e` does the same, and `u` switches to
 it. After typing `/provider`, letters filter the list, so the keys there are
 Ctrl+E (configure) and Ctrl+U (use). Saving a built-in provider from the form
 adds a named copy, such as `deepseek-custom`, and leaves the built-in as it is.
+A provider can offer several models: the form's `models` field takes a
+comma-separated list, and the default model is always included. `/model` lists
+every configured provider's models, each row naming its provider; choosing one
+switches to that provider and model, and the status line then names the provider.
 The form's `api_key` field takes a key shown as dots; saving stores it under the
 provider's key variable in the key store, never in the config. `add <name>`, `edit <name>`,
 `delete <name>`, and `use <name>` manage custom profiles in a managed
