@@ -503,7 +503,7 @@ impl Log {
         meta.messages += 1;
         meta.updated = now();
         if meta.title.is_empty() && message.role == Role::User {
-            meta.title = message.content.chars().take(60).collect();
+            meta.title = cut_title(&message.content);
         }
         self.write_meta(&meta);
     }
@@ -1217,5 +1217,95 @@ mod session_tests {
         std::fs::remove_file(&log.meta_path).unwrap();
         assert_eq!(log.meta().id, log.id);
         assert_eq!(log.meta().title, "");
+    }
+}
+
+/// The immediate title for a session: the first message without a leading
+/// filler such as `please` or `can you`, cut at a word to at most 40
+/// characters, the last of them `…` when cut.
+pub fn cut_title(text: &str) -> String {
+    const FILLERS: &[&str] = &["can you please ", "could you please ", "can you ", "could you ", "please "];
+    let mut words: Vec<&str> = text.split_whitespace().collect();
+    loop {
+        let joined = words.join(" ").to_ascii_lowercase();
+        match FILLERS.iter().find(|f| joined.starts_with(**f)) {
+            Some(filler) => {
+                let n = filler.split_whitespace().count();
+                if n >= words.len() {
+                    break;
+                }
+                words.drain(..n);
+            }
+            None => break,
+        }
+    }
+    let full = words.join(" ");
+    if full.chars().count() <= 40 {
+        return full;
+    }
+    let mut out = String::new();
+    for word in &words {
+        let next = if out.is_empty() { word.to_string() } else { format!("{out} {word}") };
+        if next.chars().count() > 39 {
+            break;
+        }
+        out = next;
+    }
+    if out.is_empty() {
+        out = full.chars().take(39).collect();
+    }
+    out.push('…');
+    out
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::*;
+
+    const LONG: &str = "Can you please look at why the rsync test keeps failing on the Pi when the network is slow";
+
+    #[test]
+    fn a_short_first_message_is_its_own_title() {
+        assert_eq!(cut_title("fix the flaky rsync test"), "fix the flaky rsync test");
+    }
+
+    #[test]
+    fn a_long_first_message_is_cut_at_a_word_and_filler_is_dropped() {
+        assert_eq!(cut_title(LONG), "look at why the rsync test keeps…");
+        assert!(cut_title(LONG).chars().count() <= 40);
+    }
+
+    #[test]
+    fn a_message_of_exactly_forty_characters_is_kept_whole() {
+        let forty = "abcdefghij abcdefghij abcdefghij abcdefg";
+        assert_eq!(forty.chars().count(), 40);
+        assert_eq!(cut_title(forty), forty);
+    }
+
+    #[test]
+    fn filler_words_are_dropped_from_the_front_only() {
+        assert_eq!(cut_title("please fix the parser"), "fix the parser");
+        assert_eq!(cut_title("Could you please fix the parser"), "fix the parser");
+        assert_eq!(cut_title("fix the please parser"), "fix the please parser");
+        assert_eq!(cut_title("please"), "please");
+    }
+
+    #[test]
+    fn a_single_word_longer_than_the_limit_is_cut_hard() {
+        let word = "x".repeat(60);
+        let title = cut_title(&word);
+        assert_eq!(title.chars().count(), 40);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn the_stored_title_is_the_cut_title() {
+        let dir = std::env::temp_dir().join(format!("imp-title-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.append(&Message::user(LONG));
+        assert_eq!(log.meta().title, "look at why the rsync test keeps…");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
