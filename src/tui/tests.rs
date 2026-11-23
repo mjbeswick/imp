@@ -5599,3 +5599,15 @@ fn termios_matches_the_glibc_layout() {
     assert_eq!(std::mem::size_of::<Termios>(), 60);
     assert_eq!(std::mem::align_of::<Termios>(), 4);
 }
+
+#[test]
+fn palette_names_are_never_cut() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('p'), &tx);
+    let Some(Pending::Pick(p)) = &a.pending else { panic!("no palette") };
+    for (i, item) in p.items.iter().enumerate() {
+        let row = picker_row(p, p.index, i, 56, false).join("");
+        assert!(row.contains(&item.label), "{} is cut: {row:?}", item.label);
+    }
+}
