@@ -6,4 +6,4 @@
 
 ## 2. Summary
 
-- [ ] 2.1 `title_summary` and one request after the first long message; skipped when short, busy, renamed, local or failed; tests
+- [x] 2.1 `title_summary` and one request after the first long message; skipped when short, busy, renamed, local or failed; tests
