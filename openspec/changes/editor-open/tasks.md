@@ -2,9 +2,9 @@
 
 ## 1. Resolution
 
-- [ ] 1.1 Test: the editor comes from `editor` or `visual` config first, then `$EDITOR` or `$VISUAL`, then the OS opener for `/open` only. Confirm it fails first.
-- [ ] 1.2 Implement: the resolution function and the whitespace split into program and arguments.
-- [ ] 1.3 Test: a path with spaces stays one argument.
+- [x] 1.1 Test: the editor comes from `editor` or `visual` config first, then `$EDITOR` or `$VISUAL`, then the OS opener for `/open` only. Confirm it fails first.
+- [x] 1.2 Implement: the resolution function and the whitespace split into program and arguments.
+- [x] 1.3 Test: a path with spaces stays one argument.
 
 ## 2. Commands
 
