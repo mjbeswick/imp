@@ -8,7 +8,7 @@
 
 ## 2. Commands
 
-- [ ] 2.1 Test: `/edit` with no target uses the current directory; with a target it uses that path.
+- [x] 2.1 Test: `/edit` with no target uses the current directory; with a target it uses that path.
 - [x] 2.2 Implement: `/edit` as a foreground handoff, with the terminal restored on exit.
 - [x] 2.3 Implement: `/open` as a detached launch.
 - [x] 2.4 Add both commands to the help list.

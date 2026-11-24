@@ -10,7 +10,7 @@
 - [x] 2.1 Test: at 119 columns the diff is inline; at 120 columns it is side by side.
 - [x] 2.2 Implement: the side-by-side renderer and the width switch.
 - [x] 2.3 Test: a long line is cut with an ellipsis in side-by-side mode only.
-- [ ] 2.4 Test: the tool result sent to the model is unchanged in both layouts.
+- [x] 2.4 Test: the tool result sent to the model is unchanged in both layouts.
 
 ## 3. Validation
 
