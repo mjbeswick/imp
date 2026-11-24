@@ -1375,6 +1375,32 @@ fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Ro
 
 /// A diff entry cut into rows by character, so the marks stay aligned.
 /// Continuations start under the code, past the indent and the sign.
+/// Diffs go side by side from this many columns; narrower stays inline.
+const SIDE_BY_SIDE_COLS: usize = 120;
+
+/// Whether a diff is drawn side by side at this terminal width.
+pub(crate) fn side_by_side(cols: usize) -> bool {
+    cols >= SIDE_BY_SIDE_COLS
+}
+
+/// One cell of a side-by-side row: padded when short, cut with an ellipsis when long.
+pub(crate) fn fit_cell(text: &str, width: usize) -> String {
+    if text.chars().count() > width {
+        let mut cut: String = text.chars().take(width.saturating_sub(1)).collect();
+        cut.push('…');
+        cut
+    } else {
+        format!("{text:<width$}")
+    }
+}
+
+/// A side-by-side row for `cols` columns: old text, a divider, new text.
+pub(crate) fn sbs_line(left: &str, right: &str, cols: usize) -> String {
+    let left_w = cols.saturating_sub(3) / 2;
+    let right_w = cols.saturating_sub(3 + left_w);
+    format!("{} │ {}", fit_cell(left, left_w), fit_cell(right, right_w))
+}
+
 fn diff_rows(entry: &Entry, cols: usize) -> Vec<(Role, Line)> {
     let chars: Vec<char> = entry.text.chars().collect();
     let cols = cols.max(8);

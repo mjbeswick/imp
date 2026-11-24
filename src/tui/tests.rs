@@ -6660,6 +6660,17 @@ fn typed_text_is_ignored_in_the_dialect() {
 }
 
 #[test]
+fn diffs_go_side_by_side_from_120_columns_and_cut_long_cells() {
+    assert!(!side_by_side(119), "119 columns must stay inline");
+    assert!(side_by_side(120));
+    assert_eq!(fit_cell("abcdefghij", 5), "abcd…");
+    assert_eq!(fit_cell("ab", 5), "ab   ");
+    let row = sbs_line("old", "new", 120);
+    assert_eq!(row.chars().count(), 120, "{row:?}");
+    assert!(row.contains(" │ "), "{row:?}");
+}
+
+#[test]
 fn skills_picker_toggles_and_saves_a_skill() {
     let dir = std::env::temp_dir().join(format!("imp-skills-picker-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
