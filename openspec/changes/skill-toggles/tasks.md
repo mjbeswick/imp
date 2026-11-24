@@ -4,7 +4,7 @@
 
 - [x] 1.1 Test: `load_skills` omits a skill whose `skill.<name>.enabled` is false, and keeps it when the flag is absent or true. Confirm it fails first.
 - [x] 1.2 Implement: read the flag and filter in `load_skills`.
-- [ ] 1.3 Test: the config round-trips `skill.<name>.enabled`.
+- [x] 1.3 Test: the config round-trips `skill.<name>.enabled`.
 
 ## 2. Session behaviour
 
