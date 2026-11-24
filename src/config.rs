@@ -320,7 +320,7 @@ impl Default for Config {
             diffs: true,
             spinner: 0,
             auto_next: true,
-            title_gradient: false,
+            title_gradient: true,
             context_window: None,
             title_summary: TitleSummary::Auto,
             pass_env: Vec::new(),

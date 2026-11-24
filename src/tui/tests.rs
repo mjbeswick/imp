@@ -5784,7 +5784,9 @@ fn the_title_gradient_is_optional_and_needs_truecolor() {
         seen.dedup();
         seen.len()
     };
-    assert_eq!(backgrounds(&a.title_bar(40)), 1, "flat by default");
+    assert!(backgrounds(&a.title_bar(40)) > 10, "flat by default");
+    a.cfg.title_gradient = false;
+    assert_eq!(backgrounds(&a.title_bar(40)), 1, "flat when turned off");
     a.cfg.title_gradient = true;
     let bar = a.title_bar(40);
     assert!(backgrounds(&bar) > 10, "no gradient: {bar:?}");
