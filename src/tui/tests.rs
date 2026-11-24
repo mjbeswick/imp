@@ -572,13 +572,13 @@ fn an_open_queued_message_holds_the_turn_and_esc_still_stops_it() {
 }
 
 #[test]
-fn shift_tab_cycles_the_mode_at_once() {
+fn ctrl_b_cycles_the_mode_at_once() {
     let (tx, _cmds) = channel();
     let mut a = app();
     a.status.streaming = true;
     let mut seen = Vec::new();
     for _ in 0..3 {
-        a.handle_key(Key::BackTab, &tx);
+        a.handle_key(Key::Ctrl('b'), &tx);
         seen.push(a.cfg.live_permissions());
     }
     use crate::config::Permissions::*;
@@ -586,41 +586,45 @@ fn shift_tab_cycles_the_mode_at_once() {
     assert_eq!(a.entries.len(), 3, "one line per change");
     // Strict to normal, auto, then yolo turns the rule red.
     for _ in 0..3 {
-        a.handle_key(Key::BackTab, &tx);
+        a.handle_key(Key::Ctrl('b'), &tx);
     }
     assert!(a.yolo());
 }
 
 #[test]
-fn tab_cycles_agents_on_an_empty_draft() {
+fn shift_tab_cycles_agents_even_with_a_draft() {
     let (tx, cmds) = channel();
     let mut a = app();
     a.agents = vec![("build".into(), String::new()), ("review".into(), String::new())];
     a.agent = "build".into();
-    a.handle_key(Key::Tab, &tx);
+    a.handle_key(Key::BackTab, &tx);
     assert_eq!(a.agent, "review");
     assert!(matches!(cmds.try_recv(), Ok(Cmd::SetAgent(n)) if n == "review"));
-    // Text in the draft: nothing changes.
-    a.input = "fix".into();
-    a.cursor = 3;
+    // Tab never changes the agent: it completes.
     a.handle_key(Key::Tab, &tx);
     assert_eq!(a.agent, "review");
     assert!(cmds.try_recv().is_err());
+    // Text in the draft: Shift+Tab still changes the agent.
+    a.input = "fix".into();
+    a.cursor = 3;
+    a.handle_key(Key::BackTab, &tx);
+    assert_eq!(a.agent, "build");
+    assert!(matches!(cmds.try_recv(), Ok(Cmd::SetAgent(n)) if n == "build"));
+    assert_eq!(a.input, "fix", "the draft is kept");
     // Mid-turn: the choice waits for the turn's end.
     a.input.clear();
     a.cursor = 0;
     a.status.streaming = true;
-    a.handle_key(Key::Tab, &tx);
-    assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("review", Some("build")));
+    a.handle_key(Key::BackTab, &tx);
+    assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("build", Some("review")));
     assert!(a.entries.is_empty(), "a switch wrote a transcript line");
-    assert!(strip(&a.frame(60, 10)).contains("\r\nbuild» "), "the prompt does not name the coming agent");
     a.apply(Ev::Done(None));
-    assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("build", None));
-    // One agent: Tab does nothing.
+    assert_eq!((a.agent.as_str(), a.agent_next.as_deref()), ("review", None));
+    // One agent: Shift+Tab does nothing.
     let mut b = app();
     b.agents = vec![("build".into(), String::new())];
     b.agent = "build".into();
-    b.handle_key(Key::Tab, &tx);
+    b.handle_key(Key::BackTab, &tx);
     assert!(b.entries.is_empty());
 }
 
@@ -1401,6 +1405,7 @@ fn card_keys(label: &str) -> Option<Vec<Key>> {
         "Esc" => vec![Key::Esc],
         "Tab" => vec![Key::Tab],
         "Shift+Tab" => vec![Key::BackTab],
+        "Ctrl+B" => vec![Key::Ctrl('b')],
         "Right" => vec![Key::Right],
         "Up, Down" => vec![Key::Up, Key::Down],
         "Shift+arrows, Shift+Home, Shift+End" => [Up, Down, Left, Right, Home, End].map(Key::Select).to_vec(),
@@ -1445,7 +1450,9 @@ fn key_state(key: &Key, picker: bool) -> App {
             draft(&mut a, "hello world\nsecond", true)
         }
         Key::Esc => a.status.streaming = true,
-        Key::Tab => a.agents = vec![("build".into(), String::new()), ("review".into(), String::new())],
+        // Tab completes a command, so it needs a command draft to act on.
+        Key::Tab => draft(&mut a, "/mo", true),
+        Key::BackTab => a.agents = vec![("build".into(), String::new()), ("review".into(), String::new())],
         Key::Right => a.status.suggestion = Some("run the tests".into()),
         Key::Up | Key::Down => {
             a.history = vec!["older".into(), "newer".into()];

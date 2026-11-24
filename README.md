@@ -129,8 +129,8 @@ one 16 MB output buffer budget.
 /effort    low, medium, high, or default
 ```
 
-Tab on an empty draft switches agent and Shift+Tab steps the mode through
-normal, auto, yolo, and strict. Ctrl+C clears a draft or stops a turn; idle, a
+Shift+Tab switches agent, with or without a draft, and Tab completes. Ctrl+B
+steps the mode through normal, auto, yolo, and strict. Ctrl+C clears a draft or stops a turn; idle, a
 second Ctrl+C within two seconds quits. In the draft, Option or Alt with ←/→ moves by
 word, Option+Backspace or Ctrl+W deletes one, Shift with the arrows selects,
 and Ctrl+A, Ctrl+U, and Ctrl+K act on the row.

@@ -3786,10 +3786,11 @@ impl App {
                     self.dirty = true;
                 }
             }
-            Key::Tab if self.input.is_empty() => self.cycle_agent(tx),
+            // Tab completes. Shift+Tab changes the agent, with or without a draft.
             Key::Tab => self.sync_menu(),
-            Key::BackTab => {
-                // Shift+Tab steps through the modes; it applies at once.
+            Key::BackTab => self.cycle_agent(tx),
+            Key::Ctrl('b') => {
+                // Ctrl+B steps through the modes; it applies at once.
                 use crate::config::Permissions::*;
                 let next = match self.cfg.live_permissions() {
                     Normal => "auto",
