@@ -506,11 +506,12 @@ impl Palette {
             return self.select(text);
         }
         use crate::theme::Slot;
+        // The fade stays in the select colour's own family: it leans a fifth of
+        // the way toward the text colour. Mixing in the accent clashes.
         let from = self.theme.rgb(Slot::Select);
-        let accent = self.theme.rgb(Slot::Accent);
-        // A quarter of the way to the accent at the right edge: a subtle shift, not a second colour.
-        let to: [u8; 3] = std::array::from_fn(|i| (from[i] as i16 + (accent[i] as i16 - from[i] as i16) / 4) as u8);
-        let fg = self.theme.rgb(Slot::User);
+        let ink = self.theme.rgb(Slot::Text);
+        let to: [u8; 3] = std::array::from_fn(|i| (from[i] as i16 + (ink[i] as i16 - from[i] as i16) / 5) as u8);
+        let fg = ink;
         let n = text.chars().count().max(2) - 1;
         let mut out = format!("\x1b[38;2;{};{};{}m", fg[0], fg[1], fg[2]);
         for (i, c) in text.chars().enumerate() {
