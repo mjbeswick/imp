@@ -12,7 +12,7 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 Add a README section: the three skills in `optional-skills/`, that the agent installs one on request by copying it to `~/.config/imp/skills/`, and the install hint for each program.
+- [x] 3.1 Add a README section: the three skills in `optional-skills/`, that the agent installs one on request by copying it to `~/.config/imp/skills/`, and the install hint for each program.
 
 ## 4. Validation
 
