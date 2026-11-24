@@ -1603,6 +1603,9 @@ impl Session {
                             (true, body)
                         }
                     }
+                    None if self.cfg.skill_disabled(name) => {
+                        (false, format!("refused: skill {name:?} is disabled"))
+                    }
                     None => (
                         false,
                         format!(
@@ -2310,6 +2313,26 @@ mod tests {
         for (name, args, want) in cases {
             assert_eq!(describe(name, &args), want);
         }
+    }
+
+    #[test]
+    fn a_disabled_skill_is_refused_by_name() {
+        let (mut s, _fake) = scripted(vec![]);
+        struct Quiet;
+        impl Hooks for Quiet {
+            fn ui(&mut self, _: Ui) {}
+            fn confirm(&mut self, _: &str) -> bool {
+                true
+            }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+                None
+            }
+        }
+        s.cfg.set("skill.config.enabled", "false").unwrap();
+        s.skills = crate::store::load_skills(&s.cfg, &s.tools.root);
+        let (ok, out) = s.run_tool("skill_load", &json!({"name": "config"}), &mut Quiet);
+        assert!(!ok);
+        assert_eq!(out, "refused: skill \"config\" is disabled");
     }
 
     #[test]
