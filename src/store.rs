@@ -225,6 +225,14 @@ mod tests {
     }
 
     #[test]
+    fn a_disabled_skill_is_left_out_of_the_index() {
+        let mut cfg = Config::default();
+        assert!(load_skills(&cfg, Path::new("/nonexistent")).iter().any(|s| s.name == "config"));
+        cfg.set("skill.config.enabled", "false").unwrap();
+        assert!(!load_skills(&cfg, Path::new("/nonexistent")).iter().any(|s| s.name == "config"));
+    }
+
+    #[test]
     fn optional_skills_parse_and_fit_the_load_cap() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("optional-skills");
         for name in ["browse", "image", "mermaid"] {
@@ -974,6 +982,7 @@ pub fn load_skills(cfg: &Config, root: &Path) -> Vec<Skill> {
             }
         }
     }
+    out.retain(|s| !cfg.skill_disabled(&s.name));
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out.truncate(40);
     out
