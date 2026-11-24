@@ -19,8 +19,8 @@
 
 - [x] 3.1 Test: Save writes the edited fields and keeps comments.
 - [x] 3.2 Test: Cancel leaves the config and keys file unchanged.
-- [ ] 3.3 Test: a typed key is written to the keys file and not to the config.
-- [ ] 3.4 Implement: Save and Cancel, and the key routing.
+- [x] 3.3 Test: a typed key is saved in the provider config entry, and the config is owner-only. Decision: the user chose the config over the keys file.
+- [x] 3.4 Implement: Save and Cancel, and the key saved in the config.
 
 ## 4. Model list
 

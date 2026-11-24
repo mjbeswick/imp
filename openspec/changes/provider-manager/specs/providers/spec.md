@@ -36,7 +36,7 @@ The system SHALL make the selected provider active on `u`, toggle its enabled st
 
 ### Requirement: The config modal saves or cancels
 
-The system SHALL save the edited provider config when the user chooses Save, SHALL discard the edits when the user chooses Cancel, and SHALL store a typed key only in the keys file.
+The system SHALL save the edited provider config when the user chooses Save, SHALL discard the edits when the user chooses Cancel, and SHALL save a typed key in that provider's config entry. The config file SHALL be readable only by its owner, because it can hold keys. Decision: the user chose the config over the keys file on this point.
 
 #### Scenario: Save
 - **WHEN** the user edits a field and saves
@@ -46,9 +46,9 @@ The system SHALL save the edited provider config when the user chooses Save, SHA
 - **WHEN** the user edits a field and cancels
 - **THEN** the config and the keys file are unchanged
 
-#### Scenario: Key stored separately
+#### Scenario: Key saved in the config
 - **WHEN** the user types an API key and saves
-- **THEN** the key is written to the keys file and not to the config
+- **THEN** the key is written to that provider's config entry, and the config file is owner-only
 
 ### Requirement: The model list stays a model list
 
