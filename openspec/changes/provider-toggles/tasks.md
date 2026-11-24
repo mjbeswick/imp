@@ -2,9 +2,9 @@
 
 ## 1. Config
 
-- [ ] 1.1 Test: `provider.<name>.enabled = false` is read as disabled; absent or true is enabled. Confirm it fails first.
-- [ ] 1.2 Implement: `disabled_providers` and `provider_disabled(name)` in `Config::set`.
-- [ ] 1.3 Test: the switch round-trips through `save_setting` and `Config::load`, keeping comments.
+- [x] 1.1 Test: `provider.<name>.enabled = false` is read as disabled; absent or true is enabled. Confirm it fails first.
+- [x] 1.2 Implement: `disabled_providers` and `provider_disabled(name)` in `Config::set`.
+- [x] 1.3 Test: the switch round-trips through `save_setting` and `Config::load`, keeping comments.
 
 ## 2. Configured check
 
