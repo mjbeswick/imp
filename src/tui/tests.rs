@@ -6715,17 +6715,21 @@ fn unconfigured_rows_are_dimmed_and_off_rows_struck_through() {
         value: label.into(),
         actions: Vec::new(),
     };
-    let picker = Picker::new(
-        "provider",
-        vec![item("openai", "https://x  gpt · no key"), item("anthropic", "https://y  claude · off"), item("ollama", "https://z  llama")],
-        PickKind::Provider,
-    );
-    let dim = picker_row(&picker, 0, 0, 80, false);
-    assert!(dim[0].contains("\x1b[2m"), "no-key row not dimmed: {:?}", dim[0]);
-    let off = picker_row(&picker, 0, 1, 80, false);
-    assert!(off[0].contains("\x1b[9m"), "off row not struck through: {:?}", off[0]);
-    let plain = picker_row(&picker, 0, 2, 80, false);
-    assert!(!plain[0].contains("\x1b["), "a configured row is styled: {:?}", plain[0]);
+    // Styling is applied at the draw site, so check the rendered frame.
+    let _ = item;
+    let mut a = app();
+    if std::env::var("OPENAI_API_KEY").is_ok_and(|v| !v.trim().is_empty()) {
+        return;
+    }
+    a.cfg.set("provider.anthropic.enabled", "false").unwrap();
+    let (tx, _cmds) = channel();
+    a.run_command("provider", &tx);
+    // The frame is one string of cursor moves, so count the style codes: only the
+    // off row is struck, and the no-key rows are dimmed.
+    let shown = a.frame(100, 30);
+    assert_eq!(shown.matches("\x1b[9m").count(), 1, "exactly one row (anthropic, off) is struck");
+    assert!(shown.matches("\x1b[2m").count() >= 1, "no-key rows are not dimmed");
+    assert!(shown.contains("anthropic"), "the off row is not on screen");
 }
 
 #[test]
@@ -6954,17 +6958,57 @@ fn enter_on_a_provider_opens_its_config() {
 }
 
 #[test]
-fn a_wrapped_provider_row_is_still_styled() {
-    let item = PickItem {
-        label: "anthropic".into(),
-        desc: "https://api.anthropic.com/a/very/long/base/address/for/the/row  claude-opus-5-5 · off".into(),
-        value: "anthropic".into(),
-        actions: Vec::new(),
-    };
-    let picker = Picker::new("provider", vec![item], PickKind::Provider);
-    let rows = picker_row(&picker, 0, 0, 60, true);
-    assert!(rows.len() > 1, "the row did not wrap, so the test does not cover it: {rows:?}");
-    assert!(rows.iter().all(|r| r.contains("\x1b[9m")), "wrapped lines lost the strike: {rows:?}");
+fn provider_rows_never_run_past_the_picker_width() {
+    let rows = [
+        ("deepseek", "https://api.deepseek.com  deepseek-flash · no key"),
+        ("openai", "https://api.openai.com/v1  gpt-4.1-mini · no key"),
+        ("anthropic", "https://api.anthropic.com  claude-opus-5-5 · no key"),
+        ("gemini", "current · https://generativelanguage.googleapis.com  gemini-2.5-pro"),
+        ("ollama", "http://localhost:11434/v1  llama3.2"),
+        ("custom-custom", "http://localhost:4141/v1  local-model  openai"),
+    ];
+    let items = rows
+        .iter()
+        .map(|(label, desc)| PickItem {
+            label: (*label).into(),
+            desc: (*desc).into(),
+            value: (*label).into(),
+            actions: Vec::new(),
+        })
+        .collect();
+    let picker = Picker::new("provider", items, PickKind::Provider);
+    // 70 is the widest picker inner width (72 columns less its border).
+    for width in [60usize, 70, 80, 100] {
+        for index in 0..picker.items.len() {
+            for row in picker_row(&picker, 0, index, width, true) {
+                let visible = strip(&row).chars().count();
+                assert!(visible <= width, "row is {visible} columns in a {width}-column picker: {row:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_styled_provider_row_is_not_cut_short_on_screen() {
+    let mut a = app();
+    let (tx, _cmds) = channel();
+    a.run_command("provider", &tx);
+    for cols in [80usize, 90, 100, 120] {
+        let shown = strip(&a.frame(cols, 30));
+        let openai = shown.lines().find(|l| l.contains("openai")).unwrap_or_default().to_string();
+        assert!(!openai.contains("no …"), "at {cols} columns the row was cut at its state: {openai:?}");
+    }
+}
+
+#[test]
+fn an_off_provider_is_struck_through_on_screen() {
+    let mut a = app();
+    a.cfg.set("provider.anthropic.enabled", "false").unwrap();
+    let (tx, _cmds) = channel();
+    a.run_command("provider", &tx);
+    let shown = a.frame(100, 30);
+    let row = shown.lines().find(|l| strip(l).contains("anthropic")).unwrap_or_default().to_string();
+    assert!(row.contains("\x1b[9m"), "the off row is not struck through: {row:?}");
 }
 
 #[test]

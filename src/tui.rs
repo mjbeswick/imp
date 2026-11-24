@@ -2296,13 +2296,15 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
         if let [first, rest] = parts.as_slice() {
             // Both lines of a wrapped row carry the state, so the strike or dim
             // covers the whole row.
+            // Each line is clipped to the picker, so a long unbroken URL cannot
+            // run past the border. Styling is added later, at the draw site.
             return vec![
-                styled_state(&desc, format!("{marker} {label:<left$}  {first}")),
-                styled_state(&desc, format!("{}{}", " ".repeat(start), rest)),
+                fit(&format!("{marker} {label:<left$}  {first}"), inner),
+                fit(&format!("{}{}", " ".repeat(start), rest), inner),
             ];
         }
     }
-    vec![styled_state(&desc, format!("{marker} {label:<left$}  {desc}"))]
+    vec![fit(&format!("{marker} {label:<left$}  {desc}"), inner)]
 }
 
 /// A provider row's state, from its description: switched off is struck
@@ -7234,15 +7236,17 @@ impl App {
         );
 
         let column = desc_column(picker, inner);
-        for (text, _, selected) in &lines {
+        for (text, at, selected) in &lines {
+            // The row's state, from its item, styles the whole row after it is clipped.
+            let state = matches.get(*at).map_or("", |&i| picker.items[i].desc.as_str());
             let row = match column.filter(|_| !*selected) {
                 // Descriptions are muted, except on the highlighted row.
-                Some(at) => {
+                Some(column) => {
                     let row = self.boxed(text, inner, false);
-                    let cut = row.char_indices().nth(at).map_or(row.len(), |(i, _)| i);
-                    format!("{}{}", &row[..cut], self.palette.paint(Role::Thinking, &row[cut..]))
+                    let cut = row.char_indices().nth(column).map_or(row.len(), |(i, _)| i);
+                    styled_state(state, format!("{}{}", &row[..cut], self.palette.paint(Role::Thinking, &row[cut..])))
                 }
-                None => self.boxed(text, inner, *selected),
+                None => styled_state(state, self.boxed(text, inner, *selected)),
             };
             block.push(format!("{wall}{row}{wall}"));
         }
