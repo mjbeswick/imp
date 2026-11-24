@@ -2254,7 +2254,10 @@ fn picker_lines(picker: &Picker, matches: &[usize], visible: usize, inner: usize
         let at = picker.offset + row;
         let Some(&index) = matches.get(at) else { break };
         let selected = at == picker.index;
-        for line in picker_row(picker, at, index, inner, wrap && selected) {
+        // Provider rows wrap whether selected or not, so moving the selection
+        // never changes the list's height.
+        let wraps = wrap && (selected || picker.kind == PickKind::Provider);
+        for line in picker_row(picker, at, index, inner, wraps) {
             out.push((line, at, selected));
         }
     }

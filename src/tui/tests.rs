@@ -7037,3 +7037,55 @@ fn typing_after_opening_the_add_form_goes_into_the_first_field() {
     type_text(&mut a, &tx, "abc");
     assert_eq!(form_field(&a, "base"), "abc");
 }
+
+#[test]
+fn enter_on_custom_opens_the_provider_editor_and_keeps_the_provider() {
+    let mut a = app();
+    a.config_path = scratch("provider-picker-enter").join("config");
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    let at = open_picker(&a).items.iter().position(|i| i.value == "custom").expect("custom row");
+    for _ in 0..at {
+        a.handle_key(Key::Down, &tx);
+    }
+    let picker = open_picker(&a);
+    assert_eq!(picker.items[picker.index].value, "custom");
+    let before = a.cfg.active_name.clone();
+    a.handle_key(Key::Enter, &tx);
+    assert!(
+        matches!(a.pending, Some(Pending::ProviderForm { .. })),
+        "Enter on custom did not open the provider editor"
+    );
+    assert_eq!(a.cfg.active_name, before, "Enter switched the active provider");
+}
+
+#[test]
+fn u_still_switches_to_the_highlighted_provider() {
+    let mut a = app();
+    a.config_path = scratch("provider-picker-use").join("config");
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    let at = open_picker(&a).items.iter().position(|i| i.value == "custom").expect("custom row");
+    for _ in 0..at {
+        a.handle_key(Key::Down, &tx);
+    }
+    a.handle_key(Key::Char('u'), &tx);
+    assert_eq!(a.cfg.active_name, "custom");
+}
+
+#[test]
+fn provider_rows_keep_their_height_as_the_selection_moves() {
+    let a = app();
+    let mut picker = a.value_picker("provider", a.provider_items(), PickKind::Provider);
+    let matches = picker.matches();
+    let visible = matches.len();
+    let mut heights = Vec::new();
+    for at in 0..visible {
+        picker.index = at;
+        heights.push(picker_lines(&picker, &matches, visible, 50, true).len());
+    }
+    assert!(
+        heights.iter().all(|h| *h == heights[0]),
+        "the list changed height as the selection moved: {heights:?}"
+    );
+}
