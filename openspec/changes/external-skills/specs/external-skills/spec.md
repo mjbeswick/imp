@@ -14,6 +14,18 @@ The system SHALL ship the `browse`, `image`, and `mermaid` skills under `optiona
 - **WHEN** the optional skills are added to the repository
 - **THEN** `scripts/size.sh` reports no change in the binary size
 
+### Requirement: The agent installs optional skills on request
+
+When the user asks to install an optional skill, the agent SHALL copy its folder from `optional-skills/<name>/` to `~/.config/imp/skills/<name>/` using `bash`, SHALL refuse when the destination already exists, and SHALL NOT overwrite an installed skill.
+
+#### Scenario: Install on request
+- **WHEN** the user asks to install the `image` skill and the destination does not exist
+- **THEN** the agent copies `optional-skills/image/` to `~/.config/imp/skills/image/` and reports the result
+
+#### Scenario: Already installed
+- **WHEN** the destination already exists
+- **THEN** the agent reports that it is already installed and changes nothing
+
 ### Requirement: Each optional skill is valid and fits the load cap
 
 Each shipped optional skill SHALL have frontmatter with `name` and `description`, SHALL have a body under 4096 bytes, and SHALL be accepted by the existing skill loader.

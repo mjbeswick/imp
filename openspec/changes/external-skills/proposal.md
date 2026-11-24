@@ -21,8 +21,10 @@ optional skills, they cost nothing until a user installs the tool and copies the
 - Each skill body stays under the 4 KB load cap, so loading it never truncates.
 - No credential values appear in any skill. A skill that needs a key names the
   environment variable it reads.
-- Installation is a documented copy into `~/.config/imp/skills/`. `imp init` does not
-  change.
+- The skills live in their own folder, `optional-skills/`, which holds nothing else.
+  When the user asks, the agent installs a skill by copying its folder into
+  `~/.config/imp/skills/` with `bash`. An existing folder is never overwritten. `imp init`
+  does not change.
 
 ## Out of Scope
 

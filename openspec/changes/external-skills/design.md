@@ -14,10 +14,13 @@ compiled in, and these skills need external programs, so they are opt-in. Judgem
 call: a separate folder keeps core and optional skills apart. Cost if wrong: a later move
 to `assets/` changes paths only.
 
-**Installation: a documented copy.** A user copies a folder to `~/.config/imp/skills/`.
-No new command, no change to `imp init`, which per its spec writes exactly one example.
-Judgement call: the smallest change that meets the goal. Cost if wrong: a user may miss
-the copy step; the README names it.
+**Installation: the agent copies on request.** The skills stay in `optional-skills/`, their
+own folder. When the user asks to install one, the agent copies that folder into
+`~/.config/imp/skills/` with `bash`, after checking the destination does not exist. It
+never overwrites. No new command and no change to `imp init`, which per its spec writes
+exactly one example. Judgement call: the user asked for the agent to do the install, so
+the copy uses the existing `bash` tool and needs no Rust change. Cost if wrong: a copy
+into a live skills folder is not undone automatically; the no-overwrite check limits this.
 
 **Names: `browse`, `image`, `mermaid`.** The user chose `image` for chafa and `mermaid`
 for graphs-tui, replacing the earlier `show-image` and `show-chart`. Judgement call: name
