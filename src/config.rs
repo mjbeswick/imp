@@ -242,6 +242,38 @@ impl Config {
         }
     }
 
+    /// A provider other than the active one that is enabled and usable now: a
+    /// built-in whose key is set or needs none, else a named one whose key
+    /// variable is set or empty. Used at startup when the active provider has no
+    /// key, so the user is not asked for a key they do not need.
+    pub fn configured_fallback(&self, lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
+        use crate::providers::Provider;
+        let built_in = [
+            Provider::DeepSeek,
+            Provider::OpenAi,
+            Provider::Anthropic,
+            Provider::Gemini,
+            Provider::Ollama,
+            Provider::Custom,
+        ];
+        for provider in built_in {
+            let name = format!("{provider:?}").to_lowercase();
+            // Only a built-in with its key set counts: a keyless one is not
+            // picked by default, so a missing key still gets asked for.
+            let keyed = provider.profile().key_var.is_some() && self.provider_configured(provider, &lookup);
+            if keyed && name != self.active_name && !self.provider_disabled(&name) {
+                return Some(name);
+            }
+        }
+        for named in &self.named {
+            let usable = named.key_env.is_empty() || lookup(&named.key_env).is_some_and(|v| !v.trim().is_empty());
+            if named.name != self.active_name && !self.provider_disabled(&named.name) && usable {
+                return Some(named.name.clone());
+            }
+        }
+        None
+    }
+
     /// Whether `provider.<name>.enabled` is set to false.
     pub fn provider_disabled(&self, name: &str) -> bool {
         self.disabled_providers.iter().any(|p| p == name)
@@ -1550,6 +1582,13 @@ mod tests {
         assert!(cfg.provider_configured(Provider::OpenAi, env(&[("OPENAI_API_KEY", "k")])));
         assert!(cfg.provider_configured(Provider::Ollama, env(&[])));
         assert!(cfg.provider_configured(Provider::Custom, env(&[])));
+    }
+
+    #[test]
+    fn startup_falls_back_to_a_configured_provider() {
+        let cfg = Config::default(); // DeepSeek is active and has no key here
+        assert_eq!(cfg.configured_fallback(env(&[("OPENAI_API_KEY", "k")])), Some("openai".to_string()));
+        assert_eq!(cfg.configured_fallback(env(&[])), None);
     }
 
     #[test]

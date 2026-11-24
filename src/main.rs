@@ -158,7 +158,17 @@ fn run() -> Result<(), String> {
             eprintln!("imp: {note}");
         }
     }
-    let missing_key = key_gate(chat, cfg.resolve_key_env(config::key_lookup()))?;
+    // The active provider may have no key while another one is configured. Use
+    // that one rather than asking for the active provider's key.
+    let mut resolved = cfg.resolve_key_env(config::key_lookup());
+    if resolved.is_err() {
+        if let Some(name) = cfg.configured_fallback(config::key_lookup()) {
+            if cfg.set_active(&name).is_ok() {
+                resolved = cfg.resolve_key_env(config::key_lookup());
+            }
+        }
+    }
+    let missing_key = key_gate(chat, resolved)?;
 
     let existing = match &resume {
         Some(id) => store::Log::open(&sessions_dir, id),
