@@ -18,5 +18,5 @@
 
 - [x] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Expected: size change zero.
 - [x] 4.2 Scan `optional-skills/` for token-like strings and for placeholder text. Expected: no hits.
-- [ ] 4.3 Manual: copy one skill into a scratch config directory outside the repo and confirm the loader lists it. Running chafa or graphs-tui is not possible here (not installed); report that as not run.
+- [x] 4.3 Manual check: copied the image skill into a scratch folder outside the repo, the loader lists it (test an_installed_optional_skill_is_listed_from_its_folder), and chafa 1.18.3 rendered a sample image to 19 lines. Installed chafa with brew after approval.
 - [x] 4.4 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
