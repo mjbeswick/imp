@@ -20,3 +20,9 @@
 
 - [ ] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
 - [ ] 4.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+
+## 5. Model list rows name their provider
+
+- [x] 5.1 Test: every row in the `/model` list has a `provider::model` value. Confirmed it failed on the bare rows (current, default, listed, recents).
+- [x] 5.2 Implement: `model_items` tags the active provider's models with its name and leaves out the recents file, which records no provider.
+- [x] 5.3 Update `model_command_sets_the_session_and_records_recents` to the provider-labelled rows; recents remain in the provider-model picker.
