@@ -77,8 +77,27 @@ pub fn hunks(old: &str, new: &str) -> (Vec<String>, usize, usize) {
     (rows, adds, dels)
 }
 
+/// Pair the removed and added lines of one change, in order, for a side-by-side
+/// view. Unpaired lines get an empty cell on the other side.
+pub fn pair_change(removed: &[String], added: &[String]) -> Vec<(Option<String>, Option<String>)> {
+    let rows = removed.len().max(added.len());
+    (0..rows)
+        .map(|i| (removed.get(i).cloned(), added.get(i).cloned()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_change_pairs_lines_in_order_and_leaves_gaps() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let rows = super::pair_change(&s(&["a", "b"]), &s(&["x"]));
+        assert_eq!(rows, vec![(Some("a".into()), Some("x".into())), (Some("b".into()), None)]);
+        let rows = super::pair_change(&[], &s(&["y"]));
+        assert_eq!(rows, vec![(None, Some("y".into()))]);
+        assert!(super::pair_change(&[], &[]).is_empty());
+    }
+
     use super::*;
 
     fn lines(n: usize) -> String {
