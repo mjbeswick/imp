@@ -6567,11 +6567,31 @@ impl App {
             spoke |= entry.role == Role::User;
             // Replies leave two columns for their copy label.
             let width = if self.cfg.mouse && entry.role == Role::Assistant { cols.saturating_sub(2) } else { cols };
+            // Wide terminals draw a removed line and the added line after it as
+            // one row. The first of the pair draws the row; the second draws
+            // nothing. Pairing looks only at neighbours, so the cache still holds.
+            let wide = side_by_side(cols);
+            let pair_first = wide
+                && entry.role == Role::Delete
+                && self.entries.get(i + 1).is_some_and(|n| n.role == Role::Add);
+            let pair_second = wide && entry.role == Role::Add && i > 0 && self.entries[i - 1].role == Role::Delete;
+            let partner = if pair_first { self.entries[i + 1].text.as_str() } else { "" };
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (width, markdown, gap, entry.role as u8, &entry.text, &entry.marks).hash(&mut h);
+            (width, markdown, gap, entry.role as u8, &entry.text, &entry.marks, partner, pair_second).hash(&mut h);
             let key = h.finish();
             if self.drawn.get(i).map(|slot| slot.0) != Some(key) {
-                let slot = (key, entry_lines(entry, width, markdown, gap));
+                let slot = (
+                    key,
+                    if pair_first {
+                        let old = entry.text.get(3..).unwrap_or("");
+                        let new = partner.get(3..).unwrap_or("");
+                        vec![(Role::Delete, Line::Text(sbs_line(old, new, cols)))]
+                    } else if pair_second {
+                        Vec::new()
+                    } else {
+                        entry_lines(entry, width, markdown, gap)
+                    },
+                );
                 if i < self.drawn.len() {
                     self.drawn[i] = slot;
                 } else {

@@ -6671,6 +6671,19 @@ fn diffs_go_side_by_side_from_120_columns_and_cut_long_cells() {
 }
 
 #[test]
+fn a_wide_edit_draws_its_change_side_by_side() {
+    let mut a = app();
+    a.push_diffs(vec!["-let x = 1;".to_string(), "+let x = 2;".to_string()], "rs");
+    let wide = strip(&a.frame(120, 20));
+    assert!(
+        wide.lines().any(|l| l.contains("let x = 1;") && l.contains(" │ ") && l.contains("let x = 2;")),
+        "{wide}"
+    );
+    let narrow = strip(&a.frame(100, 20));
+    assert!(!narrow.lines().any(|l| l.contains(" │ ") && l.contains("let x = 2;")), "{narrow}");
+}
+
+#[test]
 fn skills_picker_toggles_and_saves_a_skill() {
     let dir = std::env::temp_dir().join(format!("imp-skills-picker-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
