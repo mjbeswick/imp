@@ -2294,9 +2294,11 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
             parts[1] = fit(&format!("{} {}", parts[1], tail), room);
         }
         if let [first, rest] = parts.as_slice() {
+            // Both lines of a wrapped row carry the state, so the strike or dim
+            // covers the whole row.
             return vec![
-                format!("{marker} {label:<left$}  {first}"),
-                format!("{}{}", " ".repeat(start), rest),
+                styled_state(&desc, format!("{marker} {label:<left$}  {first}")),
+                styled_state(&desc, format!("{}{}", " ".repeat(start), rest)),
             ];
         }
     }

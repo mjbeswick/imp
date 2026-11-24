@@ -6762,6 +6762,20 @@ fn a_missing_target_asks_then_creates_it() {
 }
 
 #[test]
+fn a_wrapped_provider_row_is_still_styled() {
+    let item = PickItem {
+        label: "anthropic".into(),
+        desc: "https://api.anthropic.com/a/very/long/base/address/for/the/row  claude-opus-5-5 · off".into(),
+        value: "anthropic".into(),
+        actions: Vec::new(),
+    };
+    let picker = Picker::new("provider", vec![item], PickKind::Provider);
+    let rows = picker_row(&picker, 0, 0, 60, true);
+    assert!(rows.len() > 1, "the row did not wrap, so the test does not cover it: {rows:?}");
+    assert!(rows.iter().all(|r| r.contains("\x1b[9m")), "wrapped lines lost the strike: {rows:?}");
+}
+
+#[test]
 fn skills_picker_toggles_and_saves_a_skill() {
     let dir = std::env::temp_dir().join(format!("imp-skills-picker-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
