@@ -499,28 +499,6 @@ impl Palette {
         }
     }
 
-    /// Text on a background shading from the select colour toward the accent,
-    /// one colour per cell. Without truecolor it is the flat select row.
-    pub(crate) fn gradient(&self, text: &str) -> String {
-        if !self.on || !self.truecolor {
-            return self.select(text);
-        }
-        use crate::theme::Slot;
-        // The fade stays in the select colour's own family: it leans a fifth of
-        // the way toward the text colour. Mixing in the accent clashes.
-        let from = self.theme.rgb(Slot::Select);
-        let ink = self.theme.rgb(Slot::Text);
-        let to: [u8; 3] = std::array::from_fn(|i| (from[i] as i16 + (ink[i] as i16 - from[i] as i16) / 5) as u8);
-        let fg = ink;
-        let n = text.chars().count().max(2) - 1;
-        let mut out = format!("\x1b[38;2;{};{};{}m", fg[0], fg[1], fg[2]);
-        for (i, c) in text.chars().enumerate() {
-            let at = |k: usize| (from[k] as usize * (n - i.min(n)) + to[k] as usize * i.min(n)) / n;
-            out.push_str(&format!("\x1b[48;2;{};{};{}m{c}", at(0), at(1), at(2)));
-        }
-        out + "\x1b[0m"
-    }
-
     /// The highlighted picker row: user text on the select background.
     pub(crate) fn select(&self, text: &str) -> String {
         if !self.on {
@@ -2147,7 +2125,6 @@ const SETTING_ROWS: &[(&str, &str)] = &[
     ("suggest", "suggestions"),
     ("diffs", "diffs"),
     ("auto_next", "next waiting session"),
-    ("title_gradient", "title gradient"),
     ("spinner", "spinner"),
     ("allow_sudo", "allow sudo"),
     ("color", "colour"),
@@ -3112,14 +3089,25 @@ impl App {
         }
     }
 
+    /// The title as a rule: `── fix the parser ───────── 20:51 ─`, no background.
     fn title_bar(&mut self, cols: usize) -> String {
         let name = self.session_name();
         let name = if self.panes.len() > 1 { format!("{}/{} {name}", self.at + 1, self.panes.len()) } else { name };
         let time = clock();
-        let room = cols.saturating_sub(time.len() + 3);
-        let text = format!(" {:<room$} {time} ", fit(&name, room));
-        self.clock_shown = time;
-        if self.cfg.title_gradient { self.palette.gradient(&text) } else { self.palette.select(&text) }
+        self.clock_shown = time.clone();
+        // Fixed parts: `── ` before the name, a space after it and before the fill, then ` <clock> ─`.
+        let fixed = 3 + 1 + 1 + time.chars().count() + 2;
+        let name = fit(&name, cols.saturating_sub(fixed));
+        let fill = cols.saturating_sub(fixed + name.chars().count());
+        let rule = |s: &str| self.palette.paint(Role::Border, s);
+        format!(
+            "{}{} {} {}{}",
+            rule("── "),
+            self.palette.paint(Role::Info, &name),
+            rule(&"─".repeat(fill)),
+            self.palette.paint(Role::Thinking, &time),
+            rule(" ─"),
+        )
     }
 
     /// Whether the minute moved on since the title bar was drawn.
@@ -4474,7 +4462,6 @@ impl App {
             "suggest" => onoff(self.cfg.suggest),
             "diffs" => onoff(self.cfg.diffs),
             "auto_next" => onoff(self.cfg.auto_next),
-            "title_gradient" => onoff(self.cfg.title_gradient),
             "spinner" => crate::config::SPINNERS.get(self.cfg.spinner).map_or(String::new(), |s| s.0.into()),
             "allow_sudo" => onoff(self.cfg.allow_sudo),
             "color" => self.cfg.color.as_str().into(),
@@ -4501,7 +4488,7 @@ impl App {
             "permissions" => words(&["normal", "auto", "strict", "yolo"]),
             "effort" => words(&["default", "low", "medium", "high"]),
             "verbosity" => words(&["low", "medium", "high"]),
-            "thinking" | "mouse" | "suggest" | "diffs" | "auto_next" | "title_gradient" | "allow_sudo" => words(&["off", "on"]),
+            "thinking" | "mouse" | "suggest" | "diffs" | "auto_next" | "allow_sudo" => words(&["off", "on"]),
             "color" => words(&["auto", "always", "never"]),
             "links" => words(&["auto", "always", "never"]),
             "title_summary" => words(&["auto", "on", "off"]),

@@ -185,7 +185,6 @@ pub struct Config {
     /// Move to the next waiting session after handing one work.
     pub auto_next: bool,
     /// Shade the title bar from the select colour toward the accent.
-    pub title_gradient: bool,
     /// The model's context window in tokens, overriding the built-in table.
     pub context_window: Option<u64>,
     /// Summarise a long first message as the session title.
@@ -320,7 +319,6 @@ impl Default for Config {
             diffs: true,
             spinner: 0,
             auto_next: true,
-            title_gradient: true,
             context_window: None,
             title_summary: TitleSummary::Auto,
             pass_env: Vec::new(),
@@ -435,7 +433,6 @@ impl Config {
                 })?
             }
             "auto_next" => self.auto_next = parse_bool(value)?,
-            "title_gradient" => self.title_gradient = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
             "editor" => self.editor = Some(value.trim().to_string()).filter(|v| !v.is_empty()),
             "visual" => self.visual = Some(value.trim().to_string()).filter(|v| !v.is_empty()),

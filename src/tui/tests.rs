@@ -1450,11 +1450,11 @@ fn ctrl_n_switches_sessions_and_keeps_drafts() {
     a.cursor = a.input.len();
     a.run_command("new", &tx);
     a.input = "draft two".into();
-    assert!(strip(&a.title_bar(80)).starts_with(" 2/2 imp "), "{}", strip(&a.title_bar(80)));
+    assert!(strip(&a.title_bar(80)).starts_with("── 2/2 imp "), "{}", strip(&a.title_bar(80)));
     assert!(a.status_line(80).starts_with(&a.cfg.model), "the position stayed in the status line");
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
-    assert!(strip(&a.title_bar(80)).starts_with(" 1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
+    assert!(strip(&a.title_bar(80)).starts_with("── 1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
 }
 
 /// Three live sessions: 0 waits for approval, 1 has replied, 2 is in view.
@@ -2001,7 +2001,7 @@ fn a_rule_sets_the_composer_apart_and_turns_are_spaced() {
     let second = rows.iter().position(|r| *r == "> second").unwrap();
     assert_eq!(rows[second - 1], "", "no gap before the second turn: {rows:?}");
     assert_ne!(rows[first - 1], "> first");
-    assert!(rows[0].starts_with(" first") && rows[0].trim_end().len() > 70, "no title bar: {rows:?}");
+    assert!(rows[0].starts_with("── first") && rows[0].trim_end().len() > 70, "no title bar: {rows:?}");
     assert!(rows[1..first].iter().all(|r| r.is_empty()), "{rows:?}");
 
     let short = strip(&a.frame(80, 7));
@@ -5717,13 +5717,13 @@ fn the_title_bar_names_the_session_and_the_time() {
     let mut a = app();
     let bar = strip(&a.title_bar(40));
     assert_eq!(bar.chars().count(), 40);
-    assert!(bar.starts_with(" imp "), "{bar:?}");
+    assert!(bar.starts_with("── imp "), "{bar:?}");
     let time = clock();
     assert!(time.len() == 5 && time.as_bytes()[2] == b':', "{time:?}");
-    assert!(bar.ends_with(&format!(" {time} ")), "{bar:?}");
+    assert!(bar.ends_with(&format!(" {time} ─")), "{bar:?}");
     a.push(Role::User, "a very long session title that cannot fit in forty columns");
     let bar = strip(&a.title_bar(40));
-    assert!(bar.contains('…') && bar.ends_with(&format!(" {time} ")), "{bar:?}");
+    assert!(bar.contains('…') && bar.ends_with(&format!(" {time} ─")), "{bar:?}");
     assert!(!strip(&a.frame(40, 7)).contains(&time), "a title bar on a 7-row screen");
     assert!(!a.clock_due(), "a repaint with the minute unchanged");
     a.clock_shown = "99:99".into();
@@ -5776,23 +5776,14 @@ fn the_clock_matches_date_in_this_zone() {
 }
 
 #[test]
-fn the_title_gradient_is_optional_and_needs_truecolor() {
+fn the_title_is_a_rule_with_no_background() {
     let mut a = colour_app();
-    a.palette.truecolor = true;
-    let backgrounds = |bar: &str| {
-        let mut seen: Vec<&str> = bar.split("\x1b[48;2;").skip(1).map(|p| p.split('m').next().unwrap_or("")).collect();
-        seen.dedup();
-        seen.len()
-    };
-    assert!(backgrounds(&a.title_bar(40)) > 10, "flat by default");
-    a.cfg.title_gradient = false;
-    assert_eq!(backgrounds(&a.title_bar(40)), 1, "flat when turned off");
-    a.cfg.title_gradient = true;
+    a.push(Role::User, "fix the parser");
     let bar = a.title_bar(40);
-    assert!(backgrounds(&bar) > 10, "no gradient: {bar:?}");
-    assert_eq!(strip(&bar).chars().count(), 40, "the gradient changed the text");
-    a.palette.truecolor = false;
-    assert!(!a.title_bar(40).contains("\x1b[48;2;"), "a gradient without truecolor");
+    assert!(!bar.contains("\x1b[48;2;") && !bar.contains("\x1b[48;5;"), "a background: {bar:?}");
+    assert_eq!(strip(&bar).chars().count(), 40, "{bar:?}");
+    assert!(strip(&bar).starts_with("── fix the parser"), "{}", strip(&bar));
+    assert!(strip(&bar).ends_with("─"), "{}", strip(&bar));
 }
 
 #[test]
@@ -5853,8 +5844,8 @@ fn settings_lists_ten_settings_with_their_values() {
     a.run_command("settings", &tx);
     let picker = open_picker(&a);
     assert_eq!(picker.kind, PickKind::Settings);
-    // Ten from the first form, four enumerable rows, the API key, and nine text or number rows.
-    assert_eq!(picker.items.len(), 24);
+    // Nine from the first form, four enumerable rows, the API key, and nine text or number rows.
+    assert_eq!(picker.items.len(), 23);
     assert_eq!(setting_desc(&a, "thinking"), "off");
     assert_eq!(setting_desc(&a, "effort"), "default");
 }

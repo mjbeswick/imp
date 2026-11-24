@@ -113,8 +113,7 @@ on a setting such as `model`, `max_tokens` or `skills_dir` opens a one-line
 field: type the new value and press Enter, or Esc to keep the old one. A value
 the config refuses stays in the field with the reason. `API key` shows `set` or
 `not set` and opens a masked field. Each change applies at once and is saved to
-the config file, with its comments kept. `title_gradient`, on by default, shades
-the title bar from the select colour toward the accent on a truecolor terminal.
+the config file, with its comments kept.
 The lists `auth`, `render`, `pass_env` and `allow` stay in the config file.
 
 ## Everyday keys
