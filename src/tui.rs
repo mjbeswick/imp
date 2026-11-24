@@ -7621,9 +7621,6 @@ impl App {
         } else {
             model
         };
-        // With several live sessions, which one this is comes first.
-        // Which session this is lives in the title bar.
-        let place = "";
         let waiting = match self.waiting() {
             0 => String::new(),
             n => format!(" · {n} waiting"),
@@ -7634,8 +7631,6 @@ impl App {
             Some((_, round, rounds)) => format!(" · goal {round}/{rounds}"),
             None => String::new(),
         };
-        // The agent is named before the prompt glyph instead.
-        let agent = "";
         let mode = match self.cfg.live_permissions() {
             crate::config::Permissions::Normal => String::new(),
             other => format!("{} · ", other.as_str()),
@@ -7646,7 +7641,7 @@ impl App {
             .map(|p| format!(" ({p}%)"))
             .unwrap_or_default();
         let left = format!(
-            "{place}{model} · {agent}{mode}{} tok{percent}{money}{goal}{paused}{unseen}{thinking}{waiting}",
+            "{model} · {mode}{} tok{percent}{money}{goal}{paused}{unseen}{thinking}{waiting}",
             compact_tokens(self.status.tokens),
         );
         // The directory sits at the right edge, and goes first when narrow.
