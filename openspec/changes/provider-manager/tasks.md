@@ -9,8 +9,8 @@
 
 ## 2. Keys
 
-- [ ] 2.1 Test: `u` makes the selected provider active.
-- [x] 2.2 Test: Ctrl+T toggles enabled and saves `provider.<name>.enabled`. Judgement call: space types into the filter, so the toggle is Ctrl+T.
+- [ ] 2.1 Test: plain `u` makes the selected provider active.
+- [x] 2.2 Test: space toggles enabled and saves `provider.<name>.enabled`. Judgement call: the provider list takes no type-to-filter, so its letters are keys; text typed after /provider still types into the add-prefix.
 - [ ] 2.3 Test: `d` deletes a named provider and refuses a built-in with a message.
 - [ ] 2.4 Test: `n` opens a new provider config.
 - [ ] 2.5 Implement: the keys above.
