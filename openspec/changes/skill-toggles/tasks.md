@@ -8,8 +8,8 @@
 
 ## 2. Session behaviour
 
-- [ ] 2.1 Test: a disabled skill is absent from the prompt index and `skill_load` refuses it.
-- [ ] 2.2 Implement: `skill_load` returns the disabled message for a disabled skill.
+- [x] 2.1 Test: a disabled skill is absent from the prompt index and `skill_load` refuses it.
+- [x] 2.2 Implement: `skill_load` returns the disabled message for a disabled skill.
 
 ## 3. Picker
 
