@@ -5261,7 +5261,7 @@ fn open_many(a: &mut App, count: usize) {
 }
 
 #[test]
-fn overlay_is_forty_columns_in_a_narrow_terminal() {
+fn overlay_fills_a_narrow_terminal_with_a_margin() {
     let mut a = app();
     open_many(&mut a, 3);
     let frame = a.frame(50, 24);
@@ -5274,7 +5274,7 @@ fn overlay_is_forty_columns_in_a_narrow_terminal() {
         .unwrap_or_else(|| panic!("no top border in {frame:?}"));
     assert_eq!(
         frame[start..end].chars().count() + 1,
-        40,
+        46,
         "wrong box width: {:?}",
         &frame[start..end]
     );

@@ -1378,6 +1378,13 @@ fn entry_lines(entry: &Entry, cols: usize, markdown: bool, gap: bool) -> Vec<(Ro
 /// Diffs go side by side from this many columns; narrower stays inline.
 const SIDE_BY_SIDE_COLS: usize = 120;
 
+/// Width of a centred modal. Two-fifths of the screen on wide terminals, capped at
+/// 72. Narrow terminals give the modal nearly the whole width, minus a 4-column margin.
+fn modal_width(cols: usize) -> usize {
+    let width = if cols < 60 { cols.saturating_sub(4).max(40) } else { (cols * 80 / 100).clamp(40, 72) };
+    width.min(cols)
+}
+
 /// Whether a diff is drawn side by side at this terminal width.
 pub(crate) fn side_by_side(cols: usize) -> bool {
     cols >= SIDE_BY_SIDE_COLS
@@ -7112,7 +7119,7 @@ impl App {
         cols: usize,
         rows: usize,
     ) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
-        let width = (cols * 80 / 100).clamp(40, 72).min(cols);
+        let width = modal_width(cols);
         if width < 4 || rows < 8 {
             return None;
         }
@@ -7179,7 +7186,7 @@ impl App {
             Some(Pending::ConfirmDelete { picker, .. }) => &**picker,
             _ => return None,
         };
-        let width = (cols * 80 / 100).clamp(40, 72).min(cols);
+        let width = modal_width(cols);
         if width < 4 || rows < 5 {
             return None;
         }
