@@ -3612,14 +3612,12 @@ impl App {
                     self.input.clear();
                     self.cursor = 0;
                 }
-            } else if !self.input.is_empty() {
-                // A draft goes first, so clearing it never stops the turn.
-                self.input.clear();
-                self.cursor = 0;
-                self.hist_pos = None;
-                self.follow_tail();
             } else if self.status.streaming {
+                // A running turn stops, and the draft stays for the next message.
                 self.cancel.store(true, Ordering::Relaxed);
+            } else if !self.input.is_empty() {
+                // Idle with a draft: nothing to stop and no quit. Ctrl+L clears
+                // the transcript; the draft is left as it is.
             } else if self.quit_armed.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
                 self.quit = true;
             } else {

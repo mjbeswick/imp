@@ -75,7 +75,7 @@ stdin or stdout is not a terminal, and prints no escape sequences.
 ### Keys
 
 ```
-Enter send · Alt+Enter newline · Esc cancel · Ctrl+C clear or quit · Ctrl+L clear
+Enter send · Alt+Enter newline · Esc cancel · Ctrl+C stop or quit · Ctrl+L clear
 Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
 Ctrl+E expand the last tool call · Ctrl+R retry · Ctrl+T thinking · Ctrl+V paste the copy · Ctrl+G release the mouse · Ctrl+D leaves line mode
@@ -130,8 +130,8 @@ one 16 MB output buffer budget.
 ```
 
 Shift+Tab switches agent, with or without a draft, and Tab completes. Ctrl+B
-steps the mode through normal, auto, yolo, and strict. Ctrl+C clears a draft or stops a turn; idle, a
-second Ctrl+C within two seconds quits. In the draft, Option or Alt with ←/→ moves by
+steps the mode through normal, auto, yolo, and strict. Ctrl+C stops a turn and never clears the draft; idle, a
+second Ctrl+C within two seconds quits. Ctrl+L clears the transcript. In the draft, Option or Alt with ←/→ moves by
 word, Option+Backspace or Ctrl+W deletes one, Shift with the arrows selects,
 and Ctrl+A, Ctrl+U, and Ctrl+K act on the row.
 

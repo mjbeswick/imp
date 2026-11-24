@@ -1441,7 +1441,12 @@ fn key_state(key: &Key, picker: bool) -> App {
     };
     match key {
         // Ctrl+S on an empty draft does nothing by design, so it gets a draft.
-        Key::Enter | Key::Newline | Key::Ctrl('c') | Key::Ctrl('s') => draft(&mut a, "hello", true),
+        // Ctrl+C now stops a running turn; it does nothing to an idle draft.
+        Key::Ctrl('c') => {
+            draft(&mut a, "hello", true);
+            a.status.streaming = true;
+        }
+        Key::Enter | Key::Newline | Key::Ctrl('s') => draft(&mut a, "hello", true),
         Key::Delete | Key::DeleteWord(true) | Key::Ctrl('k') => draft(&mut a, "hello world", false),
         Key::Select(Move::Down | Move::Right | Move::End) | Key::Word(Move::Right) | Key::SelectWord(Move::Right) => {
             draft(&mut a, "hello world\nsecond", false)
@@ -5475,30 +5480,30 @@ fn a_normal_draft_keeps_the_arrow() {
 }
 
 #[test]
-fn ctrl_c_clears_a_draft_instead_of_quitting() {
+fn ctrl_c_keeps_a_draft_and_never_quits_over_it() {
     let mut a = app();
     a.input = "half written".into();
     a.cursor = 4;
     let (tx, _cmds) = channel();
     a.handle_key(Key::Ctrl('c'), &tx);
-    assert!(!a.quit, "a draft did not protect the session");
-    assert!(a.input.is_empty(), "the draft stayed: {:?}", a.input);
-    assert_eq!(a.cursor, 0);
+    assert!(!a.quit, "a draft quit the session");
+    assert_eq!(a.input, "half written", "Ctrl+C cleared the draft");
+    assert_eq!(a.cursor, 4);
 }
 
 #[test]
-fn ctrl_c_clears_a_draft_without_cancelling_the_turn() {
+fn ctrl_c_stops_the_turn_and_keeps_the_draft() {
     let mut a = app();
     a.status.streaming = true;
     a.input = "draft".into();
     a.cursor = 5;
     let (tx, _cmds) = channel();
     a.handle_key(Key::Ctrl('c'), &tx);
-    assert!(!a.quit, "a draft did not protect the turn");
-    assert!(a.input.is_empty());
+    assert!(!a.quit, "a draft quit the session");
+    assert_eq!(a.input, "draft", "Ctrl+C cleared the draft");
     assert!(
-        !a.cancel.load(std::sync::atomic::Ordering::Relaxed),
-        "clearing a draft cancelled the turn"
+        a.cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "Ctrl+C during a turn did not stop it"
     );
 }
 
