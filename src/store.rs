@@ -225,6 +225,21 @@ mod tests {
     }
 
     #[test]
+    fn optional_skills_parse_and_fit_the_load_cap() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("optional-skills");
+        for name in ["browse", "image", "mermaid"] {
+            let path = root.join(name).join("SKILL.md");
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let (fm_name, description) = frontmatter(&text);
+            assert_eq!(fm_name.as_deref(), Some(name), "{name}: frontmatter name");
+            assert!(!description.is_empty(), "{name}: description");
+            let body = strip_frontmatter(&text);
+            assert!(body.len() < 4096, "{name}: body is {} bytes", body.len());
+        }
+    }
+
+    #[test]
     fn dot_agents_skills_shadow_dot_imp() {
         let root = tmp();
         std::fs::create_dir_all(root.join(".git")).unwrap();
