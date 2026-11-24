@@ -233,6 +233,15 @@ impl Config {
         (!argv.is_empty()).then_some(argv)
     }
 
+    /// Whether a built-in provider can be used now: its key variable is set, or it
+    /// needs no key. Uses the same lookup as `resolve_key_env`.
+    pub fn provider_configured(&self, provider: Provider, lookup: impl Fn(&str) -> Option<String>) -> bool {
+        match provider.profile().key_var {
+            None => true,
+            Some(var) => lookup(var).is_some_and(|v| !v.trim().is_empty()),
+        }
+    }
+
     /// Whether `provider.<name>.enabled` is set to false.
     pub fn provider_disabled(&self, name: &str) -> bool {
         self.disabled_providers.iter().any(|p| p == name)
@@ -1532,6 +1541,15 @@ mod tests {
         let loaded = Config::load(&path).unwrap();
         assert!(loaded.provider_disabled("openai"));
         assert!(loaded.unknown.is_empty(), "no unknown-key warning: {:?}", loaded.unknown);
+    }
+
+    #[test]
+    fn a_built_in_provider_is_configured_by_its_key_or_needs_none() {
+        let cfg = Config::default();
+        assert!(!cfg.provider_configured(Provider::OpenAi, env(&[])));
+        assert!(cfg.provider_configured(Provider::OpenAi, env(&[("OPENAI_API_KEY", "k")])));
+        assert!(cfg.provider_configured(Provider::Ollama, env(&[])));
+        assert!(cfg.provider_configured(Provider::Custom, env(&[])));
     }
 
     #[test]
