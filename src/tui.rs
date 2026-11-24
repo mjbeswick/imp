@@ -6587,7 +6587,10 @@ impl App {
         let rule = usize::from(rows >= 8);
         // So does the title bar.
         let title = rule;
-        let body_rows = rows.saturating_sub(1 + rule + title + composer.len()).max(1);
+        // Narrow screens give the directory a row of its own under the status.
+        let narrow = cols < NARROW_COLS;
+        let status_rows = 1 + usize::from(narrow);
+        let body_rows = rows.saturating_sub(status_rows + rule + title + composer.len()).max(1);
         let bar = (title == 1).then(|| self.title_bar(cols));
 
         let markdown = self.cfg.links.supported();
@@ -6773,6 +6776,10 @@ impl App {
             }
         }
         screen.push(self.paint_status(cols));
+        if narrow {
+            let dir = fit_path(&tilde(&self.root), cols).unwrap_or_default();
+            screen.push(self.palette.paint(Role::Thinking, &dir));
+        }
 
         let mut tail = String::new();
         if let Some((overlay, cursor_x, cursor_y, targets)) = self.overlay(cols, rows) {
@@ -7670,6 +7677,8 @@ impl App {
                 format!("{} · {} · ↓{}", span(start.elapsed()), steps(s.steps), compact_tokens(out))
             }
             // The directory shortens to what is left after two spaces.
+            // Narrow screens show the directory on its own row instead.
+            None if cols < NARROW_COLS => String::new(),
             None => fit_path(&tilde(&self.root), cols.saturating_sub(left.chars().count() + 2)).unwrap_or_default(),
         };
         let gap = cols.saturating_sub(left.chars().count() + right.chars().count());
@@ -7680,6 +7689,9 @@ impl App {
         }
     }
 }
+
+/// Below this width the directory moves to its own row under the status line.
+const NARROW_COLS: usize = 60;
 
 /// A live session's name: its first message, or `new` before one.
 fn title_of(entries: &[Entry]) -> String {

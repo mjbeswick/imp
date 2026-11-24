@@ -2020,9 +2020,9 @@ fn an_empty_transcript_shows_a_welcome_row() {
     assert!(!strip(&a.frame(80, 24)).contains("/ for commands"));
     // Narrow screens keep the hint: at 30 columns it is all the line shows.
     let narrow = strip(&app().frame(30, 24));
-    assert!(narrow.lines().last().unwrap_or("").starts_with("/ for commands"), "{narrow:?}");
+    assert!(narrow.lines().rev().nth(1).unwrap_or("").starts_with("/ for commands"), "{narrow:?}");
     let tiny = strip(&app().frame(12, 24));
-    assert!(tiny.lines().last().unwrap_or("").starts_with("/ for com"), "{tiny:?}");
+    assert!(tiny.lines().rev().nth(1).unwrap_or("").starts_with("/ for com"), "{tiny:?}");
 }
 
 #[test]
@@ -2052,7 +2052,8 @@ fn the_status_line_shortens_a_long_directory() {
     assert!(at(&a, 100).ends_with("~/Projects/imp/src/providers"));
     // The directory shortens as it narrows, then drops before the left part does.
     assert!(at(&a, 60).ends_with("~/P/i/src/providers"), "{}", a.status_line(60));
-    assert!(at(&a, 50).ends_with("  …/providers"), "{}", a.status_line(50));
+    // Under 60 columns the directory has its own row, so the status keeps only the left part.
+    assert_eq!(at(&a, 50), left, "narrow: the directory is on its own row");
     assert_eq!(at(&a, 40), left, "the directory is dropped before the left part");
 }
 
@@ -2429,7 +2430,7 @@ fn assistant_rows_render_markdown() {
 #[test]
 fn frame_clears_below_the_status_row_before_drawing_it() {
     let mut a = app();
-    let out = a.frame(40, 10);
+    let out = a.frame(80, 10);
     let row = &out[out.rfind("\r\n").expect("status row")..];
     let erase = row.find("\x1b[J").expect("nothing clears below the status");
     let text = row.find('·').expect("no status text");
