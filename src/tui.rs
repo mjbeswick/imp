@@ -3095,18 +3095,17 @@ impl App {
         let name = if self.panes.len() > 1 { format!("{}/{} {name}", self.at + 1, self.panes.len()) } else { name };
         let time = clock();
         self.clock_shown = time.clone();
-        // Fixed parts: `── ` before the name, a space after it and before the fill, then ` <clock> ─`.
-        let fixed = 3 + 1 + 1 + time.chars().count() + 2;
+        // The name starts at the left edge and the clock ends at the right one;
+        // the rule fills the gap between them.
+        let fixed = 1 + 1 + time.chars().count();
         let name = fit(&name, cols.saturating_sub(fixed));
         let fill = cols.saturating_sub(fixed + name.chars().count());
         let rule = |s: &str| self.palette.paint(Role::Border, s);
         format!(
-            "{}{} {} {}{}",
-            rule("── "),
+            "{} {} {}",
             self.palette.paint(Role::Info, &name),
             rule(&"─".repeat(fill)),
             self.palette.paint(Role::Thinking, &time),
-            rule(" ─"),
         )
     }
 

@@ -1450,11 +1450,11 @@ fn ctrl_n_switches_sessions_and_keeps_drafts() {
     a.cursor = a.input.len();
     a.run_command("new", &tx);
     a.input = "draft two".into();
-    assert!(strip(&a.title_bar(80)).starts_with("── 2/2 imp "), "{}", strip(&a.title_bar(80)));
+    assert!(strip(&a.title_bar(80)).starts_with("2/2 imp "), "{}", strip(&a.title_bar(80)));
     assert!(a.status_line(80).starts_with(&a.cfg.model), "the position stayed in the status line");
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
-    assert!(strip(&a.title_bar(80)).starts_with("── 1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
+    assert!(strip(&a.title_bar(80)).starts_with("1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
 }
 
 /// Three live sessions: 0 waits for approval, 1 has replied, 2 is in view.
@@ -2001,7 +2001,7 @@ fn a_rule_sets_the_composer_apart_and_turns_are_spaced() {
     let second = rows.iter().position(|r| *r == "> second").unwrap();
     assert_eq!(rows[second - 1], "", "no gap before the second turn: {rows:?}");
     assert_ne!(rows[first - 1], "> first");
-    assert!(rows[0].starts_with("── first") && rows[0].trim_end().len() > 70, "no title bar: {rows:?}");
+    assert!(rows[0].starts_with("first ") && rows[0].trim_end().len() > 70, "no title bar: {rows:?}");
     assert!(rows[1..first].iter().all(|r| r.is_empty()), "{rows:?}");
 
     let short = strip(&a.frame(80, 7));
@@ -5717,13 +5717,13 @@ fn the_title_bar_names_the_session_and_the_time() {
     let mut a = app();
     let bar = strip(&a.title_bar(40));
     assert_eq!(bar.chars().count(), 40);
-    assert!(bar.starts_with("── imp "), "{bar:?}");
+    assert!(bar.starts_with("imp "), "{bar:?}");
     let time = clock();
     assert!(time.len() == 5 && time.as_bytes()[2] == b':', "{time:?}");
-    assert!(bar.ends_with(&format!(" {time} ─")), "{bar:?}");
+    assert!(bar.ends_with(&format!(" {time}")), "{bar:?}");
     a.push(Role::User, "a very long session title that cannot fit in forty columns");
     let bar = strip(&a.title_bar(40));
-    assert!(bar.contains('…') && bar.ends_with(&format!(" {time} ─")), "{bar:?}");
+    assert!(bar.contains('…') && bar.ends_with(&format!(" {time}")), "{bar:?}");
     assert!(!strip(&a.frame(40, 7)).contains(&time), "a title bar on a 7-row screen");
     assert!(!a.clock_due(), "a repaint with the minute unchanged");
     a.clock_shown = "99:99".into();
@@ -5782,8 +5782,8 @@ fn the_title_is_a_rule_with_no_background() {
     let bar = a.title_bar(40);
     assert!(!bar.contains("\x1b[48;2;") && !bar.contains("\x1b[48;5;"), "a background: {bar:?}");
     assert_eq!(strip(&bar).chars().count(), 40, "{bar:?}");
-    assert!(strip(&bar).starts_with("── fix the parser"), "{}", strip(&bar));
-    assert!(strip(&bar).ends_with("─"), "{}", strip(&bar));
+    assert!(strip(&bar).starts_with("fix the parser "), "{}", strip(&bar));
+    assert!(strip(&bar).ends_with(&clock()), "{}", strip(&bar));
 }
 
 #[test]
@@ -5984,7 +5984,7 @@ fn the_title_bar_shows_the_cut_first_message() {
     let mut a = app();
     a.push(Role::User, "Can you please look at why the rsync test keeps failing on the Pi when the network is slow");
     let shown = strip(&a.frame(60, 10));
-    assert!(shown.contains(" look at why the rsync test keeps… "), "{shown:?}");
+    assert!(shown.contains("look at why the rsync test keeps… "), "{shown:?}");
 }
 
 #[test]
@@ -5995,7 +5995,7 @@ fn a_rename_shows_in_the_title_bar() {
     a.run_command("rename fix sync", &tx);
     let shown = strip(&a.frame(60, 10));
     let title_row = shown.split("\r\n").next().unwrap_or("");
-    assert!(title_row.contains(" fix sync "), "the rename did not show: {title_row:?}");
+    assert!(title_row.contains("fix sync "), "the rename did not show: {title_row:?}");
     assert!(!title_row.contains("look at why"), "the old title stayed: {title_row:?}");
 }
 
@@ -6014,7 +6014,7 @@ fn a_summary_replaces_the_cut_title_unless_it_was_renamed() {
     b.run_command("rename fix sync", &tx);
     b.apply(Ev::Title("Flaky rsync test on slow network".into()));
     let shown = strip(&b.frame(70, 10));
-    assert!(shown.split("\r\n").next().unwrap_or("").contains(" fix sync "), "a summary replaced a rename: {shown:?}");
+    assert!(shown.split("\r\n").next().unwrap_or("").contains("fix sync "), "a summary replaced a rename: {shown:?}");
 }
 
 fn provider_form(a: &App) -> (Vec<(String, String)>, usize) {
