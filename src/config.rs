@@ -199,6 +199,15 @@ pub struct Config {
     pub render: Vec<(String, String)>,
     pub links: Links,
     pub skills_dir: Option<PathBuf>,
+    /// Skills switched off with `skill.<name>.enabled = false`.
+    pub disabled_skills: Vec<String>,
+}
+
+impl Config {
+    /// Whether `skill.<name>.enabled` is set to false.
+    pub fn skill_disabled(&self, name: &str) -> bool {
+        self.disabled_skills.iter().any(|s| s == name)
+    }
 }
 
 impl Default for Config {
@@ -241,6 +250,7 @@ impl Default for Config {
             render: Vec::new(),
             links: Links::Auto,
             skills_dir: None,
+            disabled_skills: Vec::new(),
         }
     }
 }
@@ -345,6 +355,17 @@ impl Config {
             "auto_next" => self.auto_next = parse_bool(value)?,
             "title_gradient" => self.title_gradient = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
+            key if key.starts_with("skill.") && key.ends_with(".enabled") => {
+                let name = key["skill.".len()..key.len() - ".enabled".len()].trim().to_string();
+                if name.is_empty() {
+                    return Err("skill setting needs a name, such as `skill.image.enabled = false`".into());
+                }
+                let enabled = parse_bool(value)?;
+                self.disabled_skills.retain(|s| *s != name);
+                if !enabled {
+                    self.disabled_skills.push(name);
+                }
+            }
             // Managed profile lines were read before this pass.
             key if key.starts_with("provider.") => {}
             key if key.starts_with("render.") => {
@@ -959,6 +980,16 @@ impl Verbosity {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn skill_enabled_flag_is_read() {
+        let mut cfg = Config::default();
+        cfg.set("skill.image.enabled", "false").unwrap();
+        cfg.set("skill.browse.enabled", "true").unwrap();
+        assert!(cfg.skill_disabled("image"));
+        assert!(!cfg.skill_disabled("browse"));
+        assert!(!cfg.skill_disabled("absent"));
+    }
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let map: HashMap<String, String> = pairs
