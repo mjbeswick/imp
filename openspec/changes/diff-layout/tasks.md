@@ -2,8 +2,8 @@
 
 ## 1. Pairing
 
-- [ ] 1.1 Test: pairing gives equal hunks, uneven hunks, empty old text, and empty new text correctly. Confirm it fails first.
-- [ ] 1.2 Implement: the pairing function in `src/linediff.rs`.
+- [x] 1.1 Test: pairing gives equal hunks, uneven hunks, empty old text, and empty new text correctly. Confirm it fails first.
+- [x] 1.2 Implement: the pairing function in `src/linediff.rs`.
 
 ## 2. Rendering
 
