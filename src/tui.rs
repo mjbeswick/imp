@@ -2185,6 +2185,20 @@ fn attach(launch: impl FnOnce() -> std::io::Result<std::process::ExitStatus>) ->
     Some(status.ok().and_then(|s| s.code()).unwrap_or(-1))
 }
 
+/// Whether an editor target may open: it must exist, and lie inside the session
+/// directory. Refused otherwise, rather than asked, for now.
+pub(crate) fn check_target(root: &std::path::Path, target: &str) -> Result<(), String> {
+    let Ok(path) = root.join(target).canonicalize() else {
+        return Err(format!("{target} does not exist"));
+    };
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    if path.starts_with(&root) {
+        Ok(())
+    } else {
+        Err(format!("{target} is outside the session directory"))
+    }
+}
+
 /// Run an argument list in the foreground, without a shell: the first entry is
 /// the program, the rest its arguments.
 fn attach_argv(argv: &[String]) -> Option<i32> {
@@ -5466,7 +5480,9 @@ impl App {
                 let rest = other.trim_start_matches(if gui { "open" } else { "edit" }).trim();
                 // With no target, the session directory is the target.
                 let target = if rest.is_empty() { self.root.display().to_string() } else { rest.to_string() };
-                match editor_argv_for(&self.cfg, crate::config::key_lookup(), gui, &target) {
+                let inside = if rest.is_empty() { Ok(()) } else { check_target(&self.root, &target) };
+                let argv = inside.and_then(|()| editor_argv_for(&self.cfg, crate::config::key_lookup(), gui, &target));
+                match argv {
                     Ok(argv) => {
                         let _ = tx.send(if gui { Cmd::Open(argv) } else { Cmd::Edit(argv) });
                     }

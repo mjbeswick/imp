@@ -6668,6 +6668,20 @@ fn an_unconfigured_or_disabled_provider_is_not_in_the_model_list() {
 }
 
 #[test]
+fn an_editor_target_must_exist_inside_the_session_directory() {
+    let root = std::env::temp_dir().join(format!("imp-target-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("sub/notes.md"), "x").unwrap();
+    assert!(check_target(&root, "sub/notes.md").is_ok());
+    assert!(check_target(&root, "sub").is_ok());
+    let missing = check_target(&root, "new.md").unwrap_err();
+    assert!(missing.contains("does not exist"), "{missing}");
+    let outside = check_target(&root, "..").unwrap_err();
+    assert!(outside.contains("outside the session directory"), "{outside}");
+}
+
+#[test]
 fn an_editor_command_gets_the_target_as_one_argument() {
     let cfg = Config::default();
     let argv = editor_argv_for(&cfg, |v| (v == "EDITOR").then(|| "vim".to_string()), false, "my notes.md").unwrap();
