@@ -6835,6 +6835,16 @@ fn d_deletes_a_named_provider_and_refuses_a_built_in() {
 }
 
 #[test]
+fn n_opens_a_new_provider_config() {
+    let mut a = app();
+    let (tx, _cmds) = channel();
+    a.run_command("provider", &tx);
+    a.handle_key(Key::Char('n'), &tx);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "n did not open the config");
+    assert_eq!(form_field(&a, "base"), "", "a new config should start empty");
+}
+
+#[test]
 fn enter_on_a_provider_opens_its_config() {
     let mut a = app();
     let (tx, _cmds) = channel();

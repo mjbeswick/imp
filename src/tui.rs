@@ -6002,6 +6002,21 @@ impl App {
                         self.dirty = true;
                         return;
                     }
+                    // `n` opens a new provider config under a free name, through the same
+                    // `provider add` path the command uses.
+                    Key::Char('n') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
+                        let mut name = "new".to_string();
+                        let mut count = 2;
+                        while crate::providers::Provider::parse(&name).is_ok()
+                            || self.cfg.named.iter().any(|p| p.name == name)
+                        {
+                            name = format!("new-{count}");
+                            count += 1;
+                        }
+                        self.dirty = true;
+                        self.run_command(&format!("provider add {name}"), tx);
+                        return;
+                    }
                     // `d` deletes a named provider. A built-in cannot be deleted; it can
                     // only be switched off with space.
                     Key::Char('d') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
