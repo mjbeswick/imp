@@ -1805,6 +1805,9 @@ pub struct App {
     config_path: std::path::PathBuf,
     /// Where recently chosen models are remembered.
     models_path: std::path::PathBuf,
+    /// An `/edit` or `/open` waiting on the user's yes: GUI or not, the argument
+    /// list, and a file to create first when the target is missing.
+    confirm_open: Option<(bool, Vec<String>, Option<std::path::PathBuf>)>,
     /// The provider's models, catalog first and then whatever it reported.
     available_models: Vec<String>,
     /// Messages parked for this session, never persisted.
@@ -2068,6 +2071,8 @@ enum PickKind {
     ProviderModel,
     /// `/skills`: each skill on or off; a choice flips it and saves the config.
     Skill,
+    /// `/edit` or `/open` on a target outside the session, or missing: "No" first.
+    Confirm,
 }
 
 #[derive(Clone)]
@@ -2713,6 +2718,7 @@ impl App {
             preview_from: None,
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
+            confirm_open: None,
             available_models: crate::providers::catalog(provider),
             bell_pending: false,
             status: Status {
@@ -5549,13 +5555,42 @@ impl App {
                 let rest = other.trim_start_matches(if gui { "open" } else { "edit" }).trim();
                 // With no target, the session directory is the target.
                 let target = if rest.is_empty() { self.root.display().to_string() } else { rest.to_string() };
-                let inside = if rest.is_empty() { Ok(()) } else { check_target(&self.root, &target) };
-                let argv = inside.and_then(|()| editor_argv_for(&self.cfg, crate::config::key_lookup(), gui, &target));
-                match argv {
-                    Ok(argv) => {
-                        let _ = tx.send(if gui { Cmd::Open(argv) } else { Cmd::Edit(argv) });
+                let checked = if rest.is_empty() { Ok(()) } else { check_target(&self.root, &target) };
+                match checked {
+                    Ok(()) => match editor_argv_for(&self.cfg, crate::config::key_lookup(), gui, &target) {
+                        Ok(argv) => {
+                            let _ = tx.send(if gui { Cmd::Open(argv) } else { Cmd::Edit(argv) });
+                        }
+                        Err(e) => self.push(Role::Error, e),
+                    },
+                    Err(msg) => {
+                        // Outside the session, or missing: ask first. A missing file is
+                        // created only when its folder is inside the session.
+                        let path = self.root.join(&target);
+                        let folder_inside = path
+                            .parent()
+                            .and_then(|p| p.canonicalize().ok())
+                            .zip(self.root.canonicalize().ok())
+                            .is_some_and(|(p, root)| p.starts_with(root));
+                        let create = msg.ends_with("does not exist");
+                        if create && !folder_inside {
+                            self.push(Role::Error, msg);
+                        } else {
+                            match editor_argv_for(&self.cfg, crate::config::key_lookup(), gui, &target) {
+                                Ok(argv) => {
+                                    let question = if create { format!("{target} does not exist: create it and open?") } else { format!("{msg}: open anyway?") };
+                                    let items = vec![
+                                        PickItem { label: "No".into(), desc: String::new(), value: "no".into(), actions: Vec::new() },
+                                        PickItem { label: "Yes".into(), desc: String::new(), value: "yes".into(), actions: Vec::new() },
+                                    ];
+                                    self.confirm_open = Some((gui, argv, create.then_some(path)));
+                                    self.pending = Some(Pending::Pick(Picker::new(&question, items, PickKind::Confirm)));
+                                    self.dirty = true;
+                                }
+                                Err(e) => self.push(Role::Error, e),
+                            }
+                        }
                     }
-                    Err(e) => self.push(Role::Error, e),
                 }
             }
             other if other == "model" || other.starts_with("model ") => {
@@ -6205,6 +6240,22 @@ impl App {
                             PickKind::Verbosity => {
                                 self.verbosity = Verbosity::parse(&choice.value).unwrap_or(self.verbosity);
                                 self.toast(format!("verbosity: {}", choice.value));
+                            }
+                            PickKind::Confirm => {
+                                if let Some((gui, argv, create)) = self.confirm_open.take() {
+                                    if choice.value == "yes" {
+                                        let made = match &create {
+                                            Some(path) => std::fs::write(path, "").map_err(|e| e.to_string()),
+                                            None => Ok(()),
+                                        };
+                                        match made {
+                                            Ok(()) => {
+                                                let _ = tx.send(if gui { Cmd::Open(argv) } else { Cmd::Edit(argv) });
+                                            }
+                                            Err(e) => self.push(Role::Error, e),
+                                        }
+                                    }
+                                }
                             }
                             PickKind::Skill => {
                                 let name = choice.value.clone();

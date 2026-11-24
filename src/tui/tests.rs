@@ -6726,6 +6726,42 @@ fn unconfigured_rows_are_dimmed_and_off_rows_struck_through() {
 }
 
 #[test]
+fn an_outside_target_asks_before_opening() {
+    let mut a = app();
+    a.cfg.set("editor", "vim").unwrap();
+    let (tx, cmds) = channel();
+    a.run_command("edit ..", &tx);
+    let picker = open_picker(&a);
+    assert_eq!(picker.kind, PickKind::Confirm);
+    assert!(cmds.try_recv().is_err(), "launched before the user said yes");
+    // "No" is first, so Enter declines.
+    a.handle_key(Key::Enter, &tx);
+    assert!(cmds.try_recv().is_err(), "declining still launched");
+    a.run_command("edit ..", &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert!(matches!(cmds.try_recv(), Ok(Cmd::Edit(argv)) if argv.last().map(String::as_str) == Some("..")));
+}
+
+#[test]
+fn a_missing_target_asks_then_creates_it() {
+    let root = std::env::temp_dir().join(format!("imp-create-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let mut a = app();
+    a.root = root.clone();
+    a.cfg.set("editor", "vim").unwrap();
+    let (tx, cmds) = channel();
+    a.run_command("edit draft.md", &tx);
+    assert!(!root.join("draft.md").exists(), "created before the user said yes");
+    assert_eq!(open_picker(&a).kind, PickKind::Confirm);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert!(root.join("draft.md").exists(), "yes did not create the file");
+    assert!(matches!(cmds.try_recv(), Ok(Cmd::Edit(argv)) if argv.last().map(String::as_str) == Some("draft.md")));
+}
+
+#[test]
 fn skills_picker_toggles_and_saves_a_skill() {
     let dir = std::env::temp_dir().join(format!("imp-skills-picker-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
