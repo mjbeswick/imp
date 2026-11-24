@@ -860,11 +860,9 @@ pub fn session_row(meta: &Meta, now_secs: u64) -> (String, String) {
         _ => format!("{}d", age / 86_400),
     };
     let title = meta.title.split_whitespace().collect::<Vec<_>>().join(" ");
-    let title = if title.is_empty() { "(untitled)".to_string() } else { title };
-    (
-        format!("{:<9}  {age:>3}  {title}", meta.id),
-        format!("{} msgs", meta.messages),
-    )
+    let title = if title.is_empty() { "new".to_string() } else { title };
+    // The title leads; age and id trail, so the title is what scans first.
+    (title, format!("{age:>3}  {}", meta.id))
 }
 
 /// Sessions whose user or assistant text contains `query`, newest first, each
@@ -1246,10 +1244,10 @@ mod session_tests {
     }
 
     #[test]
-    fn session_rows_show_age_and_messages() {
+    fn session_rows_lead_with_the_title_then_age_and_id() {
         let (left, right) = session_row(&meta("abc", "flaky test", 7), 1_090);
-        assert!(left.starts_with("abc") && left.contains(" 1m  flaky test"), "{left}");
-        assert_eq!(right, "7 msgs");
+        assert_eq!(left, "flaky test");
+        assert_eq!(right, " 1m  abc");
     }
 
     #[test]
@@ -1264,13 +1262,13 @@ mod session_tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4, "{text}");
         for line in &lines {
-            assert!(line.ends_with("msgs"), "{line}");
+            assert!(["51280befc", "51280ba80", "51270a84e", "512706203"].iter().any(|id| line.ends_with(id)), "{line}");
             assert_eq!(line.chars().count(), lines[0].chars().count(), "{text}");
             assert!(line.chars().count() <= 60, "{line}");
         }
-        assert!(lines[1].contains('…') && lines[1].ends_with("67 msgs"), "{text}");
+        assert!(lines[1].contains('…') && lines[1].ends_with("51280ba80"), "{text}");
         assert!(lines[2].contains("alpha beta"), "{text}");
-        assert!(lines[3].contains("(untitled)"), "{text}");
+        assert!(lines[3].contains("new"), "{text}");
     }
 
     #[test]

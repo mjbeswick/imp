@@ -2347,7 +2347,13 @@ fn desc_column(picker: &Picker, inner: usize) -> Option<usize> {
 /// The visible list as drawn lines, each with its item index and highlight.
 fn picker_lines(picker: &Picker, matches: &[usize], visible: usize, inner: usize, wrap: bool) -> Vec<(String, usize, bool)> {
     if matches.is_empty() {
-        return vec![("  no matches".into(), 0, false)];
+        // A title filter that finds nothing can still search what the sessions said.
+        let text = if picker.kind == PickKind::Session && !picker.title.starts_with("search") && !picker.filter.trim().is_empty() {
+            "  no titles match · Enter searches text"
+        } else {
+            "  no matches"
+        };
+        return vec![(text.into(), 0, false)];
     }
     let mut out = Vec::new();
     for row in 0..visible {
@@ -4184,7 +4190,9 @@ impl App {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let mut options: Vec<PickItem> = crate::store::Log::listing(&self.sessions_dir)
+        let listing = crate::store::Log::listing(&self.sessions_dir);
+        let total = listing.len();
+        let mut options: Vec<PickItem> = listing
             .into_iter()
             .map(|m| {
                 let (label, desc) = crate::store::session_row(&m, now);
@@ -4198,7 +4206,9 @@ impl App {
             .collect();
         options.truncate(20);
         mark_rows(&mut options, &self.session_marks());
-        Picker::new("sessions", options, PickKind::Session)
+        // Say so when the list is cut short; the rest are one search away.
+        let title = if total > options.len() { format!("sessions · {} of {total}", options.len()) } else { "sessions".into() };
+        Picker::new(title, options, PickKind::Session)
     }
 
     /// Sessions whose text mentions `query`, each row ending in a snippet.

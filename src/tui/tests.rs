@@ -1095,7 +1095,7 @@ fn working_sessions_spin_in_the_session_picker() {
     a.status.streaming = false;
     a.last_redraw = Instant::now() - Duration::from_millis(200);
     assert!(a.spin_sessions());
-    assert!(desc(&a).ends_with("msgs") && desc(&a).starts_with("  "), "{}", desc(&a));
+    assert!(desc(&a).ends_with(id.as_str()) && desc(&a).starts_with("  "), "{}", desc(&a));
     assert_eq!(desc(&a).chars().count(), first.chars().count(), "the cell changed width");
     a.last_redraw = Instant::now() - Duration::from_millis(200);
     assert!(!a.spin_sessions(), "an idle picker repainted");
@@ -6140,7 +6140,7 @@ fn the_sessions_modal_lists_a_blank_session() {
     a.run_command("sessions", &tx);
     let items = open_picker(&a).items.clone();
     assert_eq!(items.len(), 1, "the blank session is missing from the modal");
-    assert!(items[0].label.contains("(untitled)"), "{:?}", items[0].label);
+    assert!(items[0].label.contains("new"), "{:?}", items[0].label);
 }
 
 #[test]
@@ -7455,4 +7455,17 @@ fn provider_rows_keep_their_height_as_the_selection_moves() {
         heights.iter().all(|h| *h == heights[0]),
         "the list changed height as the selection moved: {heights:?}"
     );
+}
+
+#[test]
+fn a_title_filter_with_no_hits_offers_a_text_search() {
+    let mut a = multi_app("no-hits");
+    let (tx, _rx) = channel();
+    a.run_command("new", &tx);
+    a.run_command("sessions", &tx);
+    for c in "zzqx".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    let frame = strip(&a.frame(80, 16));
+    assert!(frame.contains("no titles match · Enter searches text"), "{frame}");
 }
