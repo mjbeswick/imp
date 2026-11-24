@@ -13,16 +13,16 @@
 
 ## 3. /model list
 
-- [ ] 3.1 Test: an unconfigured built-in (OpenAI with no key) is absent from `model_items`; a configured one is listed with `provider::model` values.
-- [ ] 3.2 Test: a disabled provider is absent; the active provider is kept even if unconfigured.
+- [x] 3.1 Test: an unconfigured built-in (OpenAI with no key) is absent from `model_items`; a configured one is listed with `provider::model` values.
+- [x] 3.2 Test: a disabled provider is absent; the active provider is kept even if unconfigured.
 - [x] 3.3 Implement: filter in `model_items`.
 
 ## 3b. Providers list states
 
-- [ ] 3.4 Test: the providers list marks the active provider as current, dims an unconfigured one with a no-key note, and strikes through a disabled one marked off. A provider both unconfigured and disabled shows as disabled.
-- [ ] 3.5 Implement: the three row states in `provider_items`.
+- [x] 3.4 Test: the providers list marks the active provider as current, dims an unconfigured one with a no-key note, and strikes through a disabled one marked off. A provider both unconfigured and disabled shows as disabled.
+- [x] 3.5 Implement: the three row states in `provider_items`. Built as text markers, "· no key" and "· off", with the current marker kept. Dimmed and struck-through styling is not built; it is a follow-up in the picker renderer.
 
 ## 4. Validation
 
-- [ ] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Record the size.
-- [ ] 4.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Record the size.
+- [x] 4.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
