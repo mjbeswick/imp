@@ -6891,6 +6891,33 @@ fn cancelling_the_config_modal_changes_nothing() {
 }
 
 #[test]
+fn plain_u_makes_the_selected_provider_active() {
+    let mut a = app();
+    let (tx, _cmds) = channel();
+    a.run_command("provider", &tx);
+    a.handle_key(Key::Down, &tx); // OpenAI
+    a.handle_key(Key::Char('u'), &tx);
+    assert_eq!(a.cfg.active_name, "openai", "u did not make OpenAI active");
+}
+
+#[test]
+fn the_model_list_has_no_provider_actions() {
+    let mut a = app();
+    a.cfg.named = vec![crate::config::NamedProvider {
+        name: "local".into(),
+        base: "http://localhost:4141/v1".into(),
+        model: "m".into(),
+        dialect: "openai".into(),
+        ..crate::config::NamedProvider::default()
+    }];
+    let (tx, _cmds) = channel();
+    a.run_command("model", &tx);
+    assert_eq!(open_picker(&a).kind, PickKind::Model);
+    a.handle_key(Key::Char('d'), &tx);
+    assert_eq!(a.cfg.named.len(), 1, "d on the model list deleted a provider");
+}
+
+#[test]
 fn enter_on_a_provider_opens_its_config() {
     let mut a = app();
     let (tx, _cmds) = channel();
