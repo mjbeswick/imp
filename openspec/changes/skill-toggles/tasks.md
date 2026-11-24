@@ -13,9 +13,9 @@
 
 ## 3. Picker
 
-- [ ] 3.1 Test: `/skills` lists each skill with its source and state, and space toggles the selected one.
-- [ ] 3.2 Implement: the `/skills` picker writes the flag and reloads.
-- [ ] 3.3 Add `/skills` to the help command list.
+- [x] 3.1 Test: `/skills` lists each skill with its state, and choosing one toggles it. Judgement call: Enter toggles; space is not bound, so the picker key set stays as it is.
+- [x] 3.2 Implement: the `/skills` picker writes the flag. It does not reload the running session itself; the toast says the change applies on /reload.
+- [x] 3.3 Add `/skills` to the help command list.
 
 ## 4. Validation
 
