@@ -79,7 +79,7 @@ Enter send · Alt+Enter newline · Esc cancel · Ctrl+C stop or quit · Ctrl+L c
 Up/Down history · Tab complete · PgUp/PgDn or the mouse wheel scroll
 Picker: type to filter · Up/Down move · PgUp/PgDn page · Enter choose · Tab/Right open folder · Left up · Esc cancel
 Ctrl+E expand the last tool call · Ctrl+R retry · Ctrl+T thinking · Ctrl+V paste the copy · Ctrl+G release the mouse · Ctrl+D leaves line mode
-Ctrl+O next waiting · Ctrl+N next session · Ctrl+P palette · ? keys, from an empty composer
+Ctrl+O next waiting · Ctrl+N next session · ? keys, from an empty composer
 ```
 
 ### Several sessions

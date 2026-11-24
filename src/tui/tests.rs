@@ -1248,58 +1248,6 @@ fn a_woken_session_out_of_view_joins_the_queue() {
 }
 
 #[test]
-fn ctrl_p_opens_the_palette_with_commands_and_keys() {
-    let mut a = app();
-    let (tx, _cmds) = channel();
-    a.handle_key(Key::Ctrl('p'), &tx);
-    let picker = open_picker(&a);
-    assert_eq!(picker.kind, PickKind::Palette);
-    assert_eq!(picker.title, "palette");
-    let values: Vec<&str> = picker.items.iter().map(|i| i.value.as_str()).collect();
-    assert!(values.contains(&"cmd:new"), "no command rows");
-    assert!(values.contains(&"key:expand"), "no key rows");
-    let expand = picker.items.iter().find(|i| i.value == "key:expand").unwrap();
-    assert_eq!(expand.desc, "Ctrl+E", "the shortcut is not shown");
-    assert!(strip(&a.frame(90, 20)).contains("palette"), "the picker title is not drawn");
-}
-
-#[test]
-fn the_palette_runs_a_command() {
-    let mut a = app();
-    let (tx, _cmds) = channel();
-    a.handle_key(Key::Ctrl('p'), &tx);
-    for c in "keys".chars() {
-        a.handle_key(Key::Char(c), &tx);
-    }
-    if let Some(Pending::Pick(p)) = &mut a.pending {
-        p.index = 0;
-    }
-    a.handle_key(Key::Enter, &tx);
-    assert_eq!(open_picker(&a).kind, PickKind::Keys, "the command did not run");
-}
-
-#[test]
-fn the_palette_replays_a_key() {
-    let mut a = app();
-    let (tx, _cmds) = channel();
-    a.push(Role::User, "something to clear");
-    a.handle_key(Key::Ctrl('p'), &tx);
-    for c in "clear".chars() {
-        a.handle_key(Key::Char(c), &tx);
-    }
-    assert!(
-        open_picker(&a).items.iter().any(|i| i.value == "key:clear"),
-        "the clear row"
-    );
-    if let Some(Pending::Pick(p)) = &mut a.pending {
-        p.index = 0;
-    }
-    a.handle_key(Key::Enter, &tx);
-    assert!(a.entries.is_empty(), "the key did not replay");
-    assert!(a.pending.is_none());
-}
-
-#[test]
 fn ctrl_d_keeps_a_draft() {
     let mut a = app();
     let (tx, _cmds) = channel();
@@ -1312,32 +1260,6 @@ fn ctrl_d_keeps_a_draft() {
     a.cursor = 0;
     a.handle_key(Key::Ctrl('d'), &tx);
     assert!(a.quit, "Ctrl+D did not quit from an empty draft");
-}
-
-#[test]
-fn every_palette_action_has_a_handler() {
-    let a = app();
-    let actions: Vec<String> = a.palette_items().into_iter().filter_map(|i| i.value.strip_prefix("key:").map(String::from)).collect();
-    assert!(!actions.iter().any(|v| v == "thinking"), "/think is already a palette row");
-    assert!(!actions.iter().any(|v| v == "keys"), "/keys is already a palette row");
-}
-
-#[test]
-fn the_palette_shows_command_keys_and_more_actions() {
-    let mut a = app();
-    let (tx, _cmds) = channel();
-    let items = a.palette_items();
-    let desc = |label: &str| items.iter().find(|i| i.label == label).map(|i| i.desc.clone()).unwrap_or_default();
-    assert!(desc("keys").ends_with(" · ?"), "{}", desc("keys"));
-    assert!(desc("next").ends_with(" · Ctrl+O"), "{}", desc("next"));
-    assert!(!desc("mode").contains('·'), "/mode does not do what Shift+Tab does");
-    assert_eq!(desc("steer now"), "Ctrl+S");
-    assert_eq!(desc("paste"), "Ctrl+V");
-    let before = a.entries.len();
-    a.palette_action("steer", &tx);
-    assert_eq!(a.entries.len(), before, "steer now with an empty draft did something");
-    a.palette_action("next-session", &tx);
-    assert_eq!(a.entries.last().unwrap().text, "one session");
 }
 
 #[test]
@@ -1390,10 +1312,6 @@ fn ctrl_t_toggles_thinking() {
     a.handle_key(Key::Ctrl('t'), &tx);
     assert_ne!(a.cfg.thinking, was, "Ctrl+T did not toggle thinking");
     assert!(matches!(rx.try_recv(), Ok(Cmd::SetThinking(on)) if on != was));
-    let think = a.palette_items().into_iter().find(|i| i.label == "think").unwrap();
-    assert!(think.desc.ends_with(" · Ctrl+T"), "{}", think.desc);
-    let retry = a.palette_items().into_iter().find(|i| i.label == "retry").unwrap();
-    assert!(retry.desc.ends_with(" · Ctrl+R"), "{}", retry.desc);
 }
 
 /// The keys a keys card row names. A row missing here fails the test.
@@ -1427,12 +1345,12 @@ fn card_keys(label: &str) -> Option<Vec<Key>> {
     })
 }
 
-/// An app in the state where `key` acts; `picker` opens the palette first.
+/// An app in the state where `key` acts; `picker` opens the command menu first.
 fn key_state(key: &Key, picker: bool) -> App {
     let mut a = if *key == Key::Ctrl('n') { multi_app("card-keys") } else { app() };
     let (tx, _rx) = channel();
     if picker {
-        a.handle_key(Key::Ctrl('p'), &tx);
+        a.handle_key(Key::Char('/'), &tx);
         return a;
     }
     let draft = |a: &mut App, text: &str, at_end: bool| {
@@ -1518,18 +1436,10 @@ fn every_listed_key_acts() {
             assert_ne!(before, fingerprint(&mut a), "{label}: {key:?} did nothing");
         }
     }
-    for (label, key, action) in PALETTE_ACTIONS {
-        let keys = card_keys(key).unwrap_or_else(|| panic!("palette row {label:?} names {key:?}, not a key"));
-        let mut a = key_state(&keys[0], false);
-        let before = fingerprint(&mut a);
-        let (tx, _rx) = channel();
-        a.palette_action(action, &tx);
-        assert_ne!(before, fingerprint(&mut a), "palette {label} did nothing");
-    }
 }
 
 #[test]
-fn ctrl_n_and_p_switch_sessions_and_keep_drafts() {
+fn ctrl_n_switches_sessions_and_keeps_drafts() {
     let mut a = multi_app("switch");
     let (tx, _rx) = channel();
     a.handle_key(Key::Ctrl('n'), &tx);
@@ -1545,10 +1455,6 @@ fn ctrl_n_and_p_switch_sessions_and_keep_drafts() {
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
     assert!(strip(&a.title_bar(80)).starts_with(" 1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
-    a.handle_key(Key::Ctrl('p'), &tx);
-    let picker = open_picker(&a);
-    assert_eq!(picker.kind, PickKind::Palette, "Ctrl+P left the palette");
-    assert_eq!((a.at, a.input.as_str()), (0, "draft one"), "Ctrl+P switched session");
 }
 
 /// Three live sessions: 0 waits for approval, 1 has replied, 2 is in view.
@@ -5673,18 +5579,6 @@ fn ctrl_shift_letter_still_maps_to_ctrl() {
 fn termios_matches_the_glibc_layout() {
     assert_eq!(std::mem::size_of::<Termios>(), 60);
     assert_eq!(std::mem::align_of::<Termios>(), 4);
-}
-
-#[test]
-fn palette_names_are_never_cut() {
-    let mut a = app();
-    let (tx, _rx) = channel();
-    a.handle_key(Key::Ctrl('p'), &tx);
-    let Some(Pending::Pick(p)) = &a.pending else { panic!("no palette") };
-    for (i, item) in p.items.iter().enumerate() {
-        let row = picker_row(p, p.index, i, 56, false).join("");
-        assert!(row.contains(&item.label), "{} is cut: {row:?}", item.label);
-    }
 }
 
 #[test]

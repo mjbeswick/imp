@@ -121,7 +121,6 @@ The lists `auth`, `render`, `pass_env` and `allow` stay in the config file.
 
 | Key | Does |
 |---|---|
-| Ctrl+P | the palette: every command and key action in one list |
 | `?` | the keys card, from an empty draft |
 | `/` | the command list |
 | Up, Down | queued messages, then your history |

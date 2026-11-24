@@ -2071,7 +2071,6 @@ enum PickKind {
     Provider,
     Mode,
     Keys,
-    Palette,
     /// The `/settings` form: each row steps its own value.
     Settings,
     /// The models offered for a provider's model field.
@@ -2283,7 +2282,7 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
     let left = start - 4;
     let mut label = item.label.clone();
     let mut desc = item.desc.clone();
-    if !matches!(picker.kind, PickKind::Command | PickKind::Keys | PickKind::Palette) {
+    if !matches!(picker.kind, PickKind::Command | PickKind::Keys) {
         label = fit(&label, left);
         if picker.kind == PickKind::Session {
             // Counts line up on their last digit.
@@ -2336,7 +2335,7 @@ fn desc_column(picker: &Picker, inner: usize) -> Option<usize> {
     // description gives way instead.
     let names = matches!(picker.kind, PickKind::Provider | PickKind::Model | PickKind::Agent | PickKind::Theme | PickKind::Mode);
     let mut left = if names { longest + 2 } else { longest.max(10) + 2 };
-    if !names && !matches!(picker.kind, PickKind::Command | PickKind::Keys | PickKind::Palette) {
+    if !names && !matches!(picker.kind, PickKind::Command | PickKind::Keys) {
         // The right column stays whole, one space off the wall; the
         // label gives way.
         let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
@@ -2383,23 +2382,6 @@ fn first_run_outcome(result: Result<(), String>) -> KeyOutcome {
         Err(e) => KeyOutcome::Save(Some(format!("key saved; the check did not run ({e})"))),
     }
 }
-
-/// Actions the palette lists with the shortcut that also runs them.
-const PALETTE_ACTIONS: &[(&str, &str, &str)] = &[
-    ("next session", "Ctrl+N", "next-session"),
-    ("stop the turn", "Esc", "stop"),
-    ("expand tools", "Ctrl+E", "expand"),
-    ("clear the view", "Ctrl+L", "clear"),
-    ("scroll up", "PgUp", "page-up"),
-    ("scroll down", "PgDn", "page-down"),
-    ("release the mouse", "Ctrl+G", "release"),
-    ("steer now", "Ctrl+S", "steer"),
-    ("paste", "Ctrl+V", "paste"),
-    ("quit", "Ctrl+D", "quit"),
-];
-
-/// Commands a key does exactly; the palette shows the key after the description.
-const COMMAND_KEYS: &[(&str, &str)] = &[("/keys", "?"), ("/next", "Ctrl+O"), ("/think", "Ctrl+T"), ("/retry", "Ctrl+R")];
 
 /// Commands whose argument is typed rather than picked.
 const FREE_TEXT: &[&str] = &["queue", "rename", "diff"];
@@ -3757,14 +3739,6 @@ impl App {
             }
             Key::Ctrl('c') => self.quit = true,
             Key::Ctrl('d') if self.input.is_empty() => self.quit = true,
-            Key::Ctrl('p') => {
-                self.pending = Some(Pending::Pick(Picker::new(
-                    "palette",
-                    self.palette_items(),
-                    PickKind::Palette,
-                )));
-                self.dirty = true;
-            }
             Key::Ctrl('n') if self.panes.len() > 1 => {
                 let n = self.panes.len();
                 self.show((self.at + 1) % n);
@@ -4093,56 +4067,6 @@ impl App {
                 actions: Vec::new(),
             })
             .collect()
-    }
-
-    /// Commands and key actions in one list, each with its shortcut.
-    fn palette_items(&self) -> Vec<PickItem> {
-        let mut items: Vec<PickItem> = COMMANDS
-            .iter()
-            .map(|(name, desc)| PickItem {
-                label: name.trim_start_matches('/').to_string(),
-                value: format!("cmd:{}", name.trim_start_matches('/')),
-                desc: match COMMAND_KEYS.iter().find(|(c, _)| c == name) {
-                    Some((_, key)) => format!("{desc} · {key}"),
-                    None => desc.to_string(),
-                },
-                actions: Vec::new(),
-            })
-            .collect();
-        for (label, key, action) in PALETTE_ACTIONS {
-            items.push(PickItem {
-                label: label.to_string(),
-                value: format!("key:{action}"),
-                desc: key.to_string(),
-                actions: Vec::new(),
-            });
-        }
-        items
-    }
-
-    /// Run the key an action row names, as if it were pressed.
-    fn palette_action(&mut self, action: &str, tx: &Sender<Cmd>) {
-        match action {
-            "next-session" => {
-                let n = self.panes.len();
-                if n > 1 {
-                    self.show((self.at + 1) % n);
-                } else {
-                    self.push(Role::Info, "one session");
-                }
-            }
-            "steer" => self.handle_key_inner(Key::Ctrl('s'), tx),
-            "paste" => self.handle_key_inner(Key::Ctrl('v'), tx),
-            "stop" => self.handle_key_inner(Key::Esc, tx),
-            "expand" => self.handle_key_inner(Key::Ctrl('e'), tx),
-            "clear" => self.handle_key_inner(Key::Ctrl('l'), tx),
-            "page-up" => self.handle_key_inner(Key::PageUp, tx),
-            "page-down" => self.handle_key_inner(Key::PageDown, tx),
-            "release" => self.handle_key_inner(Key::Ctrl('g'), tx),
-            "quit" => self.handle_key_inner(Key::Ctrl('d'), tx),
-            _ => {}
-        }
-        self.dirty = true;
     }
 
     fn mode_items(&self) -> Vec<PickItem> {
@@ -6227,17 +6151,6 @@ impl App {
                                     },
                                     None => self.set_model(&choice.value, tx),
                                 }
-                            }
-                            PickKind::Palette => {
-                                let value = choice.value.clone();
-                                self.pending = None;
-                                if let Some(cmd) = value.strip_prefix("cmd:") {
-                                    self.run_command(cmd, tx);
-                                } else if let Some(action) = value.strip_prefix("key:") {
-                                    self.palette_action(action, tx);
-                                }
-                                self.dirty = true;
-                                return;
                             }
                             PickKind::Mode if choice.value == "add-rule" => {
                                 self.pending = Some(Pending::AllowRule { value: String::new() });

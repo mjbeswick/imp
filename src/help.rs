@@ -30,7 +30,6 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Ctrl+G", "release the mouse to select text"),
     ("Ctrl+O", "next session waiting on you"),
     ("Ctrl+N", "next live session"),
-    ("Ctrl+P", "commands and keys in one palette"),
     ("?", "this list, from an empty draft; also /keys"),
     ("PgUp, PgDn", "scroll"),
     ("Picker", "type to filter, Enter choose, Esc cancel"),
