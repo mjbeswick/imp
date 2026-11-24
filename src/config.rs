@@ -587,7 +587,8 @@ impl Config {
             return Ok(());
         }
         match var {
-            Some(var) => Err(format!("{var} is not set")),
+            // The bare name: the caller words the message.
+            Some(var) => Err(var),
             None => Ok(()),
         }
     }

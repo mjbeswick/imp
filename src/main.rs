@@ -1031,6 +1031,14 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_key_message_is_not_doubled() {
+        let mut cfg = config::Config::default();
+        let err = key_gate(false, cfg.resolve_key_env(|_| None)).unwrap_err();
+        assert!(!err.contains("is not set is not set"), "{err}");
+        assert!(err.starts_with("DEEPSEEK_API_KEY is not set;"), "{err}");
+    }
+
+    #[test]
     fn a_missing_key_stops_line_mode_but_not_the_chat() {
         let err = key_gate(false, Err("DEEPSEEK_API_KEY".into())).unwrap_err();
         assert!(err.contains("DEEPSEEK_API_KEY"), "{err}");
