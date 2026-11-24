@@ -15,11 +15,11 @@
 
 ## 3. Jail and new files
 
-- [x] 3.1 Test: a target outside the session directory is refused before launch. Judgement call: refuse rather than ask; an ask flow is a follow-up.
-- [x] 3.2 Test: a missing target is refused, so no file is created. Judgement call: refuse rather than ask.
-- [ ] 3.3 Implement: the jail prompt and the new-file confirmation.
+- [x] 3.1 Test: a target outside the session directory asks before launch; declining launches nothing.
+- [x] 3.2 Test: a missing target asks, and only a yes creates the file.
+- [x] 3.3 Implement: a Confirm picker, "No" first; a missing file is created only inside the session folder.
 
 ## 4. Validation
 
-- [ ] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Record the size.
-- [ ] 4.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Record the size.
+- [x] 4.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
