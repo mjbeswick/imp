@@ -7009,3 +7009,31 @@ fn the_status_line_shows_a_paused_goal() {
     let line = a.status_line(120);
     assert!(line.contains("goal 2/5 · paused"), "{line}");
 }
+
+#[test]
+fn typing_after_opening_a_saved_provider_edits_at_the_end() {
+    let (mut a, _config) = provider_app();
+    a.cfg.named.push(crate::config::NamedProvider {
+        name: "work".into(),
+        base: "http://box/v1".into(),
+        model: "m1".into(),
+        models: Vec::new(),
+        key_env: String::new(),
+        dialect: "openai".into(),
+    });
+    let (tx, _rx) = channel();
+    a.run_command("provider", &tx);
+    provider_row(&mut a, "work");
+    a.handle_key(Key::Enter, &tx);
+    type_text(&mut a, &tx, "X");
+    assert_eq!(form_field(&a, "base"), "http://box/v1X", "typing did not append to the saved value");
+}
+
+#[test]
+fn typing_after_opening_the_add_form_goes_into_the_first_field() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    open_add_form(&mut a, &tx);
+    type_text(&mut a, &tx, "abc");
+    assert_eq!(form_field(&a, "base"), "abc");
+}

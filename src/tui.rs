@@ -4811,6 +4811,8 @@ impl App {
                     .into_iter()
                     .map(|label| (label, String::new()))
                     .collect();
+                // The caret starts at the end of the field.
+                self.form_caret = usize::MAX;
                 self.pending = Some(Pending::ProviderForm {
                     name: name.to_string(),
                     fields,
@@ -4831,6 +4833,8 @@ impl App {
                     ("models".to_string(), profile.models.join(", ")),
                     ("api_key".to_string(), String::new()),
                 ];
+                // The caret starts at the end of the field.
+                self.form_caret = usize::MAX;
                 self.pending = Some(Pending::ProviderForm {
                     name: name.to_string(),
                     fields,
@@ -4928,6 +4932,8 @@ impl App {
                 ("models".to_string(), profile.models.join(", ")),
                 ("api_key".to_string(), String::new()),
             ];
+            // The caret starts at the end of the field.
+            self.form_caret = usize::MAX;
             self.pending = Some(Pending::ProviderForm { name: value.to_string(), fields, at: 0 });
         } else if let Ok(provider) = crate::providers::Provider::parse(value) {
             let defaults = provider.profile();
@@ -4939,6 +4945,8 @@ impl App {
                 ("models".to_string(), String::new()),
                 ("api_key".to_string(), String::new()),
             ];
+            // The caret starts at the end of the field.
+            self.form_caret = usize::MAX;
             self.pending = Some(Pending::ProviderForm { name: format!("{value}-custom"), fields, at: 0 });
         }
         self.dirty = true;
@@ -5105,6 +5113,8 @@ impl App {
         let (base, model, dialect, key_env) = (value(0), value(1), value(2), value(3));
         if base.is_empty() || model.is_empty() || dialect.is_empty() {
             self.push(Role::Error, "provider: base, model, and dialect are required");
+            // The caret starts at the end of the field.
+            self.form_caret = usize::MAX;
             self.pending = Some(Pending::ProviderForm {
                 name,
                 fields,
@@ -5118,6 +5128,8 @@ impl App {
                 Role::Error,
                 "provider: dialect must be deepseek, openai, anthropic, gemini, ollama, or custom",
             );
+            // The caret starts at the end of the field.
+            self.form_caret = usize::MAX;
             self.pending = Some(Pending::ProviderForm {
                 name,
                 fields,
@@ -5132,12 +5144,16 @@ impl App {
         if !api_key.is_empty() {
             if key_env.is_empty() {
                 self.push(Role::Error, "provider: an API key needs a key variable (key_env) to save under");
+                // The caret starts at the end of the field.
+                self.form_caret = usize::MAX;
                 self.pending = Some(Pending::ProviderForm { name, fields, at: 3 });
                 self.dirty = true;
                 return;
             }
             if let Err(e) = crate::config::save_key(&key_env, &api_key) {
                 self.push(Role::Error, e);
+                // The caret starts at the end of the field.
+                self.form_caret = usize::MAX;
                 self.pending = Some(Pending::ProviderForm { name, fields, at: 5 });
                 self.dirty = true;
                 return;
