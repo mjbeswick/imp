@@ -8,8 +8,8 @@
 
 ## 2. Configured check
 
-- [ ] 2.1 Test: a built-in provider with no key variable set is configured only if it needs no key.
-- [ ] 2.2 Implement: a `configured` check using the same lookup as `resolve_key_env`.
+- [x] 2.1 Test: a built-in provider with no key variable set is configured only if it needs no key.
+- [x] 2.2 Implement: a `configured` check using the same lookup as `resolve_key_env`.
 
 ## 3. /model list
 
