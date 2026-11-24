@@ -7,8 +7,8 @@
 ## 2. Skills
 
 - [ ] 2.1 Write `optional-skills/browse/SKILL.md`: `fetch` first, obscura for JavaScript pages, install hint, no stealth modes. Test 1.1 passes.
-- [ ] 2.2 Write `optional-skills/show-image/SKILL.md`: detect the renderer, use `show`. Test 1.1 passes.
-- [ ] 2.3 Write `optional-skills/show-chart/SKILL.md`: detect the renderer, use `show`. Test 1.1 passes.
+- [ ] 2.2 Write `optional-skills/image/SKILL.md`: chafa with `show`, install hint `brew install chafa`. Test 1.1 passes.
+- [ ] 2.3 Write `optional-skills/mermaid/SKILL.md`: graphs-tui with `show`, install hint `cargo install graphs-tui`. Test 1.1 passes.
 
 ## 3. Documentation
 
@@ -17,6 +17,6 @@
 ## 4. Validation
 
 - [ ] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Expected: size change zero.
-- [ ] 4.2 Scan `optional-skills/` for token-like strings and for double square brackets or redaction prefixes. Expected: no hits.
-- [ ] 4.3 Manual: copy one skill into a scratch config directory outside the repo and confirm the loader lists it.
+- [ ] 4.2 Scan `optional-skills/` for token-like strings and for placeholder text. Expected: no hits.
+- [ ] 4.3 Manual: copy one skill into a scratch config directory outside the repo and confirm the loader lists it. Running chafa or graphs-tui is not possible here (not installed); report that as not run.
 - [ ] 4.4 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.

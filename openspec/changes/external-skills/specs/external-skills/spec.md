@@ -4,7 +4,7 @@
 
 ### Requirement: Optional skills ship outside the binary
 
-The system SHALL ship the `browse`, `show-image`, and `show-chart` skills under `optional-skills/<name>/SKILL.md`, SHALL NOT compile them into the binary, and SHALL NOT write them during `imp init`.
+The system SHALL ship the `browse`, `image`, and `mermaid` skills under `optional-skills/<name>/SKILL.md`, SHALL NOT compile them into the binary, and SHALL NOT write them during `imp init`.
 
 #### Scenario: Fresh install
 - **WHEN** `imp init` runs on a fresh machine
@@ -50,13 +50,17 @@ The `browse` skill SHALL direct the model to use `fetch` first, SHALL use obscur
 - **WHEN** `fetch` returns an empty shell for a page
 - **THEN** the model uses obscura to render it
 
-### Requirement: Image and chart skills use show
+### Requirement: Image and Mermaid skills use show
 
-The `show-image` and `show-chart` skills SHALL display output through the `show` option of `bash`, and SHALL detect the renderer first.
+The `image` skill SHALL render images with chafa, and the `mermaid` skill SHALL render Mermaid diagrams with graphs-tui. Both SHALL display their output through the `show` option of `bash`.
 
 #### Scenario: Image shown
 - **WHEN** the user asks to show an image in the terminal
-- **THEN** the skill renders it with the detected renderer and `show` set to true
+- **THEN** the skill renders it with chafa and `show` set to true
+
+#### Scenario: Mermaid shown
+- **WHEN** the user asks to show a Mermaid diagram in the terminal
+- **THEN** the skill renders it with graphs-tui and `show` set to true
 
 ### Requirement: No credentials in skills
 

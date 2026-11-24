@@ -10,7 +10,7 @@ follow that route for the new skills, for the reasons below.
 ## Decisions
 
 **Location: `optional-skills/`, not `assets/skills/`.** Files under `assets/` are
-compiled in, and the skills here need external programs, so they are opt-in. Judgement
+compiled in, and these skills need external programs, so they are opt-in. Judgement
 call: a separate folder keeps core and optional skills apart. Cost if wrong: a later move
 to `assets/` changes paths only.
 
@@ -18,6 +18,10 @@ to `assets/` changes paths only.
 No new command, no change to `imp init`, which per its spec writes exactly one example.
 Judgement call: the smallest change that meets the goal. Cost if wrong: a user may miss
 the copy step; the README names it.
+
+**Names: `browse`, `image`, `mermaid`.** The user chose `image` for chafa and `mermaid`
+for graphs-tui, replacing the earlier `show-image` and `show-chart`. Judgement call: name
+each skill by the content it handles, so the model routes on what the user asked for.
 
 **No new code path.** The loader already reads `SKILL.md` folders from the config
 directory, so the skills need no Rust change. The one code-adjacent item is a test that
@@ -32,10 +36,15 @@ in the model's `bash` calls, which keeps the binary free of tool-specific logic.
 empty shell without JavaScript. The skill does not enable stealth or bot-protection modes,
 and it tells the model not to use them against sites that forbid automated access.
 
-**show-image and show-chart.** Both set `show: true` on `bash`. The renderer
-(`chafa` for images; a chart tool or plain text for charts) is detected first. Expected
-binary change: zero bytes, because nothing is compiled in. `scripts/size.sh` should report
-no change.
+**image.** Uses chafa (`chafa --format symbols`) with `show: true` on `bash`. Install hint:
+`brew install chafa`. Not installed on this machine, so the skill is untested here.
+
+**mermaid.** Uses graphs-tui, a Rust crate installed with `cargo install graphs-tui`. Output
+is Unicode or ASCII text, shown with `show: true`. Not installed here, so it is untested
+here. Bar and line charts are out of scope.
+
+**Expected binary change: zero bytes**, because nothing is compiled in. `scripts/size.sh`
+should report no change.
 
 ## Validation
 
@@ -43,4 +52,5 @@ no change.
   body is under 4096 bytes.
 - `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
 - Manual check: copy one skill into a temp config directory and confirm the loader lists
-  it (run in a scratch directory outside the repo).
+  it (run in a scratch directory outside the repo). Running chafa or graphs-tui needs those
+  tools installed, which this machine lacks; that check is reported as not run.
