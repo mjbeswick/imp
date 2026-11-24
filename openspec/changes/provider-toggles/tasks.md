@@ -20,7 +20,7 @@
 ## 3b. Providers list states
 
 - [x] 3.4 Test: the providers list marks the active provider as current, dims an unconfigured one with a no-key note, and strikes through a disabled one marked off. A provider both unconfigured and disabled shows as disabled.
-- [x] 3.5 Implement: the three row states in `provider_items`. Built as text markers, "· no key" and "· off", with the current marker kept. Dimmed and struck-through styling is not built; it is a follow-up in the picker renderer.
+- [x] 3.5 Implement: the three row states in `provider_items`. Built as text markers, "· no key" and "· off", with the current marker kept. Dimmed (SGR 2) and struck-through (SGR 9) styling is applied to single-line rows.
 
 ## 4. Validation
 
