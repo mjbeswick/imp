@@ -2040,6 +2040,8 @@ enum PickKind {
     Settings,
     /// The models offered for a provider's model field.
     ProviderModel,
+    /// `/skills`: each skill on or off; a choice flips it and saves the config.
+    Skill,
 }
 
 #[derive(Clone)]
@@ -4001,6 +4003,32 @@ impl App {
         items
     }
 
+    /// Every skill on disk and every switched-off one, each marked on or off.
+    fn skill_items(&self) -> Vec<PickItem> {
+        let mut found: Vec<(String, String)> = crate::store::load_skills(&self.cfg, &self.root)
+            .into_iter()
+            .map(|s| (s.name, s.description))
+            .collect();
+        for name in &self.cfg.disabled_skills {
+            if !found.iter().any(|(n, _)| n == name) {
+                found.push((name.clone(), "switched off".to_string()));
+            }
+        }
+        found.sort();
+        found
+            .into_iter()
+            .map(|(name, about)| {
+                let state = if self.cfg.skill_disabled(&name) { "off" } else { "on" };
+                PickItem {
+                    label: name.clone(),
+                    desc: format!("{state} · {about}"),
+                    value: name,
+                    actions: Vec::new(),
+                }
+            })
+            .collect()
+    }
+
     fn theme_items(&self) -> Vec<PickItem> {
         let current = self.palette.theme_name();
         crate::theme::names()
@@ -5475,6 +5503,11 @@ impl App {
             "shell" => {
                 let _ = tx.send(Cmd::Shell);
             }
+            "skills" => {
+                let items = self.skill_items();
+                self.pending = Some(Pending::Pick(Picker::new("skills", items, PickKind::Skill)));
+                self.dirty = true;
+            }
             other if other == "edit" || other.starts_with("edit ") || other == "open" || other.starts_with("open ") => {
                 let gui = other == "open" || other.starts_with("open ");
                 let rest = other.trim_start_matches(if gui { "open" } else { "edit" }).trim();
@@ -6136,6 +6169,20 @@ impl App {
                             PickKind::Verbosity => {
                                 self.verbosity = Verbosity::parse(&choice.value).unwrap_or(self.verbosity);
                                 self.toast(format!("verbosity: {}", choice.value));
+                            }
+                            PickKind::Skill => {
+                                let name = choice.value.clone();
+                                let enable = self.cfg.skill_disabled(&name);
+                                let key = format!("skill.{name}.enabled");
+                                let text = if enable { "true" } else { "false" };
+                                match crate::config::save_setting(&self.config_path, &key, text) {
+                                    Ok(()) => {
+                                        let _ = self.cfg.set(&key, text);
+                                        // The running session picks this up on /reload.
+                                        self.toast(format!("{name}: {} · applies on /reload", if enable { "on" } else { "off" }));
+                                    }
+                                    Err(e) => self.push(Role::Error, e),
+                                }
                             }
                             PickKind::Theme => {
                                 let _ = crate::theme::save(&choice.value);

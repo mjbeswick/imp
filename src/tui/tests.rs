@@ -6655,6 +6655,32 @@ fn typed_text_is_ignored_in_the_dialect() {
 }
 
 #[test]
+fn skills_picker_toggles_and_saves_a_skill() {
+    let dir = std::env::temp_dir().join(format!("imp-skills-picker-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config");
+    std::fs::write(&config, "").unwrap();
+    let mut a = app();
+    a.config_path = config.clone();
+    let (tx, _cmds) = channel();
+    a.run_command("skills", &tx);
+    let picker = open_picker(&a);
+    assert_eq!(picker.kind, PickKind::Skill);
+    assert!(picker.items.iter().any(|i| i.value == "config"), "{:?}", picker.items.len());
+    a.handle_key(Key::Enter, &tx);
+    assert!(a.cfg.skill_disabled("config"));
+    assert!(std::fs::read_to_string(&config).unwrap().contains("skill.config.enabled = false"));
+    let loaded = |a: &App| crate::store::load_skills(&a.cfg, &a.root);
+    assert!(!loaded(&a).iter().any(|s| s.name == "config"), "a switched-off skill is still loaded");
+    // Choosing it again turns it back on.
+    a.run_command("skills", &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert!(!a.cfg.skill_disabled("config"));
+    assert!(loaded(&a).iter().any(|s| s.name == "config"));
+}
+
+#[test]
 fn an_unconfigured_or_disabled_provider_is_not_in_the_model_list() {
     let (mut a, _config) = provider_app();
     // Unconfigured: the row is offered only when this process has the key.
