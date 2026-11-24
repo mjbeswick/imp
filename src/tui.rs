@@ -6002,6 +6002,29 @@ impl App {
                         self.dirty = true;
                         return;
                     }
+                    // `d` deletes a named provider. A built-in cannot be deleted; it can
+                    // only be switched off with space.
+                    Key::Char('d') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
+                        if let Some(choice) = picker.selected().cloned() {
+                            let name = choice.value;
+                            if self.cfg.named.iter().any(|n| n.name == name) {
+                                self.cfg.named.retain(|n| n.name != name);
+                                match crate::config::save_named(&self.config_path, &self.cfg.named) {
+                                    Ok(()) => {
+                                        if self.cfg.active_name == name {
+                                            let _ = self.cfg.set_active("deepseek");
+                                        }
+                                        self.toast(format!("deleted {name}"));
+                                    }
+                                    Err(e) => self.push(Role::Error, e),
+                                }
+                            } else {
+                                self.toast(format!("{name} is built in; switch it off with space"));
+                            }
+                        }
+                        self.dirty = true;
+                        return;
+                    }
                     // Space switches the selected provider on or off, and saves it.
                     Key::Char(' ') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
                         if let Some(choice) = picker.selected().cloned() {

@@ -6801,6 +6801,40 @@ fn space_on_a_provider_toggles_it_and_saves_the_switch() {
 }
 
 #[test]
+fn d_deletes_a_named_provider_and_refuses_a_built_in() {
+    let dir = std::env::temp_dir().join(format!("imp-provider-delete-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config");
+    std::fs::write(&config, "").unwrap();
+    let local = crate::config::NamedProvider {
+        name: "local".into(),
+        base: "http://localhost:4141/v1".into(),
+        model: "m".into(),
+        dialect: "openai".into(),
+        ..crate::config::NamedProvider::default()
+    };
+    let mut a = app();
+    a.config_path = config.clone();
+    a.cfg.named = vec![local];
+    crate::config::save_named(&config, &a.cfg.named).unwrap();
+    let (tx, _cmds) = channel();
+    // A built-in is refused, and nothing changes.
+    a.run_command("provider", &tx);
+    a.handle_key(Key::Down, &tx); // OpenAI
+    a.handle_key(Key::Char('d'), &tx);
+    assert_eq!(a.cfg.named.len(), 1, "a built-in was deleted");
+    // The named provider is deleted from the config.
+    a.run_command("provider", &tx);
+    for _ in 0..6 {
+        a.handle_key(Key::Down, &tx); // past the six built-ins, to "local"
+    }
+    a.handle_key(Key::Char('d'), &tx);
+    assert!(a.cfg.named.is_empty(), "the named provider was not deleted");
+    assert!(!std::fs::read_to_string(&config).unwrap().contains("local"), "deleted provider still in the file");
+}
+
+#[test]
 fn enter_on_a_provider_opens_its_config() {
     let mut a = app();
     let (tx, _cmds) = channel();
