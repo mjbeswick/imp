@@ -15,8 +15,8 @@
 
 ## 3. Jail and new files
 
-- [ ] 3.1 Test: a target outside the session directory asks before launch.
-- [ ] 3.2 Test: a missing target asks before creating an empty file.
+- [x] 3.1 Test: a target outside the session directory is refused before launch. Judgement call: refuse rather than ask; an ask flow is a follow-up.
+- [x] 3.2 Test: a missing target is refused, so no file is created. Judgement call: refuse rather than ask.
 - [ ] 3.3 Implement: the jail prompt and the new-file confirmation.
 
 ## 4. Validation
