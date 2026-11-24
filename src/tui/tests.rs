@@ -6762,6 +6762,56 @@ fn a_missing_target_asks_then_creates_it() {
 }
 
 #[test]
+fn the_provider_list_shows_every_built_in_and_named_provider() {
+    let mut a = app();
+    a.cfg.named = vec![crate::config::NamedProvider {
+        name: "local".into(),
+        base: "http://localhost:4141/v1".into(),
+        model: "m".into(),
+        dialect: "openai".into(),
+        ..crate::config::NamedProvider::default()
+    }];
+    let labels: Vec<String> = a.provider_items().into_iter().map(|i| i.label).collect();
+    for built_in in ["deepseek", "openai", "anthropic", "gemini", "ollama", "custom"] {
+        assert!(labels.iter().any(|l| l == built_in), "{built_in} missing: {labels:?}");
+    }
+    assert!(labels.iter().any(|l| l == "local"), "named provider missing: {labels:?}");
+}
+
+#[test]
+fn space_on_a_provider_toggles_it_and_saves_the_switch() {
+    let dir = std::env::temp_dir().join(format!("imp-provider-space-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config");
+    std::fs::write(&config, "").unwrap();
+    let mut a = app();
+    a.config_path = config.clone();
+    let (tx, _cmds) = channel();
+    a.run_command("provider", &tx);
+    a.handle_key(Key::Down, &tx); // OpenAI
+    a.handle_key(Key::Ctrl('t'), &tx);
+    assert!(a.cfg.provider_disabled("openai"), "Ctrl+T did not switch OpenAI off");
+    assert!(std::fs::read_to_string(&config).unwrap().contains("provider.openai.enabled = false"));
+    // Space again turns it back on.
+    a.run_command("provider", &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Ctrl('t'), &tx);
+    assert!(!a.cfg.provider_disabled("openai"));
+}
+
+#[test]
+fn enter_on_a_provider_opens_its_config() {
+    let mut a = app();
+    let (tx, _cmds) = channel();
+    a.run_command("provider", &tx);
+    // Rows are built-ins in order: DeepSeek, then OpenAI.
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(form_field(&a, "base"), "https://api.openai.com/v1", "Enter did not open OpenAI's config");
+}
+
+#[test]
 fn a_wrapped_provider_row_is_still_styled() {
     let item = PickItem {
         label: "anthropic".into(),

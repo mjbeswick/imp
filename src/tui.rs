@@ -5993,6 +5993,25 @@ impl App {
                         self.dirty = true;
                         return;
                     }
+                    // Ctrl+T switches the selected provider on or off, and saves it.
+                    // Space types into the filter, so it cannot be the toggle.
+                    Key::Ctrl('t') if picker.kind == PickKind::Provider => {
+                        if let Some(choice) = picker.selected().cloned() {
+                            let name = choice.value;
+                            let enable = self.cfg.provider_disabled(&name);
+                            let key = format!("provider.{name}.enabled");
+                            let text = if enable { "true" } else { "false" };
+                            match crate::config::save_setting(&self.config_path, &key, text) {
+                                Ok(()) => {
+                                    let _ = self.cfg.set(&key, text);
+                                    self.toast(format!("{name}: {}", if enable { "on" } else { "off" }));
+                                }
+                                Err(e) => self.push(Role::Error, e),
+                            }
+                        }
+                        self.dirty = true;
+                        return;
+                    }
                     Key::Ctrl('e') if picker.kind == PickKind::Provider => {
                         if let Some(choice) = picker.selected().cloned() {
                             self.configure_provider(&choice.value);
