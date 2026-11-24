@@ -5986,16 +5986,24 @@ impl App {
                     }
                     // Ctrl+E configures the highlighted provider from a typed
                     // `/provider`, where letters filter the list.
-                    Key::Ctrl('u') if picker.kind == PickKind::Provider => {
+                    Key::Ctrl('u') | Key::Char('u') if picker.kind == PickKind::Provider => {
                         if let Some(choice) = picker.selected().cloned() {
                             self.use_provider(&choice.value, tx);
                         }
                         self.dirty = true;
                         return;
                     }
-                    // Ctrl+T switches the selected provider on or off, and saves it.
-                    // Space types into the filter, so it cannot be the toggle.
-                    Key::Ctrl('t') if picker.kind == PickKind::Provider => {
+                    // Plain keys act on the provider list, but not while text typed
+                    // into the composer is still feeding the picker's prefix.
+                    Key::Char('u') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
+                        if let Some(choice) = picker.selected().cloned() {
+                            self.use_provider(&choice.value, tx);
+                        }
+                        self.dirty = true;
+                        return;
+                    }
+                    // Space switches the selected provider on or off, and saves it.
+                    Key::Char(' ') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
                         if let Some(choice) = picker.selected().cloned() {
                             let name = choice.value;
                             let enable = self.cfg.provider_disabled(&name);
@@ -6113,7 +6121,8 @@ impl App {
                         self.pending = Some(Pending::Pick(picker));
                         return;
                     }
-                    Key::Char(c) => picker.filter_push(c),
+                    // The provider list is short, so its letters are keys, not a filter.
+                    Key::Char(c) if picker.kind != PickKind::Provider => picker.filter_push(c),
                     Key::Tab if picker.kind == PickKind::Command => {
                         if let Some(choice) = picker.selected() {
                             let word = choice.value.trim_start_matches('/').to_string();

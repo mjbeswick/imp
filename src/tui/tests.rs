@@ -6790,13 +6790,13 @@ fn space_on_a_provider_toggles_it_and_saves_the_switch() {
     let (tx, _cmds) = channel();
     a.run_command("provider", &tx);
     a.handle_key(Key::Down, &tx); // OpenAI
-    a.handle_key(Key::Ctrl('t'), &tx);
-    assert!(a.cfg.provider_disabled("openai"), "Ctrl+T did not switch OpenAI off");
+    a.handle_key(Key::Char(' '), &tx);
+    assert!(a.cfg.provider_disabled("openai"), "space did not switch OpenAI off");
     assert!(std::fs::read_to_string(&config).unwrap().contains("provider.openai.enabled = false"));
     // Space again turns it back on.
     a.run_command("provider", &tx);
     a.handle_key(Key::Down, &tx);
-    a.handle_key(Key::Ctrl('t'), &tx);
+    a.handle_key(Key::Char(' '), &tx);
     assert!(!a.cfg.provider_disabled("openai"));
 }
 
