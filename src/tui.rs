@@ -1027,6 +1027,10 @@ fn utf8_len(b: u8) -> usize {
 }
 
 pub enum Cmd {
+    /// `/edit`: run this argument list in the foreground.
+    Edit(Vec<String>),
+    /// `/open`: start this argument list detached, without waiting.
+    Open(Vec<String>),
     Prompt(String),
     /// Send this typed message again, dropping what followed it.
     Retry(String),
@@ -1217,34 +1221,7 @@ impl Hooks for WorkerHooks {
     }
 
     fn run_attached(&mut self, command: &str) -> Option<i32> {
-        // Stop the key reader before the command takes the terminal.
-        ATTACHED.store(true, std::sync::atomic::Ordering::SeqCst);
-        let asked = Instant::now();
-        while !PARKED.load(std::sync::atomic::Ordering::SeqCst) && asked.elapsed() < Duration::from_millis(500) {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        // The shell gets the mouse back, and imp takes it again after.
-        print!("{MOUSE_OFF}\x1b[?2004l\x1b[?25h\x1b[?1049l");
-        std::io::stdout().flush().ok();
-        let saved = SAVED.lock().ok().and_then(|slot| *slot);
-        if let Some(saved) = saved {
-            unsafe {
-                tcsetattr(0, TCSANOW, &saved);
-            }
-        }
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .status();
-        if let Some(saved) = saved {
-            unsafe {
-                tcsetattr(0, TCSANOW, &raw_of(saved));
-            }
-        }
-        print!("{}", enter_sequence(MOUSE.load(Ordering::Relaxed)).replace("\x1b[>1u", ""));
-        std::io::stdout().flush().ok();
-        ATTACHED.store(false, std::sync::atomic::Ordering::SeqCst);
-        Some(status.ok().and_then(|s| s.code()).unwrap_or(-1))
+        attach(|| std::process::Command::new("sh").arg("-c").arg(command).status())
     }
 
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
@@ -2178,6 +2155,60 @@ fn command_items() -> Vec<PickItem> {
 /// One list row: mark, label, and an aligned description when the picker has
 /// any.
 /// The right column of a picker row, led by `current` for the active entry.
+/// Hand the terminal to a foreground child, then take it back. `launch` runs the
+/// child; the caller decides whether it is a shell or an argument list.
+fn attach(launch: impl FnOnce() -> std::io::Result<std::process::ExitStatus>) -> Option<i32> {
+    // Stop the key reader before the command takes the terminal.
+    ATTACHED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let asked = Instant::now();
+    while !PARKED.load(std::sync::atomic::Ordering::SeqCst) && asked.elapsed() < Duration::from_millis(500) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // The child gets the mouse back, and imp takes it again after.
+    print!("{MOUSE_OFF}\x1b[?2004l\x1b[?25h\x1b[?1049l");
+    std::io::stdout().flush().ok();
+    let saved = SAVED.lock().ok().and_then(|slot| *slot);
+    if let Some(saved) = saved {
+        unsafe {
+            tcsetattr(0, TCSANOW, &saved);
+        }
+    }
+    let status = launch();
+    if let Some(saved) = saved {
+        unsafe {
+            tcsetattr(0, TCSANOW, &raw_of(saved));
+        }
+    }
+    print!("{}", enter_sequence(MOUSE.load(Ordering::Relaxed)).replace("\x1b[>1u", ""));
+    std::io::stdout().flush().ok();
+    ATTACHED.store(false, std::sync::atomic::Ordering::SeqCst);
+    Some(status.ok().and_then(|s| s.code()).unwrap_or(-1))
+}
+
+/// Run an argument list in the foreground, without a shell: the first entry is
+/// the program, the rest its arguments.
+fn attach_argv(argv: &[String]) -> Option<i32> {
+    let (program, args) = argv.split_first()?;
+    attach(|| std::process::Command::new(program).args(args).status())
+}
+
+/// The argument list for `/edit` (terminal) or `/open` (GUI): the configured
+/// editor, else the environment's, else for `/open` the OS opener. The target is
+/// one argument; nothing goes through a shell.
+pub(crate) fn editor_argv_for(
+    cfg: &crate::config::Config,
+    lookup: impl Fn(&str) -> Option<String>,
+    gui: bool,
+    target: &str,
+) -> Result<Vec<String>, String> {
+    let argv = match cfg.editor_argv(&lookup, gui) {
+        Some(argv) => argv,
+        None if gui => vec![if cfg!(target_os = "macos") { "open" } else { "xdg-open" }.to_string()],
+        None => return Err("no editor set: set editor in the config or $EDITOR".into()),
+    };
+    Ok(crate::config::editor_launch(argv, target))
+}
+
 fn mark_current(current: bool, about: &str) -> String {
     match (current, about.is_empty()) {
         (true, true) => "current".into(),
@@ -5430,6 +5461,18 @@ impl App {
             "shell" => {
                 let _ = tx.send(Cmd::Shell);
             }
+            other if other == "edit" || other.starts_with("edit ") || other == "open" || other.starts_with("open ") => {
+                let gui = other == "open" || other.starts_with("open ");
+                let rest = other.trim_start_matches(if gui { "open" } else { "edit" }).trim();
+                // With no target, the session directory is the target.
+                let target = if rest.is_empty() { self.root.display().to_string() } else { rest.to_string() };
+                match editor_argv_for(&self.cfg, crate::config::key_lookup(), gui, &target) {
+                    Ok(argv) => {
+                        let _ = tx.send(if gui { Cmd::Open(argv) } else { Cmd::Edit(argv) });
+                    }
+                    Err(e) => self.push(Role::Error, e),
+                }
+            }
             other if other == "model" || other.starts_with("model ") => {
                 let rest = other.strip_prefix("model").unwrap_or("").trim();
                 if rest.is_empty() {
@@ -8390,6 +8433,28 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     let _ = ev_tx.send(Ev::Models(models));
                 }
                 Ok(Cmd::SetModel(name)) => worker_session.cfg.model = name,
+                Ok(Cmd::Edit(argv)) => {
+                    let message = match attach_argv(&argv) {
+                        Some(0) | None => "editor closed".to_string(),
+                        Some(code) => format!("editor exited {code}"),
+                    };
+                    let _ = ev_tx.send(Ev::Info(message));
+                }
+                Ok(Cmd::Open(argv)) => {
+                    let what = argv.last().cloned().unwrap_or_default();
+                    let result = match argv.split_first() {
+                        Some((program, args)) => std::process::Command::new(program).args(args).spawn().map(|_| ()),
+                        None => Err(std::io::Error::other("no opener")),
+                    };
+                    match result {
+                        Ok(()) => {
+                            let _ = ev_tx.send(Ev::Info(format!("opened {what}")));
+                        }
+                        Err(e) => {
+                            let _ = ev_tx.send(Ev::Error(e.to_string()));
+                        }
+                    }
+                }
                 Ok(Cmd::Shell) => {
                     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
                     let mut hooks = WorkerHooks {

@@ -6668,6 +6668,17 @@ fn an_unconfigured_or_disabled_provider_is_not_in_the_model_list() {
 }
 
 #[test]
+fn an_editor_command_gets_the_target_as_one_argument() {
+    let cfg = Config::default();
+    let argv = editor_argv_for(&cfg, |v| (v == "EDITOR").then(|| "vim".to_string()), false, "my notes.md").unwrap();
+    assert_eq!(argv, vec!["vim".to_string(), "my notes.md".to_string()]);
+    assert!(editor_argv_for(&cfg, |_| None, false, "x").is_err(), "no editor must say so");
+    let open = editor_argv_for(&cfg, |_| None, true, "x").unwrap();
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    assert_eq!(open, vec![opener.to_string(), "x".to_string()]);
+}
+
+#[test]
 fn the_providers_list_marks_unconfigured_and_disabled_rows() {
     let (mut a, _config) = provider_app();
     a.cfg.set("provider.anthropic.enabled", "false").unwrap();
