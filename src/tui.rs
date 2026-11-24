@@ -508,8 +508,8 @@ impl Palette {
         use crate::theme::Slot;
         let from = self.theme.rgb(Slot::Select);
         let accent = self.theme.rgb(Slot::Accent);
-        // Halfway to the accent at the right edge keeps the text readable.
-        let to: [u8; 3] = std::array::from_fn(|i| ((from[i] as u16 + accent[i] as u16) / 2) as u8);
+        // A quarter of the way to the accent at the right edge: a subtle shift, not a second colour.
+        let to: [u8; 3] = std::array::from_fn(|i| (from[i] as i16 + (accent[i] as i16 - from[i] as i16) / 4) as u8);
         let fg = self.theme.rgb(Slot::User);
         let n = text.chars().count().max(2) - 1;
         let mut out = format!("\x1b[38;2;{};{};{}m", fg[0], fg[1], fg[2]);
@@ -7585,6 +7585,13 @@ impl App {
                 painted = painted.replacen(&count, &format!("{}{muted}", self.palette.paint(Role::Info, &count)), 1);
             }
         }
+        // The context meter turns red as the window fills.
+        let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
+        if let (true, Some(p)) = (self.palette.on, crate::context::percent(self.status.tokens, window)) {
+            let bar = context_bar(p);
+            let role = if p >= 80 { Role::Error } else { Role::Info };
+            painted = painted.replacen(&bar, &format!("{}{muted}", self.palette.paint(role, &bar)), 1);
+        }
         painted
     }
 
@@ -7648,7 +7655,7 @@ impl App {
         // The share of the window in use, shown only when the window is known.
         let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
         let percent = crate::context::percent(self.status.tokens, window)
-            .map(|p| format!(" ({p}%)"))
+            .map(|p| format!(" {} {p}%", context_bar(p)))
             .unwrap_or_default();
         let left = format!(
             "{model} · {mode}{} tok{percent}{money}{goal}{paused}{unseen}{thinking}{waiting}",
@@ -7672,6 +7679,12 @@ impl App {
             fit(&left, cols)
         }
     }
+}
+
+/// Eight cells, filled in proportion to `percent` of the context window.
+fn context_bar(percent: u64) -> String {
+    let filled = ((percent.min(100) * 8 + 50) / 100) as usize;
+    format!("{}{}", "▰".repeat(filled), "▱".repeat(8 - filled))
 }
 
 /// A live session's name: its first message, or `new` before one.
