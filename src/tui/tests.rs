@@ -6844,6 +6844,52 @@ fn n_opens_a_new_provider_config() {
     assert_eq!(form_field(&a, "base"), "", "a new config should start empty");
 }
 
+fn form_with(name: &str, base: &str) -> Pending {
+    let labels = ["base", "model", "dialect", "key_env", "models", "api_key"];
+    let values = [base, "m", "openai", "", "", ""];
+    let fields = labels
+        .iter()
+        .zip(values)
+        .map(|(l, v)| (l.to_string(), v.to_string()))
+        .collect();
+    Pending::ProviderForm { name: name.into(), fields, at: 5 }
+}
+
+#[test]
+fn saving_the_config_modal_writes_the_edit_and_keeps_comments() {
+    let dir = std::env::temp_dir().join(format!("imp-form-save-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config");
+    std::fs::write(&config, "# keep\n").unwrap();
+    let mut a = app();
+    a.config_path = config.clone();
+    a.pending = Some(form_with("work", "http://box:8080/v1"));
+    let (tx, _cmds) = channel();
+    a.handle_key(Key::Enter, &tx);
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.starts_with("# keep\n"), "comment lost: {text:?}");
+    assert!(text.contains("http://box:8080/v1"), "edit not saved: {text:?}");
+    assert!(a.cfg.named.iter().any(|n| n.name == "work" && n.base == "http://box:8080/v1"));
+}
+
+#[test]
+fn cancelling_the_config_modal_changes_nothing() {
+    let dir = std::env::temp_dir().join(format!("imp-form-cancel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config");
+    std::fs::write(&config, "# keep\n").unwrap();
+    let mut a = app();
+    a.config_path = config.clone();
+    a.pending = Some(form_with("work", "http://box:9999/v1"));
+    let (tx, _cmds) = channel();
+    a.handle_key(Key::Esc, &tx);
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), "# keep\n", "cancel wrote the config");
+    assert!(a.cfg.named.is_empty(), "cancel kept a provider");
+    assert!(a.pending.is_none(), "cancel left the form open");
+}
+
 #[test]
 fn enter_on_a_provider_opens_its_config() {
     let mut a = app();
