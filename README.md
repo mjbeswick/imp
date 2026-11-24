@@ -241,6 +241,27 @@ skills that teach `bash`.
   and releases search for the current year.
 - `search` returns summaries with URLs. It exists only on DeepSeek.
 
+## Optional skills
+
+Three skills ship in `optional-skills/`, outside the binary: `browse`, `image`, and
+`mermaid`. Each drives an external program, so none is installed by default.
+
+- `browse` reads a page with `fetch`, and renders JavaScript pages with
+  [obscura](https://github.com/h4ckf0r0day/obscura). On macOS obscura needs
+  `SSL_CERT_FILE` set to the system roots; the skill shows how.
+- `image` shows a picture with chafa (`brew install chafa`).
+- `mermaid` draws a Mermaid diagram with graphs-tui (`cargo install graphs-tui`).
+
+Ask the agent to install one (for example, "install the image skill"). It copies
+`optional-skills/<name>/` to `~/.config/imp/skills/<name>/`, and it never overwrites an
+installed skill.
+
+Skill switches in the config turn a skill off without deleting it:
+
+```
+skill.image.enabled = false
+```
+
 ## Configuration
 
 `~/.config/imp/config`, `key=value`; environment wins, except `api_key`, which
