@@ -3889,21 +3889,24 @@ impl App {
     fn model_items(&self) -> Vec<PickItem> {
         let current = self.cfg.model.clone();
         let default = self.cfg.provider.profile().model.to_string();
+        let active = self.cfg.active_name.clone();
+        // The active provider's own models: the current one, its default, and
+        // the list it reported. Every row names the provider. The recents file
+        // records names without a provider, so it is not listed here; the
+        // provider-model picker still offers it.
         let mut names = vec![current.clone(), default.clone()];
         names.extend(self.available_models.iter().cloned());
-        names.extend(load_models(&self.models_path));
-        let mut seen: Vec<String> = Vec::new();
-        let mut items = Vec::new();
+        let mut items: Vec<PickItem> = Vec::new();
         for name in names {
-            if name.is_empty() || seen.contains(&name) {
+            let value = format!("{active}::{name}");
+            if name.is_empty() || items.iter().any(|i| i.value == value) {
                 continue;
             }
-            seen.push(name.clone());
-            let about = if name == default { "default" } else { "" };
+            let desc = if name == default { format!("{active}, default") } else { active.clone() };
             items.push(PickItem {
                 label: name.clone(),
-                desc: mark_current(name == current, about),
-                value: name,
+                desc: mark_current(name == current, &desc),
+                value,
                 actions: Vec::new(),
             });
         }

@@ -3241,10 +3241,11 @@ fn model_command_sets_the_session_and_records_recents() {
     assert_eq!(picker.kind, PickKind::Model);
     let labels: Vec<&str> = picker.items.iter().map(|i| i.label.as_str()).collect();
     assert_eq!(labels[0], "other");
-    assert_eq!(picker.items[0].desc, "current");
+    assert!(picker.items[0].value.ends_with("::other"), "{:?}", picker.items[0].value);
+    assert!(picker.items[0].desc.starts_with("current"), "{:?}", picker.items[0].desc);
     assert_eq!(labels[1], "deepseek-flash");
-    assert_eq!(picker.items[1].desc, "default");
-    assert!(labels.contains(&"deepseek-v4-pro"), "{labels:?}");
+    assert!(picker.items[1].desc.ends_with("default"), "{:?}", picker.items[1].desc);
+    assert!(picker.items.iter().all(|i| i.value.contains("::")), "a row with no provider: {labels:?}");
     assert!(labels.iter().all(|l| !l.contains("(current)")), "{labels:?}");
 }
 
@@ -6644,6 +6645,22 @@ fn typed_text_is_ignored_in_the_dialect() {
     type_text(&mut a, &tx, "xyz");
     a.handle_key(Key::Backspace, &tx);
     assert_eq!(form_field(&a, "dialect"), before, "typed text reached the dialect");
+}
+
+#[test]
+fn every_model_row_names_its_provider() {
+    let (mut a, _config) = provider_app();
+    let recents = a.config_path.parent().unwrap().join("models");
+    std::fs::write(&recents, "deepseek-pro\n").unwrap();
+    a.models_path = recents;
+    a.available_models = vec!["deepseek-listed".to_string()];
+    let bare: Vec<String> = a
+        .model_items()
+        .into_iter()
+        .map(|i| i.value)
+        .filter(|v| !v.contains("::"))
+        .collect();
+    assert!(bare.is_empty(), "rows with no provider: {bare:?}");
 }
 
 #[test]
