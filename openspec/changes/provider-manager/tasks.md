@@ -9,7 +9,7 @@
 
 ## 2. Keys
 
-- [ ] 2.1 Test: plain `u` makes the selected provider active.
+- [x] 2.1 Test: plain `u` makes the selected provider active.
 - [x] 2.2 Test: space toggles enabled and saves `provider.<name>.enabled`. Judgement call: the provider list takes no type-to-filter, so its letters are keys; text typed after /provider still types into the add-prefix.
 - [x] 2.3 Test: plain `d` deletes a named provider and refuses a built-in with a message.
 - [x] 2.4 Test: plain `n` opens a new provider config.
@@ -24,7 +24,7 @@
 
 ## 4. Model list
 
-- [ ] 4.1 Test: the `/model` list carries no provider actions.
+- [x] 4.1 Test: the `/model` list carries no provider actions.
 - [ ] 4.2 Keys card and help list the new keys.
 
 ## 5. Validation
