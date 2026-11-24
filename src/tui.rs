@@ -4226,7 +4226,7 @@ impl App {
                 desc: mark_current(name == self.cfg.active_name, &about),
                 label: name.clone(),
                 value: name.clone(),
-                actions: vec![('u', "use"), ('e', "configure")],
+                actions: vec![('u', "use"), ('e', "configure"), ('d', "delete"), ('n', "new")],
             });
         }
         for profile in &self.cfg.named {
@@ -4237,7 +4237,7 @@ impl App {
                     profile.name == self.cfg.active_name,
                     &format!("{}  {}  {}", profile.base, profile.model, profile.dialect),
                 ),
-                actions: vec![('u', "use"), ('e', "configure")],
+                actions: vec![('u', "use"), ('e', "configure"), ('d', "delete"), ('n', "new")],
             });
         }
         items

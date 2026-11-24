@@ -75,7 +75,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/skills", "turn each skill on or off; applies on /reload"),
     ("/diff", "what imp changed this session; git for git diff"),
     ("/model", "set or pick the session model"),
-    ("/provider", "list, add, edit, delete, or use providers"),
+    ("/provider", "providers: space on/off, u use, e edit, d delete, n new"),
     ("/queue", "messages waiting to send: add, pop, delete, clear"),
     ("/copy", "copy the last reply; code for its last block"),
     ("/rename", "rename the current session"),
