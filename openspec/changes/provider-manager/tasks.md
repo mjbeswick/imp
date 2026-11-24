@@ -29,5 +29,5 @@
 
 ## 5. Validation
 
-- [ ] 5.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Record the size.
-- [ ] 5.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 5.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`. Record the size.
+- [x] 5.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
