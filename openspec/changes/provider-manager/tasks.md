@@ -25,7 +25,7 @@
 ## 4. Model list
 
 - [x] 4.1 Test: the `/model` list carries no provider actions.
-- [ ] 4.2 Keys card and help list the new keys.
+- [x] 4.2 Keys card and help list the new keys.
 
 ## 5. Validation
 
