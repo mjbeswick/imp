@@ -7585,12 +7585,12 @@ impl App {
                 painted = painted.replacen(&count, &format!("{}{muted}", self.palette.paint(Role::Info, &count)), 1);
             }
         }
-        // The context meter turns red as the window fills.
+        // The context percentage turns red as the window fills.
         let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
         if let (true, Some(p)) = (self.palette.on, crate::context::percent(self.status.tokens, window)) {
-            let bar = context_bar(p);
+            let pct = format!(" {p}%");
             let role = if p >= 80 { Role::Error } else { Role::Info };
-            painted = painted.replacen(&bar, &format!("{}{muted}", self.palette.paint(role, &bar)), 1);
+            painted = painted.replacen(&pct, &format!("{}{muted}", self.palette.paint(role, &pct)), 1);
         }
         painted
     }
@@ -7654,13 +7654,25 @@ impl App {
         };
         // The share of the window in use, shown only when the window is known.
         let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
-        let percent = crate::context::percent(self.status.tokens, window)
-            .map(|p| format!(" {} {p}%", context_bar(p)))
+        let pct = crate::context::percent(self.status.tokens, window)
+            .map(|p| format!(" {p}%"))
             .unwrap_or_default();
-        let left = format!(
-            "{model} · {mode}{} tok{percent}{money}{goal}{paused}{unseen}{thinking}{waiting}",
-            compact_tokens(self.status.tokens),
-        );
+        let tok = compact_tokens(self.status.tokens);
+        let build = |meter: &str, money: &str, thinking: &str| {
+            format!("{model} · {mode}{tok} tok{meter}{money}{goal}{paused}{unseen}{thinking}{waiting}")
+        };
+        // As the line narrows, the least useful parts go first: thinking, then
+        // cost, then the percentage. The model and tokens always stay.
+        let fits = |s: &String| s.chars().count() <= cols;
+        let left = [
+            build(&pct, &money, thinking),
+            build(&pct, &money, ""),
+            build(&pct, "", ""),
+            build("", "", ""),
+        ]
+        .into_iter()
+        .find(fits)
+        .unwrap_or_else(|| build("", "", ""));
         // The directory sits at the right edge, and goes first when narrow.
         // A running task's meter takes its place.
         let right = match self.status.task_start.filter(|_| self.status.streaming) {
@@ -7679,12 +7691,6 @@ impl App {
             fit(&left, cols)
         }
     }
-}
-
-/// Eight cells, filled in proportion to `percent` of the context window.
-fn context_bar(percent: u64) -> String {
-    let filled = ((percent.min(100) * 8 + 50) / 100) as usize;
-    format!("{}{}", "▰".repeat(filled), "▱".repeat(8 - filled))
 }
 
 /// A live session's name: its first message, or `new` before one.
