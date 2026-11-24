@@ -569,6 +569,20 @@ impl Log {
         self.write_meta(&meta);
     }
 
+    /// A subagent's message: a nested record tagged with its `task` call id.
+    /// Nested records are never sent to the model on resume.
+    pub fn append_child(&self, call: &str, message: &Message) {
+        let line = serde_json::json!({ "t": "child", "call": call, "m": message.to_json() }).to_string();
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+
     pub fn event(&self, kind: &str, detail: &str) {
         let line = serde_json::json!({ "t": kind, "d": detail, "at": now() }).to_string();
         use std::io::Write;

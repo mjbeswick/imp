@@ -261,6 +261,7 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"fetch","description":"One HTTP request from this machine, including the local network. GET by default; HTML comes back as markdown, feeds as a list, JSON and text as they are. Configured credentials are added for their host by imp; never put keys in headers.","parameters":{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","enum":["GET","POST","PUT","PATCH","DELETE"]},"headers":{"type":"object","description":"Extra request headers, name to value."},"body":{"description":"Text, or JSON sent as application/json."}},"required":["url"]}}}),
         json!({"type":"function","function":{"name":"search","description":"Search the web; results are summaries with URLs. Read a page with fetch.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search"]},"query":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"memory","description":"Search stored notes, or save a new one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","save"]},"query":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}},"required":["op"]}}}),
+        json!({"type":"function","function":{"name":"task","description":"Hand a self-contained task to a named agent profile. The profile runs in its own context with its own tools, and its final answer comes back as this result. Use it for independent research or review that would otherwise fill your context. The user can open the child's transcript from its row.","parameters":{"type":"object","properties":{"agent":{"type":"string","description":"Profile name, such as reviewer."},"prompt":{"type":"string","description":"Everything the profile needs: the task, the paths, and what to return."}},"required":["agent","prompt"]}}}),
         json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
         json!({"type":"function","function":{"name":"goal","description":"Propose a goal for the user to confirm. It runs in rounds only after the user says yes; if the user says no, it is dropped.","parameters":{"type":"object","properties":{"operation":{"type":"string","enum":["set"]},"text":{"type":"string"}},"required":["operation","text"]}}}),
         json!({"type":"function","function":{"name":"ask","description":"Ask only when blocked on a decision. Prefer an ordered questions array, each with a short header and two to six described choices or free text; multiple selections are allowed. Recommend an option first. Batch results contain arrays of exact chosen labels; legacy single-question calls return a string.","parameters":{"type":"object","properties":{"questions":{"type":"array","minItems":1,"items":{"type":"object","properties":{"header":{"type":"string","description":"Short question label."},"question":{"type":"string"},"options":{"type":"array","minItems":2,"maxItems":6,"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label"]}},"multiple":{"type":"boolean"}},"required":["question"]}},"question":{"type":"string","description":"Legacy single-question form."},"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label"]}},"multiple":{"type":"boolean"}}}}}),
@@ -381,6 +382,60 @@ pub struct Session {
     pub transport: Box<dyn Transport>,
     pub memory: Memory,
     pub skills: Vec<Skill>,
+    /// Set while a subagent runs: the `task` call id that started it.
+    pub child_call: Option<String>,
+    /// Finished subagent transcripts, by the `task` call id that ran them.
+    pub children: std::collections::HashMap<String, Vec<Message>>,
+    /// The id of the tool call being dispatched, for `task`.
+    current_call: String,
+}
+
+/// Wraps the parent's interface for a subagent: its prose stays out of the
+/// transcript, its tool rows and prompts carry its name.
+pub struct ChildHooks<'a> {
+    pub parent: &'a mut dyn Hooks,
+    pub name: String,
+}
+
+impl Hooks for ChildHooks<'_> {
+    fn ui(&mut self, event: Ui) {
+        match event {
+            Ui::Content(_) | Ui::Reasoning(_) => {}
+            Ui::ToolStart { name, summary, args } => self.parent.ui(Ui::ToolStart {
+                name,
+                summary: format!("{}: {summary}", self.name),
+                args,
+            }),
+            other => self.parent.ui(other),
+        }
+    }
+    fn confirm(&mut self, what: &str) -> bool {
+        self.parent.confirm(&format!("[{}] {what}", self.name))
+    }
+    fn confirm_always(&mut self, what: &str) -> Answer {
+        self.parent.confirm_always(&format!("[{}] {what}", self.name))
+    }
+    fn allowed(&mut self, shape: &str, always: bool) {
+        self.parent.allowed(shape, always)
+    }
+    fn answered(&mut self, shape: &str, answer: Answer) {
+        self.parent.answered(shape, answer)
+    }
+    fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
+        self.parent.ask(&format!("[{}] {question}", self.name), options)
+    }
+    fn ask_choices(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<String> {
+        self.parent.ask_choices(&format!("[{}] {question}", self.name), options, multiple)
+    }
+    fn last_wait(&self) -> std::time::Duration {
+        self.parent.last_wait()
+    }
+    fn run_attached(&mut self, command: &str) -> Option<i32> {
+        self.parent.run_attached(command)
+    }
+    fn can_foreground(&self) -> bool {
+        self.parent.can_foreground()
+    }
 }
 
 impl Session {
@@ -439,6 +494,9 @@ impl Session {
             transport: Box::new(Live),
             memory,
             skills,
+            child_call: None,
+            children: std::collections::HashMap::new(),
+            current_call: String::new(),
         }
     }
 
@@ -605,7 +663,10 @@ impl Session {
 
     fn say(&mut self, message: Message) {
         if let Some(log) = &self.log {
-            log.append(&message);
+            match &self.child_call {
+                Some(call) => log.append_child(call, &message),
+                None => log.append(&message),
+            }
         }
         self.history.push(message);
     }
@@ -657,6 +718,10 @@ impl Session {
                     return true;
                 };
                 if !self.agent.allows(name) {
+                    return false;
+                }
+                // Subagents do not start subagents.
+                if name == "task" && self.child_call.is_some() {
                     return false;
                 }
                 if name == "search" && !self.cfg.provider.caps().search {
@@ -1335,6 +1400,101 @@ impl Session {
         )));
     }
 
+    /// The `task` tool: look up the profile, then run it as a child.
+    fn run_task(&mut self, args: &Value, hooks: &mut dyn Hooks) -> (bool, String) {
+        if self.child_call.is_some() {
+            return (false, "refused: a subagent cannot start another".into());
+        }
+        let Some(agent) = args.get("agent").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) else {
+            return (false, "refused: task needs an agent name".into());
+        };
+        let Some(prompt) = args.get("prompt").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) else {
+            return (false, "refused: task needs a prompt".into());
+        };
+        let Some(profile) = self.roster.iter().find(|a| a.name == agent).cloned() else {
+            let names: Vec<&str> = self.roster.iter().map(|a| a.name.as_str()).collect();
+            return (false, format!("refused: no such agent `{agent}`; available: {}", names.join(", ")));
+        };
+        let call = self.current_call.clone();
+        self.run_child(&call, profile, prompt, hooks)
+    }
+
+    /// Run `profile` on `prompt` in a fresh history, then restore the parent's
+    /// history, profile, model, thinking, effort, and child flag on every path.
+    fn run_child(&mut self, call: &str, profile: Agent, prompt: &str, hooks: &mut dyn Hooks) -> (bool, String) {
+        let mut seed: Vec<Message> = self
+            .history
+            .first()
+            .filter(|m| m.role == crate::api::Role::System)
+            .cloned()
+            .into_iter()
+            .collect();
+        if !profile.instructions.is_empty() {
+            seed.push(Message::system(profile.instructions.clone()));
+        }
+        seed.push(Message::user(prompt));
+
+        let saved_history = std::mem::replace(&mut self.history, seed);
+        let saved_agent = self.agent.clone();
+        let saved_cfg = (self.cfg.model.clone(), self.cfg.thinking, self.cfg.effort.clone());
+        let saved_call = self.child_call.replace(call.to_string());
+        if let Some(model) = &profile.model {
+            self.cfg.model = model.clone();
+        }
+        if let Some(thinking) = profile.thinking {
+            self.cfg.thinking = thinking;
+        }
+        if profile.effort.is_some() {
+            self.cfg.effort = profile.effort.clone();
+        }
+        let name = profile.name.clone();
+        self.agent = profile;
+
+        let result = {
+            let mut child = ChildHooks { parent: hooks, name };
+            self.child_loop(&mut child)
+        };
+
+        let transcript = std::mem::replace(&mut self.history, saved_history);
+        self.children.insert(call.to_string(), transcript);
+        self.agent = saved_agent;
+        self.cfg.model = saved_cfg.0;
+        self.cfg.thinking = saved_cfg.1;
+        self.cfg.effort = saved_cfg.2;
+        self.child_call = saved_call;
+        result
+    }
+
+    /// The child's step loop: request, dispatch its tools, repeat until it
+    /// answers in text or reaches the step cap.
+    fn child_loop(&mut self, hooks: &mut dyn Hooks) -> (bool, String) {
+        let max = self.cfg.max_steps.max(1);
+        let mut last = String::new();
+        for _ in 0..max {
+            let acc = match self.request(hooks) {
+                Ok(acc) => acc,
+                Err(_) if self.cancel.load(std::sync::atomic::Ordering::Relaxed) => {
+                    return (false, "cancelled".into());
+                }
+                Err(e) => return (false, format!("subagent failed: {e}")),
+            };
+            let mut assistant = Message::assistant(acc.content.clone());
+            assistant.reasoning = acc.reasoning.clone();
+            assistant.tool_calls = acc.tool_calls();
+            let calls = assistant.tool_calls.clone();
+            last = acc.content.clone();
+            self.say(assistant);
+            if calls.is_empty() {
+                return (true, acc.content);
+            }
+            for call in calls {
+                let out = self.dispatch(&call, hooks);
+                self.say(Message::tool(call.id.clone(), out));
+            }
+        }
+        (true, format!("{last}\n\n(stopped at the step cap of {max})"))
+    }
+
     fn dispatch(&mut self, call: &ToolCall, hooks: &mut dyn Hooks) -> String {
         let out = self.dispatch_inner(call, hooks);
         if out == "refused: the user did not answer" {
@@ -1361,6 +1521,7 @@ impl Session {
         });
 
         let start = std::time::Instant::now();
+        self.current_call = call.id.clone();
         let (ok, out) = self.run_tool(&call.name, &args, hooks);
         // No secret value reaches the conversation, the log, or the screen.
         let out = crate::secrets::redact(&out);
@@ -1380,6 +1541,7 @@ impl Session {
     /// Run one tool call. The flag says whether the call did what it set out to do.
     fn run_tool(&mut self, name: &str, args: &Value, hooks: &mut dyn Hooks) -> (bool, String) {
         match name {
+            "task" => self.run_task(args, hooks),
             "bash" => {
                 let Some(cmd) = args.get("command").and_then(Value::as_str) else {
                     return (false, "refused: bash needs a command".into());
@@ -2136,6 +2298,9 @@ pub fn describe(name: &str, args: &Value) -> String {
         other => other.to_string(),
     }
 }
+
+#[cfg(test)]
+mod subagent_tests;
 
 #[cfg(test)]
 mod tests {
