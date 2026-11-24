@@ -26,6 +26,22 @@ The system SHALL read `provider.<name>.enabled` from the config, SHALL treat a p
 - **WHEN** the active provider is switched off
 - **THEN** its current model still appears, so the session is not hidden
 
+### Requirement: The providers list shows each provider's state
+
+The system SHALL show each provider in the providers list in one of three states: active, marked as current; unconfigured, dimmed with a note that no key is set; or disabled, struck through with the word off. A provider that is both unconfigured and disabled SHALL show as disabled.
+
+#### Scenario: Active provider
+- **WHEN** a provider is the active one
+- **THEN** its row carries the current marker
+
+#### Scenario: Unconfigured provider
+- **WHEN** a provider needs a key and its key variable is unset
+- **THEN** its row is dimmed and notes that no key is set
+
+#### Scenario: Disabled provider
+- **WHEN** `provider.<name>.enabled = false`
+- **THEN** its row is struck through and marked off
+
 ### Requirement: Switching a provider off is saved
 
 The system SHALL save `provider.<name>.enabled = false` to the config file, keeping its comments, and SHALL load it back as disabled.
