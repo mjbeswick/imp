@@ -6632,14 +6632,9 @@ impl App {
                 }
             }
         }
-        // A quiet hint until the first message. The status line says where.
-        let hint = (Role::Thinking, Line::Text("imp · / for commands".into()));
-        let hint = self.entries.is_empty().then_some(&hint);
         let thinking = self.thinking_row();
 
-        let total = self.drawn.iter().map(|slot| slot.1.len()).sum::<usize>()
-            + usize::from(hint.is_some())
-            + usize::from(thinking.is_some());
+        let total = self.drawn.iter().map(|slot| slot.1.len()).sum::<usize>() + usize::from(thinking.is_some());
         let max_top = total.saturating_sub(body_rows);
         self.body_rows = body_rows;
         self.max_top = max_top;
@@ -6680,14 +6675,12 @@ impl App {
                 labels.push(label);
             }
         }
-        labels.extend(hint.map(|_| None));
         labels.extend(thinking.as_ref().map(|_| None));
         let labels: Vec<Option<Target>> = labels.into_iter().skip(self.top).take(body_rows).collect();
         let visible: Vec<&(Role, Line)> = self
             .drawn
             .iter()
             .flat_map(|slot| slot.1.iter())
-            .chain(hint)
             .chain(thinking.as_ref())
             .skip(self.top)
             .take(body_rows)
@@ -7562,7 +7555,13 @@ impl App {
 
     /// The status line, muted, with the unseen and waiting counts in accent.
     fn paint_status(&self, cols: usize) -> String {
-        let status = self.status_line(cols);
+        // Before the first message, the status line names the slash menu first.
+        const HINT: &str = "/ for commands · ";
+        let status = if self.entries.is_empty() && cols >= 60 {
+            format!("{HINT}{}", self.status_line(cols - HINT.chars().count()))
+        } else {
+            self.status_line(cols)
+        };
         let mut painted = self.palette.paint(Role::Thinking, &status);
         // What `paint` put ahead of the text: the muted colour, to resume after a count.
         let muted = painted.strip_suffix(&format!("{status}\x1b[0m")).unwrap_or("").to_string();

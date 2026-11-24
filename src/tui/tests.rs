@@ -2012,12 +2012,15 @@ fn a_rule_sets_the_composer_apart_and_turns_are_spaced() {
 fn an_empty_transcript_shows_a_welcome_row() {
     let mut a = app();
     let frame = strip(&a.frame(120, 24));
-    assert!(frame.contains("imp · / for commands"), "{frame:?}");
+    let status = frame.lines().last().unwrap_or("");
+    assert!(status.starts_with("/ for commands · deepseek-flash"), "{frame:?}");
+    assert_eq!(frame.matches("/ for commands").count(), 1, "the hint is in the body too: {frame:?}");
     assert_eq!(frame.matches(tilde(&a.root).as_str()).count(), 1, "{frame:?}");
     a.push(Role::User, "hello");
     assert!(!strip(&a.frame(80, 24)).contains("/ for commands"));
-    let narrow = strip(&app().frame(30, 24));
-    assert!(narrow.contains("/ for commands"), "{narrow:?}");
+    // Too narrow for the hint: it is left out, the model stays.
+    let narrow = strip(&app().frame(40, 24));
+    assert!(!narrow.contains("/ for commands") && narrow.contains("deepseek-flash"), "{narrow:?}");
 }
 
 #[test]
