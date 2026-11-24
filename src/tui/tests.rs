@@ -6705,6 +6705,27 @@ fn drawing_a_diff_leaves_the_transcript_unchanged() {
 }
 
 #[test]
+fn unconfigured_rows_are_dimmed_and_off_rows_struck_through() {
+    let item = |label: &str, desc: &str| PickItem {
+        label: label.into(),
+        desc: desc.into(),
+        value: label.into(),
+        actions: Vec::new(),
+    };
+    let picker = Picker::new(
+        "provider",
+        vec![item("openai", "https://x  gpt · no key"), item("anthropic", "https://y  claude · off"), item("ollama", "https://z  llama")],
+        PickKind::Provider,
+    );
+    let dim = picker_row(&picker, 0, 0, 80, false);
+    assert!(dim[0].contains("\x1b[2m"), "no-key row not dimmed: {:?}", dim[0]);
+    let off = picker_row(&picker, 0, 1, 80, false);
+    assert!(off[0].contains("\x1b[9m"), "off row not struck through: {:?}", off[0]);
+    let plain = picker_row(&picker, 0, 2, 80, false);
+    assert!(!plain[0].contains("\x1b["), "a configured row is styled: {:?}", plain[0]);
+}
+
+#[test]
 fn skills_picker_toggles_and_saves_a_skill() {
     let dir = std::env::temp_dir().join(format!("imp-skills-picker-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

@@ -2295,7 +2295,19 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
             ];
         }
     }
-    vec![format!("{marker} {label:<left$}  {desc}")]
+    vec![styled_state(&desc, format!("{marker} {label:<left$}  {desc}"))]
+}
+
+/// A provider row's state, from its description: switched off is struck
+/// through, and unconfigured is dimmed. Other rows keep their plain text.
+fn styled_state(desc: &str, row: String) -> String {
+    if desc.ends_with("· off") {
+        format!("\x1b[9m{row}\x1b[0m")
+    } else if desc.ends_with("· no key") {
+        format!("\x1b[2m{row}\x1b[0m")
+    } else {
+        row
+    }
 }
 
 /// The column a picker's descriptions start at, or `None` when it has none.
