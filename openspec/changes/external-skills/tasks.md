@@ -2,13 +2,13 @@
 
 ## 1. Validation test
 
-- [ ] 1.1 Test: each `optional-skills/*/SKILL.md` parses with `name` and `description`, and its body is under 4096 bytes. Confirm it fails before the skills exist.
+- [x] 1.1 Test: each `optional-skills/*/SKILL.md` parses with `name` and `description`, and its body is under 4096 bytes. Confirm it fails before the skills exist.
 
 ## 2. Skills
 
-- [ ] 2.1 Write `optional-skills/browse/SKILL.md`: `fetch` first, obscura for JavaScript pages, install hint, no stealth modes. Test 1.1 passes.
-- [ ] 2.2 Write `optional-skills/image/SKILL.md`: chafa with `show`, install hint `brew install chafa`. Test 1.1 passes.
-- [ ] 2.3 Write `optional-skills/mermaid/SKILL.md`: graphs-tui with `show`, install hint `cargo install graphs-tui`. Test 1.1 passes.
+- [x] 2.1 Write `optional-skills/browse/SKILL.md`: `fetch` first, obscura for JavaScript pages, install hint, no stealth modes. Test 1.1 passes.
+- [x] 2.2 Write `optional-skills/image/SKILL.md`: chafa with `show`, install hint `brew install chafa`. Test 1.1 passes.
+- [x] 2.3 Write `optional-skills/mermaid/SKILL.md`: graphs-tui with `show`, install hint `cargo install graphs-tui`. Test 1.1 passes.
 
 ## 3. Documentation
 
