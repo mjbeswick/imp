@@ -201,9 +201,36 @@ pub struct Config {
     pub skills_dir: Option<PathBuf>,
     /// Skills switched off with `skill.<name>.enabled = false`.
     pub disabled_skills: Vec<String>,
+    /// Terminal editor command for `/edit`, e.g. `vim -u NONE`.
+    pub editor: Option<String>,
+    /// GUI editor command for `/open`, e.g. `code --wait`.
+    pub visual: Option<String>,
+}
+
+/// The argument list for an editor: program and its arguments, then the target as
+/// one argument, so a path with spaces stays whole.
+pub fn editor_launch(mut argv: Vec<String>, target: &str) -> Vec<String> {
+    argv.push(target.to_string());
+    argv
 }
 
 impl Config {
+    /// The editor command split into program and arguments. The terminal editor
+    /// uses `editor` then `$EDITOR`; the GUI editor uses `visual` then `$VISUAL`,
+    /// with no default here, so the caller can fall back to the OS opener.
+    pub fn editor_argv(&self, lookup: impl Fn(&str) -> Option<String>, gui: bool) -> Option<Vec<String>> {
+        let (configured, var) = if gui {
+            (self.visual.clone(), "VISUAL")
+        } else {
+            (self.editor.clone(), "EDITOR")
+        };
+        let command = configured
+            .or_else(|| lookup(var))
+            .filter(|c| !c.trim().is_empty())?;
+        let argv: Vec<String> = command.split_whitespace().map(str::to_string).collect();
+        (!argv.is_empty()).then_some(argv)
+    }
+
     /// Whether `skill.<name>.enabled` is set to false.
     pub fn skill_disabled(&self, name: &str) -> bool {
         self.disabled_skills.iter().any(|s| s == name)
@@ -251,6 +278,8 @@ impl Default for Config {
             links: Links::Auto,
             skills_dir: None,
             disabled_skills: Vec::new(),
+            editor: None,
+            visual: None,
         }
     }
 }
@@ -355,6 +384,8 @@ impl Config {
             "auto_next" => self.auto_next = parse_bool(value)?,
             "title_gradient" => self.title_gradient = parse_bool(value)?,
             "skills_dir" => self.skills_dir = Some(PathBuf::from(value)),
+            "editor" => self.editor = Some(value.trim().to_string()).filter(|v| !v.is_empty()),
+            "visual" => self.visual = Some(value.trim().to_string()).filter(|v| !v.is_empty()),
             key if key.starts_with("skill.") && key.ends_with(".enabled") => {
                 let name = key["skill.".len()..key.len() - ".enabled".len()].trim().to_string();
                 if name.is_empty() {
@@ -1446,6 +1477,33 @@ mod tests {
         let loaded = Config::load(&path).unwrap();
         assert!(loaded.skill_disabled("image"));
         assert!(loaded.unknown.is_empty(), "no unknown-key warning: {:?}", loaded.unknown);
+    }
+
+    #[test]
+    fn editor_resolves_config_then_environment() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.editor_argv(env(&[("EDITOR", "nano")]), false), Some(vec!["nano".to_string()]));
+        cfg.set("editor", "vim -u NONE").unwrap();
+        assert_eq!(
+            cfg.editor_argv(env(&[("EDITOR", "nano")]), false),
+            Some(vec!["vim".to_string(), "-u".to_string(), "NONE".to_string()])
+        );
+        assert_eq!(Config::default().editor_argv(env(&[]), false), None);
+    }
+
+    #[test]
+    fn visual_resolves_config_then_environment_and_has_no_default() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.editor_argv(env(&[("VISUAL", "code --wait")]), true).unwrap()[0], "code");
+        cfg.set("visual", "subl").unwrap();
+        assert_eq!(cfg.editor_argv(env(&[("VISUAL", "code")]), true), Some(vec!["subl".to_string()]));
+        assert_eq!(Config::default().editor_argv(env(&[("EDITOR", "vim")]), true), None);
+    }
+
+    #[test]
+    fn a_target_with_spaces_is_one_argument() {
+        let argv = editor_launch(vec!["vim".to_string()], "my notes.md");
+        assert_eq!(argv, vec!["vim".to_string(), "my notes.md".to_string()]);
     }
 }
 
