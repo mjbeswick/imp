@@ -233,6 +233,20 @@ mod tests {
     }
 
     #[test]
+    fn an_installed_optional_skill_is_listed_from_its_folder() {
+        let dir = std::env::temp_dir().join(format!("imp-installed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let target = dir.join("skills").join("image");
+        std::fs::create_dir_all(&target).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("optional-skills/image/SKILL.md");
+        std::fs::copy(&source, target.join("SKILL.md")).unwrap();
+        let mut cfg = Config::default();
+        cfg.skills_dir = Some(dir.join("skills"));
+        let listed = load_skills(&cfg, Path::new("/nonexistent"));
+        assert!(listed.iter().any(|s| s.name == "image"), "image not listed");
+    }
+
+    #[test]
     fn optional_skills_parse_and_fit_the_load_cap() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("optional-skills");
         for name in ["browse", "image", "mermaid"] {
