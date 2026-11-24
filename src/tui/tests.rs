@@ -6655,6 +6655,18 @@ fn typed_text_is_ignored_in_the_dialect() {
 }
 
 #[test]
+fn an_unconfigured_or_disabled_provider_is_not_in_the_model_list() {
+    let (mut a, _config) = provider_app();
+    // The test process has no OPENAI_API_KEY; the row must not be offered.
+    let values: Vec<String> = a.model_items().into_iter().map(|i| i.value).collect();
+    assert!(!values.iter().any(|v| v.starts_with("openai::")), "{values:?}");
+    // A disabled provider is left out even when it is configured.
+    a.cfg.set("provider.openai.enabled", "false").unwrap();
+    let values: Vec<String> = a.model_items().into_iter().map(|i| i.value).collect();
+    assert!(!values.iter().any(|v| v.starts_with("openai::")), "{values:?}");
+}
+
+#[test]
 fn every_model_row_names_its_provider() {
     let (mut a, _config) = provider_app();
     let recents = a.config_path.parent().unwrap().join("models");

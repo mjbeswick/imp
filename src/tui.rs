@@ -3914,6 +3914,9 @@ impl App {
         // Every provider's models, each row naming its provider. Choosing one
         // switches to that provider as well.
         let mut providers: Vec<(String, Vec<String>)> = Vec::new();
+        // A built-in provider is listed only when it is configured (its key is
+        // set, or it needs none) and not switched off. The active one always
+        // stays, so the session's own model is never hidden.
         for provider in [
             crate::providers::Provider::DeepSeek,
             crate::providers::Provider::OpenAi,
@@ -3922,9 +3925,17 @@ impl App {
             crate::providers::Provider::Ollama,
             crate::providers::Provider::Custom,
         ] {
-            providers.push((format!("{provider:?}").to_lowercase(), vec![provider.profile().model.to_string()]));
+            let name = format!("{provider:?}").to_lowercase();
+            let usable = name == active
+                || (self.cfg.provider_configured(provider, crate::config::key_lookup()) && !self.cfg.provider_disabled(&name));
+            if usable {
+                providers.push((name, vec![provider.profile().model.to_string()]));
+            }
         }
         for named in &self.cfg.named {
+            if named.name != active && self.cfg.provider_disabled(&named.name) {
+                continue;
+            }
             providers.push((named.name.clone(), named.offered_models()));
         }
         for (provider, models) in providers {
