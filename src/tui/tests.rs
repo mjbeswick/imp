@@ -6657,13 +6657,40 @@ fn typed_text_is_ignored_in_the_dialect() {
 #[test]
 fn an_unconfigured_or_disabled_provider_is_not_in_the_model_list() {
     let (mut a, _config) = provider_app();
-    // The test process has no OPENAI_API_KEY; the row must not be offered.
+    // Unconfigured: the row is offered only when this process has the key.
+    let keyed = std::env::var("OPENAI_API_KEY").is_ok_and(|v| !v.trim().is_empty());
     let values: Vec<String> = a.model_items().into_iter().map(|i| i.value).collect();
-    assert!(!values.iter().any(|v| v.starts_with("openai::")), "{values:?}");
-    // A disabled provider is left out even when it is configured.
+    assert_eq!(values.iter().any(|v| v.starts_with("openai::")), keyed, "{values:?}");
+    // A disabled provider is left out.
     a.cfg.set("provider.openai.enabled", "false").unwrap();
     let values: Vec<String> = a.model_items().into_iter().map(|i| i.value).collect();
     assert!(!values.iter().any(|v| v.starts_with("openai::")), "{values:?}");
+}
+
+#[test]
+fn the_providers_list_marks_unconfigured_and_disabled_rows() {
+    let (mut a, _config) = provider_app();
+    a.cfg.set("provider.anthropic.enabled", "false").unwrap();
+    let items = a.provider_items();
+    let row = |v: &str| items.iter().find(|i| i.value == v).unwrap_or_else(|| panic!("no {v} row"));
+    // Anthropic is switched off: it says so, whatever its key.
+    assert!(row("anthropic").desc.contains("off"), "{:?}", row("anthropic").desc);
+    // OpenAI with no key is marked unconfigured, unless this process has one.
+    let keyed = std::env::var("OPENAI_API_KEY").is_ok_and(|v| !v.trim().is_empty());
+    if !keyed {
+        assert!(row("openai").desc.contains("no key"), "{:?}", row("openai").desc);
+    }
+    // The active provider keeps the current marker.
+    assert!(row("deepseek").desc.contains("current"), "{:?}", row("deepseek").desc);
+}
+
+#[test]
+fn the_active_provider_stays_in_the_model_list_even_unconfigured() {
+    let (mut a, _config) = provider_app();
+    a.cfg.set_active("openai").unwrap();
+    a.cfg.set("provider.openai.enabled", "false").unwrap();
+    let values: Vec<String> = a.model_items().into_iter().map(|i| i.value).collect();
+    assert!(values.iter().any(|v| v.starts_with("openai::")), "active provider hidden: {values:?}");
 }
 
 #[test]

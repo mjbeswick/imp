@@ -4098,7 +4098,13 @@ impl App {
         ] {
             let name = format!("{provider:?}").to_lowercase();
             let profile = provider.profile();
-            let about = format!("{}  {}", profile.base_url, profile.model);
+            let mut about = format!("{}  {}", profile.base_url, profile.model);
+            // Switched off wins over unconfigured: an off provider is not offered at all.
+            if self.cfg.provider_disabled(&name) {
+                about.push_str(" · off");
+            } else if !self.cfg.provider_configured(provider, crate::config::key_lookup()) {
+                about.push_str(" · no key");
+            }
             items.push(PickItem {
                 desc: mark_current(name == self.cfg.active_name, &about),
                 label: name.clone(),
