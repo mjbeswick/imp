@@ -1431,6 +1431,21 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\nthinking = on\n");
         assert!(Config::load(&path).unwrap().thinking);
     }
+
+    #[test]
+    fn a_skill_switch_is_saved_and_loaded_back() {
+        let dir = std::env::temp_dir().join(format!("imp-skill-switch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config");
+        std::fs::write(&path, "# keep\n").unwrap();
+        save_setting(&path, "skill.image.enabled", "false").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# keep\n"), "comments kept: {text:?}");
+        let loaded = Config::load(&path).unwrap();
+        assert!(loaded.skill_disabled("image"));
+        assert!(loaded.unknown.is_empty(), "no unknown-key warning: {:?}", loaded.unknown);
+    }
 }
 
 #[cfg(test)]
