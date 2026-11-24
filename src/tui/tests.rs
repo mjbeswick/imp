@@ -2018,9 +2018,11 @@ fn an_empty_transcript_shows_a_welcome_row() {
     assert_eq!(frame.matches(tilde(&a.root).as_str()).count(), 1, "{frame:?}");
     a.push(Role::User, "hello");
     assert!(!strip(&a.frame(80, 24)).contains("/ for commands"));
-    // Too narrow for the hint: it is left out, the model stays.
-    let narrow = strip(&app().frame(40, 24));
-    assert!(!narrow.contains("/ for commands") && narrow.contains("deepseek-flash"), "{narrow:?}");
+    // Narrow screens keep the hint: at 30 columns it is all the line shows.
+    let narrow = strip(&app().frame(30, 24));
+    assert!(narrow.lines().last().unwrap_or("").starts_with("/ for commands"), "{narrow:?}");
+    let tiny = strip(&app().frame(12, 24));
+    assert!(tiny.lines().last().unwrap_or("").starts_with("/ for com"), "{tiny:?}");
 }
 
 #[test]

@@ -7557,8 +7557,10 @@ impl App {
     fn paint_status(&self, cols: usize) -> String {
         // Before the first message, the status line names the slash menu first.
         const HINT: &str = "/ for commands · ";
-        let status = if self.entries.is_empty() && cols >= 60 {
-            format!("{HINT}{}", self.status_line(cols - HINT.chars().count()))
+        let status = if self.entries.is_empty() {
+            let rest = cols.saturating_sub(HINT.chars().count());
+            // Too narrow for the status after it: the hint alone.
+            if rest >= 20 { format!("{HINT}{}", self.status_line(rest)) } else { fit("/ for commands", cols) }
         } else {
             self.status_line(cols)
         };
