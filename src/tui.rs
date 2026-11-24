@@ -4100,7 +4100,7 @@ impl App {
         let mut items: Vec<PickItem> = COMMANDS
             .iter()
             .map(|(name, desc)| PickItem {
-                label: name.to_string(),
+                label: name.trim_start_matches('/').to_string(),
                 value: format!("cmd:{}", name.trim_start_matches('/')),
                 desc: match COMMAND_KEYS.iter().find(|(c, _)| c == name) {
                     Some((_, key)) => format!("{desc} · {key}"),

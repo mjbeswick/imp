@@ -1328,9 +1328,9 @@ fn the_palette_shows_command_keys_and_more_actions() {
     let (tx, _cmds) = channel();
     let items = a.palette_items();
     let desc = |label: &str| items.iter().find(|i| i.label == label).map(|i| i.desc.clone()).unwrap_or_default();
-    assert!(desc("/keys").ends_with(" · ?"), "{}", desc("/keys"));
-    assert!(desc("/next").ends_with(" · Ctrl+O"), "{}", desc("/next"));
-    assert!(!desc("/mode").contains('·'), "/mode does not do what Shift+Tab does");
+    assert!(desc("keys").ends_with(" · ?"), "{}", desc("keys"));
+    assert!(desc("next").ends_with(" · Ctrl+O"), "{}", desc("next"));
+    assert!(!desc("mode").contains('·'), "/mode does not do what Shift+Tab does");
     assert_eq!(desc("steer now"), "Ctrl+S");
     assert_eq!(desc("paste"), "Ctrl+V");
     let before = a.entries.len();
@@ -1390,9 +1390,9 @@ fn ctrl_t_toggles_thinking() {
     a.handle_key(Key::Ctrl('t'), &tx);
     assert_ne!(a.cfg.thinking, was, "Ctrl+T did not toggle thinking");
     assert!(matches!(rx.try_recv(), Ok(Cmd::SetThinking(on)) if on != was));
-    let think = a.palette_items().into_iter().find(|i| i.label == "/think").unwrap();
+    let think = a.palette_items().into_iter().find(|i| i.label == "think").unwrap();
     assert!(think.desc.ends_with(" · Ctrl+T"), "{}", think.desc);
-    let retry = a.palette_items().into_iter().find(|i| i.label == "/retry").unwrap();
+    let retry = a.palette_items().into_iter().find(|i| i.label == "retry").unwrap();
     assert!(retry.desc.ends_with(" · Ctrl+R"), "{}", retry.desc);
 }
 
