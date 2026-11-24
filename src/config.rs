@@ -201,6 +201,8 @@ pub struct Config {
     pub skills_dir: Option<PathBuf>,
     /// Skills switched off with `skill.<name>.enabled = false`.
     pub disabled_skills: Vec<String>,
+    /// Providers switched off with `provider.<name>.enabled = false`.
+    pub disabled_providers: Vec<String>,
     /// Terminal editor command for `/edit`, e.g. `vim -u NONE`.
     pub editor: Option<String>,
     /// GUI editor command for `/open`, e.g. `code --wait`.
@@ -229,6 +231,11 @@ impl Config {
             .filter(|c| !c.trim().is_empty())?;
         let argv: Vec<String> = command.split_whitespace().map(str::to_string).collect();
         (!argv.is_empty()).then_some(argv)
+    }
+
+    /// Whether `provider.<name>.enabled` is set to false.
+    pub fn provider_disabled(&self, name: &str) -> bool {
+        self.disabled_providers.iter().any(|p| p == name)
     }
 
     /// Whether `skill.<name>.enabled` is set to false.
@@ -280,6 +287,7 @@ impl Default for Config {
             disabled_skills: Vec::new(),
             editor: None,
             visual: None,
+            disabled_providers: Vec::new(),
         }
     }
 }
@@ -395,6 +403,17 @@ impl Config {
                 self.disabled_skills.retain(|s| *s != name);
                 if !enabled {
                     self.disabled_skills.push(name);
+                }
+            }
+            key if key.starts_with("provider.") && key.ends_with(".enabled") => {
+                let name = key["provider.".len()..key.len() - ".enabled".len()].trim().to_string();
+                if name.is_empty() {
+                    return Err("provider setting needs a name, such as `provider.openai.enabled = false`".into());
+                }
+                let enabled = parse_bool(value)?;
+                self.disabled_providers.retain(|p| *p != name);
+                if !enabled {
+                    self.disabled_providers.push(name);
                 }
             }
             // Managed profile lines were read before this pass.
@@ -1498,6 +1517,31 @@ mod tests {
         cfg.set("visual", "subl").unwrap();
         assert_eq!(cfg.editor_argv(env(&[("VISUAL", "code")]), true), Some(vec!["subl".to_string()]));
         assert_eq!(Config::default().editor_argv(env(&[("EDITOR", "vim")]), true), None);
+    }
+
+    #[test]
+    fn a_provider_switch_is_saved_and_loaded_back() {
+        let dir = std::env::temp_dir().join(format!("imp-provider-switch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config");
+        std::fs::write(&path, "# keep\n").unwrap();
+        save_setting(&path, "provider.openai.enabled", "false").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# keep\n"), "comments kept: {text:?}");
+        let loaded = Config::load(&path).unwrap();
+        assert!(loaded.provider_disabled("openai"));
+        assert!(loaded.unknown.is_empty(), "no unknown-key warning: {:?}", loaded.unknown);
+    }
+
+    #[test]
+    fn provider_enabled_flag_is_read() {
+        let mut cfg = Config::default();
+        cfg.set("provider.openai.enabled", "false").unwrap();
+        cfg.set("provider.ollama.enabled", "true").unwrap();
+        assert!(cfg.provider_disabled("openai"));
+        assert!(!cfg.provider_disabled("ollama"));
+        assert!(!cfg.provider_disabled("absent"));
     }
 
     #[test]
