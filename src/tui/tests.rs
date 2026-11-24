@@ -6684,6 +6684,27 @@ fn a_wide_edit_draws_its_change_side_by_side() {
 }
 
 #[test]
+fn edit_with_no_target_opens_the_session_directory() {
+    let mut a = app();
+    a.cfg.set("editor", "vim").unwrap();
+    let (tx, cmds) = channel();
+    a.run_command("edit", &tx);
+    let root = a.root.display().to_string();
+    assert!(matches!(cmds.try_recv(), Ok(Cmd::Edit(argv)) if argv == vec!["vim".to_string(), root.clone()]));
+}
+
+#[test]
+fn drawing_a_diff_leaves_the_transcript_unchanged() {
+    let mut a = app();
+    a.push_diffs(vec!["-let x = 1;".to_string(), "+let x = 2;".to_string()], "rs");
+    let before: Vec<String> = a.entries.iter().map(|e| e.text.clone()).collect();
+    let _ = a.frame(120, 20);
+    let _ = a.frame(100, 20);
+    let after: Vec<String> = a.entries.iter().map(|e| e.text.clone()).collect();
+    assert_eq!(before, after, "drawing changed the transcript the model reads");
+}
+
+#[test]
 fn skills_picker_toggles_and_saves_a_skill() {
     let dir = std::env::temp_dir().join(format!("imp-skills-picker-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
