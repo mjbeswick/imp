@@ -6350,6 +6350,7 @@ fn e_on_a_custom_provider_opens_its_saved_profile() {
         key_env: String::new(),
         dialect: "openai".into(),
         models: Vec::new(),
+        api_key: String::new(),
     });
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
@@ -6546,6 +6547,7 @@ fn e_on_the_custom_provider_row_shows_the_form() {
         key_env: String::new(),
         dialect: "openai".into(),
         models: Vec::new(),
+        api_key: String::new(),
     });
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
@@ -6576,6 +6578,7 @@ fn ctrl_e_configures_the_row_after_slash_provider() {
         key_env: String::new(),
         dialect: "openai".into(),
         models: Vec::new(),
+        api_key: String::new(),
     });
     let (tx, _rx) = channel();
     a.input = "/provider ".into();
@@ -6853,6 +6856,28 @@ fn form_with(name: &str, base: &str) -> Pending {
         .map(|(l, v)| (l.to_string(), v.to_string()))
         .collect();
     Pending::ProviderForm { name: name.into(), fields, at: 5 }
+}
+
+#[test]
+fn a_typed_key_is_saved_in_the_provider_config() {
+    let dir = std::env::temp_dir().join(format!("imp-form-key-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config");
+    std::fs::write(&config, "# keep\n").unwrap();
+    let mut a = app();
+    a.config_path = config.clone();
+    let labels = ["base", "model", "dialect", "key_env", "models", "api_key"];
+    let key = "test-key-value";
+    let values = ["http://box:8080/v1", "m", "openai", "", "", key];
+    let fields = labels.iter().zip(values).map(|(l, v)| (l.to_string(), v.to_string())).collect();
+    a.pending = Some(Pending::ProviderForm { name: "work".into(), fields, at: 5 });
+    let (tx, _cmds) = channel();
+    a.handle_key(Key::Enter, &tx);
+    let text = std::fs::read_to_string(&config).unwrap();
+    let line = format!("provider.work.api_key = {key}");
+    assert!(text.contains(&line), "key not in the config: {text:?}");
+    assert!(a.cfg.named.iter().any(|n| n.name == "work" && n.api_key == key));
 }
 
 #[test]
@@ -7215,7 +7240,7 @@ fn the_provider_form_has_an_api_key_field_that_is_masked() {
 }
 
 #[test]
-fn saving_with_a_key_but_no_variable_name_is_refused_and_nothing_is_saved() {
+fn a_key_without_a_variable_name_is_saved_in_the_config() {
     let (mut a, config) = provider_app();
     let (tx, _rx) = channel();
     open_add_form(&mut a, &tx);
@@ -7234,10 +7259,10 @@ fn saving_with_a_key_but_no_variable_name_is_refused_and_nothing_is_saved() {
     a.handle_key(Key::Down, &tx);
     type_text(&mut a, &tx, "sk-no-variable-1");
     a.handle_key(Key::Enter, &tx);
-    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "the form closed");
-    let shown = strip(&a.frame(90, 24));
-    assert!(shown.contains("key variable"), "no reason shown: {shown:?}");
-    assert!(!std::fs::read_to_string(&config).unwrap().contains("sk-no-variable-1"), "the key reached the config");
+    // The key is saved in the config, so it needs no variable name.
+    assert!(a.pending.is_none(), "the form stayed open");
+    let saved = std::fs::read_to_string(&config).unwrap();
+    assert!(saved.contains("provider.work.api_key = sk-no-variable-1"), "the key was not saved: {saved:?}");
 }
 
 #[test]
@@ -7315,6 +7340,7 @@ fn work_provider(a: &mut App) {
         models: vec!["m2".into()],
         key_env: String::new(),
         dialect: "openai".into(),
+        api_key: String::new(),
     });
 }
 
@@ -7422,6 +7448,7 @@ fn typing_after_opening_a_saved_provider_edits_at_the_end() {
         models: Vec::new(),
         key_env: String::new(),
         dialect: "openai".into(),
+        api_key: String::new(),
     });
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);

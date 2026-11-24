@@ -122,6 +122,8 @@ pub struct NamedProvider {
     pub models: Vec<String>,
     pub key_env: String,
     pub dialect: String,
+    /// The API key, saved in the config. Empty when the key comes from `key_env`.
+    pub api_key: String,
 }
 
 impl NamedProvider {
@@ -266,7 +268,9 @@ impl Config {
             }
         }
         for named in &self.named {
-            let usable = named.key_env.is_empty() || lookup(&named.key_env).is_some_and(|v| !v.trim().is_empty());
+            let usable = named.key_env.is_empty()
+                || !named.api_key.trim().is_empty()
+                || lookup(&named.key_env).is_some_and(|v| !v.trim().is_empty());
             if named.name != self.active_name && !self.provider_disabled(&named.name) && usable {
                 return Some(named.name.clone());
             }
@@ -565,7 +569,7 @@ impl Config {
                 kept.push_str(line);
             }
         }
-        std::fs::write(path, kept).map_err(|e| e.to_string())
+        write_private(path, &kept)
     }
 
     /// Allow a shape in every session, and append it to the config file.
@@ -661,6 +665,13 @@ impl Config {
             self.api_key = v;
             return Ok(());
         }
+        // A key saved with the active named provider, in the config, is used as typed.
+        if let Some(named) = self.named.iter().find(|n| n.name == self.active_name) {
+            if !named.api_key.trim().is_empty() {
+                self.api_key = named.api_key.clone();
+                return Ok(());
+            }
+        }
         // A named provider with no key variable needs no key.
         if matches!(&self.key_env, Some(v) if v.is_empty()) {
             return Ok(());
@@ -755,6 +766,7 @@ fn set_named_field(named: &mut Vec<NamedProvider>, name: &str, field: &str, valu
             profile.models = value.split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect()
         }
         "key_env" => profile.key_env = value.to_string(),
+        "api_key" => profile.api_key = value.to_string(),
         "dialect" => profile.dialect = value.to_string(),
         _ => {}
     }
@@ -787,6 +799,10 @@ pub fn providers_block(named: &[NamedProvider]) -> String {
             "provider.{}.key_env = {}\n",
             profile.name, profile.key_env
         ));
+        // The key sits in the config only when one was typed for this provider.
+        if !profile.api_key.is_empty() {
+            out.push_str(&format!("provider.{}.api_key = {}\n", profile.name, profile.api_key));
+        }
         out.push_str(&format!(
             "provider.{}.dialect = {}\n\n",
             profile.name, profile.dialect
@@ -825,7 +841,7 @@ pub fn save_named(path: &Path, named: &[NamedProvider]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, updated).map_err(|e| e.to_string())
+    write_private(path, &updated)
 }
 
 /// `text` with the last uncommented `key=` line set to `key = value`, or the
@@ -850,7 +866,14 @@ pub fn save_setting(path: &Path, key: &str, value: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, set_line(&text, key, value)).map_err(|e| e.to_string())
+    write_private(path, &set_line(&text, key, value))
+}
+
+/// Write the config so only its owner can read it: it can hold API keys.
+fn write_private(path: &Path, text: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())
 }
 
 /// Stored provider keys: `NAME=value`, one per line, owner only.
@@ -911,7 +934,7 @@ fn write_key(path: &Path, name: &str, value: &str) -> Result<(), String> {
         None => true,
     });
     lines.push(format!("{name}={}", value.trim()));
-    std::fs::write(path, format!("{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
+    write_private(path, &format!("{}\n", lines.join("\n")))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1376,6 +1399,7 @@ mod tests {
             model: "m".into(),
             key_env: "K".into(),
             dialect: "openai".into(),
+            api_key: String::new(),
         }];
         save_named(&path, &named).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -1524,6 +1548,39 @@ mod tests {
         save_setting(&path, "thinking", "on").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\nthinking = on\n");
         assert!(Config::load(&path).unwrap().thinking);
+    }
+
+    #[test]
+    fn a_key_saved_with_a_named_provider_is_used_and_counts_as_configured() {
+        let mut cfg = Config::default();
+        cfg.named = vec![NamedProvider {
+            name: "work".into(),
+            base: "http://box/v1".into(),
+            model: "m".into(),
+            dialect: "openai".into(),
+            api_key: String::from("test-key-value"),
+            ..NamedProvider::default()
+        }];
+        cfg.set_active("work").unwrap();
+        assert!(cfg.resolve_key_env(env(&[])).is_ok(), "a saved key was not accepted");
+        assert_eq!(cfg.api_key, "test-key-value", "the saved key was not used");
+        assert_eq!(Config::default().configured_fallback(env(&[])), None);
+        let mut other = Config::default();
+        other.named = cfg.named.clone();
+        assert_eq!(other.configured_fallback(env(&[])), Some("work".to_string()));
+    }
+
+    #[test]
+    fn a_saved_config_is_private_to_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("imp-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config");
+        std::fs::write(&path, "# keep\n").unwrap();
+        save_setting(&path, "thinking", "on").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the config holds keys and must be owner-only");
     }
 
     #[test]

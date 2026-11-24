@@ -5281,25 +5281,6 @@ impl App {
         }
         // A typed key goes to the key store under its variable name. It is never
         // written to the config or echoed.
-        let api_key = value(5);
-        if !api_key.is_empty() {
-            if key_env.is_empty() {
-                self.push(Role::Error, "provider: an API key needs a key variable (key_env) to save under");
-                // The caret starts at the end of the field.
-                self.form_caret = usize::MAX;
-                self.pending = Some(Pending::ProviderForm { name, fields, at: 3 });
-                self.dirty = true;
-                return;
-            }
-            if let Err(e) = crate::config::save_key(&key_env, &api_key) {
-                self.push(Role::Error, e);
-                // The caret starts at the end of the field.
-                self.form_caret = usize::MAX;
-                self.pending = Some(Pending::ProviderForm { name, fields, at: 5 });
-                self.dirty = true;
-                return;
-            }
-        }
         // The models a provider already lists are kept until the form edits them.
         let models: Vec<String> = value(4).split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect();
         let profile = crate::config::NamedProvider {
@@ -5309,6 +5290,8 @@ impl App {
             models,
             dialect,
             key_env,
+            // The typed key is saved in the config, with the provider.
+            api_key: value(5),
         };
         match self.cfg.named.iter_mut().find(|n| n.name == name) {
             Some(existing) => *existing = profile,
