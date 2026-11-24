@@ -630,11 +630,9 @@ impl Config {
         if !profile.model.is_empty() {
             self.model = profile.model.clone();
         }
-        self.key_env = if profile.key_env.is_empty() {
-            None
-        } else {
-            Some(profile.key_env.clone())
-        };
+        // An empty key variable means the provider needs no key; keep that
+        // distinct from "unset", which means use the built-in profile's variable.
+        self.key_env = Some(profile.key_env.clone());
         self.active_name = profile.name.clone();
         Ok(())
     }
@@ -661,6 +659,10 @@ impl Config {
         let filled = |v: String| !v.trim().is_empty();
         if let Some(v) = lookup("IMP_API_KEY").filter(|v| filled(v.clone())) {
             self.api_key = v;
+            return Ok(());
+        }
+        // A named provider with no key variable needs no key.
+        if matches!(&self.key_env, Some(v) if v.is_empty()) {
             return Ok(());
         }
         let var = self
@@ -1582,6 +1584,20 @@ mod tests {
         assert!(cfg.provider_configured(Provider::OpenAi, env(&[("OPENAI_API_KEY", "k")])));
         assert!(cfg.provider_configured(Provider::Ollama, env(&[])));
         assert!(cfg.provider_configured(Provider::Custom, env(&[])));
+    }
+
+    #[test]
+    fn a_named_provider_without_a_key_variable_needs_no_key() {
+        let mut cfg = Config::default();
+        cfg.named = vec![NamedProvider {
+            name: "local".into(),
+            base: "http://localhost:4141/v1".into(),
+            model: "m".into(),
+            dialect: "openai".into(),
+            ..NamedProvider::default()
+        }];
+        cfg.set_active("local").unwrap();
+        assert!(cfg.resolve_key_env(env(&[])).is_ok(), "asked for a key it does not use");
     }
 
     #[test]
