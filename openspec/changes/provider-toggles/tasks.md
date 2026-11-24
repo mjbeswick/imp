@@ -15,7 +15,7 @@
 
 - [ ] 3.1 Test: an unconfigured built-in (OpenAI with no key) is absent from `model_items`; a configured one is listed with `provider::model` values.
 - [ ] 3.2 Test: a disabled provider is absent; the active provider is kept even if unconfigured.
-- [ ] 3.3 Implement: filter in `model_items`.
+- [x] 3.3 Implement: filter in `model_items`.
 
 ## 3b. Providers list states
 
