@@ -774,6 +774,41 @@ fn value_rows(rows: &[(String, String)], current: &str) -> String {
     out
 }
 
+fn ask_from<R: BufRead, W: Write>(input: &mut R, output: &mut W, questions: &[agent::AskQuestion]) -> Option<Vec<Vec<String>>> {
+    let mut answers = Vec::with_capacity(questions.len());
+    for (i, q) in questions.iter().enumerate() {
+        if !q.header.is_empty() {
+            writeln!(output, "{}/{} · {}", i + 1, questions.len(), q.header).ok()?;
+        } else if questions.len() > 1 {
+            writeln!(output, "{}/{}", i + 1, questions.len()).ok()?;
+        }
+        writeln!(output, "{}{}", new_line(), q.question).ok()?;
+        for (n, (label, description)) in q.options.iter().enumerate() {
+            writeln!(output, "  {}. {label}", n + 1).ok()?;
+            if !description.is_empty() { writeln!(output, "     {description}").ok()?; }
+        }
+        loop {
+            let hint = if q.options.is_empty() { "" } else if q.multiple { " (numbers separated by commas, or text)" } else { " (number or text)" };
+            write!(output, "answer{hint}: ").ok()?;
+            output.flush().ok()?;
+            let line = read_entry(input).ok()??;
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            let picks: Option<Vec<usize>> = line.split([',', ' ']).filter(|s| !s.is_empty())
+                .map(|s| s.parse::<usize>().ok().filter(|&n| n >= 1 && n <= q.options.len()))
+                .collect();
+            if let Some(picks) = picks.filter(|v| !v.is_empty() && (q.multiple || v.len() == 1)) {
+                answers.push(q.options.iter().enumerate().filter(|(n, _)| picks.contains(&(n + 1)))
+                    .map(|(_, (label, _))| label.clone()).collect());
+            } else {
+                answers.push(vec![line.to_string()]);
+            }
+            break;
+        }
+    }
+    Some(answers)
+}
+
 struct Cli {
     verbosity: config::Verbosity,
     palette: tui::Palette,
@@ -802,20 +837,17 @@ impl Hooks for Cli {
     }
 
     fn ask(&mut self, question: &str, options: &[String]) -> Option<String> {
-        println!("{}{question}", new_line());
-        for (i, o) in options.iter().enumerate() {
-            println!("  {}. {o}", i + 1);
-        }
-        print!("answer{}: ", if options.is_empty() { "" } else { " (number or text)" });
-        std::io::stdout().flush().ok();
-        let line = read_entry(&mut std::io::stdin().lock()).ok()??;
-        let line = line.trim().to_string();
-        if let Ok(n) = line.parse::<usize>() {
-            if n >= 1 && n <= options.len() {
-                return Some(options[n - 1].clone());
-            }
-        }
-        Some(line)
+        let options: Vec<(String, String)> = options.iter().map(|o| (o.clone(), String::new())).collect();
+        self.ask_choices(question, &options, false)
+    }
+
+    fn ask_choices(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<String> {
+        let q = agent::AskQuestion { header: String::new(), question: question.into(), options: options.to_vec(), multiple };
+        ask_from(&mut std::io::stdin().lock(), &mut std::io::stdout(), &[q])?.pop().map(|v| v.join(", "))
+    }
+
+    fn ask_many(&mut self, questions: &[agent::AskQuestion]) -> Option<Vec<Vec<String>>> {
+        ask_from(&mut std::io::stdin().lock(), &mut std::io::stdout(), questions)
     }
 }
 
@@ -1000,6 +1032,29 @@ fn next(args: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_mode_shows_descriptions_and_returns_distinct_multiple_labels() {
+        let questions = [agent::AskQuestion {
+            header: "Languages".into(), question: "which?".into(),
+            options: vec![("Rust, fast".into(), "safe".into()), ("Go".into(), String::new()), ("Zig".into(), "small".into())],
+            multiple: true,
+        }];
+        let mut input = std::io::Cursor::new(b"1,3\n".as_slice());
+        let mut output = Vec::new();
+        assert_eq!(ask_from(&mut input, &mut output, &questions), Some(vec![vec!["Rust, fast".into(), "Zig".into()]]));
+        let shown = String::from_utf8(output).unwrap();
+        assert!(shown.contains("Languages") && shown.contains("1. Rust, fast") && shown.contains("safe"), "{shown}");
+        assert!(shown.contains("3. Zig") && shown.contains("small") && shown.contains("1/1"), "{shown}");
+    }
+
+    #[test]
+    fn line_mode_accepts_custom_text_and_eof_dismisses_the_batch() {
+        let questions = [agent::AskQuestion { header: String::new(), question: "why?".into(), options: vec![], multiple: false }];
+        let mut output = Vec::new();
+        assert_eq!(ask_from(&mut std::io::Cursor::new(b"because\n".as_slice()), &mut output, &questions), Some(vec![vec!["because".into()]]));
+        assert_eq!(ask_from(&mut std::io::Cursor::new(b"".as_slice()), &mut output, &questions), None);
+    }
 
     #[test]
     fn line_answers_take_always_only_when_offered() {
