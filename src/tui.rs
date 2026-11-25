@@ -1612,6 +1612,13 @@ fn state_mark(waiting: bool, streaming: bool, failed: bool, replied: bool, frame
     }
 }
 
+/// A session's saved marks: `(waiting, unread)`. A session is waiting while a
+/// question or permission is pending. Its reply is unread when it finished
+/// out of view.
+fn mark_flags(asking: bool, replied: bool, in_view: bool) -> (bool, bool) {
+    (asking, replied && !in_view)
+}
+
 /// Whether a character is one of the marks a session row can start with.
 fn is_mark(c: char) -> bool {
     matches!(c, '?' | '!' | '•') || spinner_frames().contains(c)
@@ -6735,6 +6742,25 @@ impl App {
         out
     }
 
+    /// Save each session's waiting and unread marks, so the session list shows
+    /// them for sessions that are not open too. The session in view has no
+    /// unread reply: viewing it reads it.
+    fn sync_marks(&self) {
+        let asking = |pending: &Option<Pending>| matches!(pending, Some(Pending::Confirm { .. } | Pending::Question { .. }));
+        let save = |worker: Option<&Worker>, flags: (bool, bool)| {
+            let Some(id) = worker.and_then(|w| w.2.lock().ok().map(|s| s.clone())).filter(|s| !s.is_empty()) else {
+                return;
+            };
+            if let Some(log) = crate::store::Log::open(&self.sessions_dir, &id) {
+                log.set_marks(flags.0, flags.1);
+            }
+        };
+        save(self.worker.as_ref(), mark_flags(asking(&self.pending), self.replied, true));
+        for p in self.panes.iter().flatten() {
+            save(p.worker.as_ref(), mark_flags(asking(&p.pending), p.replied, false));
+        }
+    }
+
     /// Repaint the spinners in an open session picker, ten times a second.
     /// True when a row changed.
     fn spin_sessions(&mut self) -> bool {
@@ -9148,6 +9174,7 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
         if app.poll() {
             redraw = true;
         }
+        app.sync_marks();
         if redraw {
             busy = Instant::now();
         }

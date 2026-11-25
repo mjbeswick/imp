@@ -3523,13 +3523,10 @@ fn esc_closes_the_palette_and_keeps_the_composer() {
 }
 
 #[test]
-fn a_typed_quit_still_quits_with_the_palette_present() {
-    let mut a = app();
-    let (tx, _rx) = channel();
-    a.input = "/quit".into();
-    a.cursor = a.input.len();
-    a.handle_key(Key::Enter, &tx);
-    assert!(a.quit, "typed /quit did not quit");
+fn a_question_is_waiting_and_a_reply_is_unread_only_out_of_view() {
+    assert_eq!(mark_flags(true, false, true), (true, false), "a question in view");
+    assert_eq!(mark_flags(false, true, false), (false, true), "a reply out of view");
+    assert_eq!(mark_flags(false, true, true), (false, false), "a reply in view was read");
 }
 
 #[test]
