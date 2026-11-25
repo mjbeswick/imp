@@ -3378,6 +3378,71 @@ fn f_with_a_filter_types_into_the_filter() {
     assert!(!path.exists(), "a favourite was written while filtering");
 }
 
+fn form_of(a: &App) -> (String, Vec<(String, String)>) {
+    match &a.pending {
+        Some(Pending::ProviderForm { name, fields, .. }) => (name.clone(), fields.clone()),
+        _ => panic!("no provider form is open"),
+    }
+}
+
+fn set_name_field(fields: &mut [(String, String)], value: &str) {
+    fields.iter_mut().find(|f| f.0 == "name").expect("no name field").1 = value.into();
+}
+
+#[test]
+fn a_built_in_copy_defaults_to_a_numbered_name() {
+    let (mut a, _config) = provider_app();
+    a.configure_provider("openai");
+    let (_, fields) = form_of(&a);
+    assert_eq!(fields.iter().find(|f| f.0 == "name").unwrap().1, "openai-2");
+    a.configure_provider("deepseek");
+    let (_, fields) = form_of(&a);
+    assert_eq!(fields.iter().find(|f| f.0 == "name").unwrap().1, "deepseek-2");
+}
+
+#[test]
+fn saving_a_built_in_name_keeps_the_form_open_and_saves_nothing() {
+    let (mut a, _config) = provider_app();
+    a.configure_provider("openai");
+    let (name, mut fields) = form_of(&a);
+    set_name_field(&mut fields, "openai");
+    let before = a.cfg.named.len();
+    a.finish_provider_form(name, fields);
+    assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "the form closed");
+    assert_eq!(a.cfg.named.len(), before, "a profile was saved");
+}
+
+#[test]
+fn renaming_a_saved_profile_replaces_its_old_name() {
+    let (mut a, _config) = provider_app();
+    a.configure_provider("openai");
+    let (name, mut fields) = form_of(&a);
+    set_name_field(&mut fields, "work");
+    a.finish_provider_form(name, fields);
+    assert!(a.cfg.named.iter().any(|n| n.name == "work"), "work was not saved");
+    a.configure_provider("work");
+    let (name, mut fields) = form_of(&a);
+    set_name_field(&mut fields, "office");
+    a.finish_provider_form(name, fields);
+    assert!(a.cfg.named.iter().any(|n| n.name == "office"), "office was not saved");
+    assert!(a.cfg.named.iter().all(|n| n.name != "work"), "work is still listed");
+}
+
+#[test]
+fn renaming_the_active_profile_keeps_it_active() {
+    let (mut a, _config) = provider_app();
+    a.configure_provider("openai");
+    let (name, mut fields) = form_of(&a);
+    set_name_field(&mut fields, "work");
+    a.finish_provider_form(name, fields);
+    a.cfg.set_active("work").unwrap();
+    a.configure_provider("work");
+    let (name, mut fields) = form_of(&a);
+    set_name_field(&mut fields, "office");
+    a.finish_provider_form(name, fields);
+    assert_eq!(a.cfg.active_name, "office");
+}
+
 #[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
@@ -3526,6 +3591,7 @@ fn provider_add_edits_the_managed_block() {
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
     assert!(a.pending.is_none(), "the form stayed open");
     let text = std::fs::read_to_string(&config).unwrap();
     assert!(text.starts_with("# keep me\nmodel = old\n"), "{text}");
@@ -3541,6 +3607,7 @@ fn provider_add_edits_the_managed_block() {
     for _ in 0..3 {
         a.handle_key(Key::Right, &tx);
     }
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
@@ -6443,7 +6510,7 @@ fn the_provider_form_stops_at_the_first_and_last_field() {
     for _ in 0..6 {
         a.handle_key(Key::Down, &tx);
     }
-    assert_eq!(provider_form(&a).1, 5, "↓ went past the last field");
+    assert_eq!(provider_form(&a).1, 6, "↓ went past the last field");
 }
 
 #[test]
@@ -6587,7 +6654,7 @@ fn e_on_a_built_in_provider_opens_its_defaults_as_a_named_copy_form() {
     a.handle_key(Key::Ctrl('e'), &tx);
     match &a.pending {
         Some(Pending::ProviderForm { name, fields, at }) => {
-            assert_eq!(name, "deepseek-custom");
+            assert_eq!(name, "deepseek-2");
             assert_eq!(fields[0].1, crate::providers::Provider::DeepSeek.profile().base_url);
             assert_eq!(fields[1].1, crate::providers::Provider::DeepSeek.profile().model);
             assert_eq!(fields[2].1, "deepseek");
@@ -6638,11 +6705,11 @@ fn saving_a_built_in_change_adds_a_named_copy_and_keeps_the_built_in() {
     type_text(&mut a, &tx, "deepseek-pro");
     a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Down, &tx);
-    a.handle_key(Key::Enter, &tx);
-    a.handle_key(Key::Enter, &tx);
-    a.handle_key(Key::Enter, &tx);
+    for _ in 0..4 {
+        a.handle_key(Key::Enter, &tx);
+    }
     let saved = std::fs::read_to_string(&config).unwrap();
-    assert!(saved.contains("deepseek-custom") && saved.contains("deepseek-pro"), "{saved}");
+    assert!(saved.contains("deepseek-2") && saved.contains("deepseek-pro"), "{saved}");
     assert_eq!(crate::providers::Provider::DeepSeek.profile().model, "deepseek-flash", "the built-in changed");
     let (tx2, _rx2) = channel();
     a.run_command("provider", &tx2);
@@ -6822,7 +6889,7 @@ fn e_on_the_built_in_custom_row_shows_the_form_at_a_narrow_width() {
     provider_row(&mut a, "custom");
     a.handle_key(Key::Ctrl('e'), &tx);
     let shown = strip(&a.frame(60, 20));
-    assert!(shown.contains("provider custom-custom"), "the form is not on screen: {shown:?}");
+    assert!(shown.contains("provider custom-2"), "the form is not on screen: {shown:?}");
 }
 
 #[test]
@@ -7473,7 +7540,7 @@ fn enter_on_a_provider_row_opens_its_configuration_form() {
     a.handle_key(Key::Enter, &tx);
     match &a.pending {
         Some(Pending::ProviderForm { name, fields, .. }) => {
-            assert_eq!(name, "ollama-custom");
+            assert_eq!(name, "ollama-2");
             assert_eq!(fields[0].1, crate::providers::Provider::Ollama.profile().base_url);
         }
         _ => panic!("Enter did not open the configuration form"),
@@ -7560,6 +7627,7 @@ fn a_key_without_a_variable_name_is_saved_in_the_config() {
     a.handle_key(Key::Down, &tx);
     type_text(&mut a, &tx, "sk-no-variable-1");
     a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
     // The key is saved in the config, so it needs no variable name.
     assert!(a.pending.is_none(), "the form stayed open");
     let saved = std::fs::read_to_string(&config).unwrap();
@@ -7608,6 +7676,7 @@ fn saving_without_a_model_says_which_fields_are_required() {
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
+    a.handle_key(Key::Enter, &tx);
     let shown = strip(&a.frame(90, 24));
     assert!(shown.contains("required"), "no required message: {shown:?}");
 }
@@ -7627,6 +7696,7 @@ fn the_models_field_saves_a_comma_separated_list() {
     a.handle_key(Key::Enter, &tx);
     type_text(&mut a, &tx, "m1, m2");
     assert_eq!(form_field(&a, "models"), "m1, m2", "the models field did not take text");
+    a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     a.handle_key(Key::Enter, &tx);
     let saved = std::fs::read_to_string(&config).unwrap();

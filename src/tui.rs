@@ -5094,6 +5094,7 @@ impl App {
                 let fields = ["base".to_string(), "model".to_string(), "dialect".to_string(), "key_env".to_string(), "models".to_string(), "api_key".to_string()]
                     .into_iter()
                     .map(|label| (label, String::new()))
+                    .chain(std::iter::once(("name".to_string(), name.to_string())))
                     .collect();
                 // The caret starts at the end of the field.
                 self.form_caret = usize::MAX;
@@ -5116,6 +5117,7 @@ impl App {
                     ("key_env".to_string(), profile.key_env),
                     ("models".to_string(), profile.models.join(", ")),
                     ("api_key".to_string(), String::new()),
+                    ("name".to_string(), profile.name.clone()),
                 ];
                 // The caret starts at the end of the field.
                 self.form_caret = usize::MAX;
@@ -5215,6 +5217,7 @@ impl App {
                 ("key_env".to_string(), profile.key_env),
                 ("models".to_string(), profile.models.join(", ")),
                 ("api_key".to_string(), String::new()),
+                ("name".to_string(), profile.name.clone()),
             ];
             // The caret starts at the end of the field.
             self.form_caret = usize::MAX;
@@ -5228,10 +5231,12 @@ impl App {
                 ("key_env".to_string(), defaults.key_var.unwrap_or("").to_string()),
                 ("models".to_string(), String::new()),
                 ("api_key".to_string(), String::new()),
+                ("name".to_string(), crate::config::default_provider_name(value, &self.cfg.named)),
             ];
             // The caret starts at the end of the field.
             self.form_caret = usize::MAX;
-            self.pending = Some(Pending::ProviderForm { name: format!("{value}-custom"), fields, at: 0 });
+            let name = fields.last().map(|f| f.1.clone()).unwrap_or_default();
+            self.pending = Some(Pending::ProviderForm { name, fields, at: 0 });
         }
         self.dirty = true;
     }
@@ -5395,6 +5400,17 @@ impl App {
     fn finish_provider_form(&mut self, name: String, fields: Vec<(String, String)>) {
         let value = |at: usize| fields.get(at).map(|(_, v)| v.trim().to_string()).unwrap_or_default();
         let (base, model, dialect, key_env) = (value(0), value(1), value(2), value(3));
+        // The name is its own field. `name` is the profile's name before this save.
+        let name_at = fields.iter().position(|f| f.0 == "name").unwrap_or(fields.len());
+        let typed = fields.get(name_at).map(|f| f.1.trim().to_string()).unwrap_or_else(|| name.clone());
+        let editing = self.cfg.named.iter().any(|n| n.name == name).then(|| name.clone());
+        if let Err(e) = crate::config::check_provider_name(&typed, editing.as_deref(), &self.cfg.named) {
+            self.push(Role::Error, format!("provider: {e}"));
+            self.form_caret = usize::MAX;
+            self.pending = Some(Pending::ProviderForm { name, fields, at: name_at });
+            self.dirty = true;
+            return;
+        }
         if base.is_empty() || model.is_empty() || dialect.is_empty() {
             self.push(Role::Error, "provider: base, model, and dialect are required");
             // The caret starts at the end of the field.
@@ -5427,7 +5443,7 @@ impl App {
         // The models a provider already lists are kept until the form edits them.
         let models: Vec<String> = value(4).split(',').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect();
         let profile = crate::config::NamedProvider {
-            name: name.clone(),
+            name: typed.clone(),
             base,
             model,
             models,
@@ -5440,8 +5456,12 @@ impl App {
             Some(existing) => *existing = profile,
             None => self.cfg.named.push(profile),
         }
+        // Renaming the active profile keeps it active under its new name.
+        if self.cfg.active_name == name && typed != name {
+            let _ = self.cfg.set_active(&typed);
+        }
         match crate::config::save_named(&self.config_path, &self.cfg.named) {
-            Ok(()) => self.push(Role::Info, format!("provider {name} saved")),
+            Ok(()) => self.push(Role::Info, format!("provider {typed} saved")),
             Err(e) => self.push(Role::Error, e),
         }
         self.dirty = true;

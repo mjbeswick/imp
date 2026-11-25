@@ -184,7 +184,10 @@ Bare `/provider` picks from built-in and custom profiles. Enter opens the
 highlighted one's configuration form, `e` does the same, and `u` switches to
 it. After typing `/provider`, letters filter the list, so the keys there are
 Ctrl+E (configure) and Ctrl+U (use). Saving a built-in provider from the form
-adds a named copy, such as `deepseek-custom`, and leaves the built-in as it is.
+adds a named copy, such as `deepseek-2`, and leaves the built-in as it is. The
+form's `name` field (its last field) sets the copy's name; it defaults to the
+dialect with the lowest free number, and a built-in name or a name already saved
+is refused.
 A provider can offer several models: the form's `models` field takes a
 comma-separated list, and the default model is always included. `/model` lists
 every configured provider's models, each row naming its provider; choosing one
