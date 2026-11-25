@@ -27,11 +27,15 @@ The system SHALL expose `bash`, `read`, `edit`, `write`, `job`, `ask`, and `fetc
 
 ### Requirement: Asking a yes/no question is one keystroke
 
-The system SHALL render a question whose only choices are yes and no as a `y`/`n` prompt, SHALL return the chosen word, and SHALL treat `y` and `n` as typed text on any other question.
+The system SHALL render a question whose only choices are yes and no, each optionally suffixed with ` (Recommended)`, as a `y`/`n` prompt, SHALL return the chosen exact label, and SHALL treat `y` and `n` as typed text on any other question.
 
 #### Scenario: Confirmation-style question
 - **WHEN** the model asks a question with options `["Yes", "No"]`
 - **THEN** pressing `y` answers Yes and pressing `n` answers No
+
+#### Scenario: Recommended confirmation
+- **WHEN** the choices are `Yes (Recommended)` and `No`
+- **THEN** pressing `y` returns `Yes (Recommended)` and pressing `n` returns `No`
 
 #### Scenario: Other two-choice question
 - **WHEN** the options are `["Python", "Rust"]` and the user presses `y`
@@ -43,7 +47,7 @@ The system SHALL render a question whose only choices are yes and no as a `y`/`n
 
 ### Requirement: The agent can ask the user a question
 
-The system SHALL provide an `ask` tool taking a question, optional two-to-six choices each with a label and an optional description, and an optional `multiple` flag, SHALL block until the user answers, SHALL return the chosen label, the marked labels joined by `, ` under `multiple`, or the user's typed answer, and SHALL stop the turn when the user dismisses the question.
+The system SHALL provide an `ask` tool taking either one legacy question with optional two-to-six described choices and `multiple`, or an ordered nonempty `questions` array whose entries each have a question, optional short header, optional two-to-six described choices, and optional `multiple`. It SHALL block until all answers arrive, preserve the legacy string result, return ordered arrays of exact labels or custom text for a batch, and stop the turn if any question is dismissed.
 
 #### Scenario: Multiple choice
 - **WHEN** the model asks which of three deployment targets to use
@@ -63,7 +67,7 @@ The system SHALL provide an `ask` tool taking a question, optional two-to-six ch
 
 #### Scenario: Several choices
 - **WHEN** the model asks with `multiple: true` and the user marks the first and third options
-- **THEN** the model receives both labels joined by `, `
+- **THEN** a legacy call returns both labels joined by `, ` and a batch returns both as separate labels
 
 #### Scenario: Described option
 - **WHEN** an option has a description
@@ -72,6 +76,18 @@ The system SHALL provide an `ask` tool taking a question, optional two-to-six ch
 #### Scenario: Too many options
 - **WHEN** the model supplies more than six choices
 - **THEN** the call is rejected with a message asking for fewer
+
+#### Scenario: Ordered batch
+- **WHEN** the model asks two questions with different headers and the user answers each
+- **THEN** the tool returns `{"answers": [ ["first choice"], ["second choice"] ]}` in question order
+
+#### Scenario: Invalid batch
+- **WHEN** the model supplies an empty questions array or an entry without a question
+- **THEN** the call is rejected without opening the question interface
+
+#### Scenario: Dismissed batch
+- **WHEN** the user dismisses the first question in a batch and another tool call follows `ask` in the same response
+- **THEN** the remaining questions and the following tool call do not run
 
 ### Requirement: Shell commands run non-interactively
 
