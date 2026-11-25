@@ -40,22 +40,22 @@ imp --provider anthropic         # or put provider=anthropic in the config
 ## The screen
 
 ```
- fix the parser                                  14:05   ← title bar
-                                                         
 > fix the parser so blank lines are kept                 ← your message
 ✓ read src/parse.rs → 212 lines                          ← a tool call
 ✓ edit src/parse.rs → 1 change                           
 The parser now keeps blank lines …                       ← the reply
-──────────────────────────────────────────────────────── 
 build> _                                                 ← agent and prompt
 deepseek-flash · 3.1K tok · $0.002          ~/project    ← status line
 ```
 
-- The **title bar** names the session and shows the time. With several
-  sessions open, their position comes first, such as `2/3`.
+- The **terminal title** names the session. It is `imp` before the first
+  message and `<title> · imp` after it. With several sessions open, the status
+  line starts with their position, such as `2/3`.
 - The **prompt** names the agent your next message goes to.
 - The **status line** shows the model, tokens and cost. It also hosts short
   confirmations, such as `copied 42 characters`, for three seconds.
+- The **rule** above the prompt appears only when it carries a label, such as
+  queue editing, or a warning tint, such as yolo.
 
 ## A first task
 

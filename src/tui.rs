@@ -1795,10 +1795,10 @@ pub struct App {
     top: usize,
     body_rows: usize,
     max_top: usize,
-    /// The time the title bar last showed, to repaint on a new minute.
     /// The provider-has-no-effort note was shown this run.
     effort_noted: bool,
-    clock_shown: String,
+    /// The title last written to the terminal, so an unchanged frame writes none.
+    term_title: String,
     unseen: usize,
     pending: Option<Pending>,
     /// The theme active when the theme picker opened, while it previews.
@@ -2707,7 +2707,7 @@ impl App {
             body_rows: 1,
             max_top: 0,
             effort_noted: false,
-            clock_shown: String::new(),
+            term_title: String::new(),
             unseen: 0,
             pending: None,
             preview_from: None,
@@ -3108,31 +3108,16 @@ impl App {
         }
     }
 
-    /// The title as a rule: `── fix the parser ───────── 20:51 ─`, no background.
-    fn title_bar(&mut self, cols: usize) -> String {
+    /// The OSC 0 sequence for the terminal title, only when it changed.
+    fn title_seq(&mut self) -> Option<String> {
         let name = self.session_name();
-        let name = if self.panes.len() > 1 { format!("{}/{} {name}", self.at + 1, self.panes.len()) } else { name };
-        let time = clock();
-        self.clock_shown = time.clone();
-        // The name starts at the left edge and the clock ends at the right one;
-        // the rule fills the gap between them.
-        let fixed = 1 + 1 + time.chars().count();
-        let name = fit(&name, cols.saturating_sub(fixed));
-        let fill = cols.saturating_sub(fixed + name.chars().count());
-        let rule = |s: &str| self.palette.paint(Role::Border, s);
-        format!(
-            "{} {} {}",
-            self.palette.paint(Role::Info, &name),
-            rule(&"─".repeat(fill)),
-            self.palette.paint(Role::Thinking, &time),
-        )
-    }
-
-    /// Whether the minute moved on since the title bar was drawn.
-    fn clock_due(&mut self) -> bool {
-        let due = !self.clock_shown.is_empty() && clock() != self.clock_shown;
-        self.dirty |= due;
-        due
+        let title = if name == "imp" { name } else { format!("{name} · imp") };
+        let title: String = title.chars().filter(|c| !c.is_control()).take(80).collect();
+        if title == self.term_title {
+            return None;
+        }
+        self.term_title = title.clone();
+        Some(format!("\x1b]0;{title}\x1b\\"))
     }
 
     /// A confirmation of what the user just did, shown in the status line.
@@ -6579,6 +6564,9 @@ impl App {
         }
         let screen = self.frame_changes(cols, rows);
         let mut out = std::io::stdout();
+        if let Some(seq) = self.title_seq() {
+            out.write_all(seq.as_bytes()).ok();
+        }
         out.write_all(screen.as_bytes()).ok();
         if let Some(seq) = self.osc52.take() {
             out.write_all(seq.as_bytes()).ok();
@@ -6602,15 +6590,14 @@ impl App {
             both.append(&mut composer);
             composer = both;
         }
-        // A rule sets the composer apart, unless the screen is too short.
-        let rule = usize::from(rows >= 8);
-        // So does the title bar.
-        let title = rule;
+        // The rule sets the composer apart, unless it says nothing or the
+        // screen is too short.
+        let note = self.rule_note();
+        let rule = usize::from(rows >= 8 && note.is_some());
         // Narrow screens give the directory a row of its own under the status.
         let narrow = cols < NARROW_COLS;
         let status_rows = 1 + usize::from(narrow);
-        let body_rows = rows.saturating_sub(status_rows + rule + title + composer.len()).max(1);
-        let bar = (title == 1).then(|| self.title_bar(cols));
+        let body_rows = rows.saturating_sub(status_rows + rule + composer.len()).max(1);
 
         let markdown = self.cfg.links.supported();
         // Only entries whose text, role, width, or turn gap changed render again.
@@ -6711,7 +6698,6 @@ impl App {
         let lead = body_rows.saturating_sub(visible.len());
 
         let mut screen: Vec<String> = Vec::with_capacity(rows);
-        screen.extend(bar);
         for _ in 0..body_rows.saturating_sub(visible.len()) {
             screen.push(String::new());
         }
@@ -6736,7 +6722,7 @@ impl App {
                         let used: usize = spans.iter().map(|s| s.text.chars().count()).sum();
                         row.push_str(&" ".repeat(cols.saturating_sub(used + 1)));
                         row.push_str(&self.palette.paint(Role::Thinking, &COPY.to_string()));
-                        self.targets.push((title + lead + n + 1, cols.saturating_sub(1), cols, target));
+                        self.targets.push((lead + n + 1, cols.saturating_sub(1), cols, target));
                     }
                 }
                 Line::Diff(text, marks) => row.push_str(&self.paint_diff(*role, text, marks, cols)),
@@ -6748,38 +6734,12 @@ impl App {
                 }
             }
             if let Some(Target::Tool(i)) = &labels[n] {
-                self.targets.push((title + lead + n + 1, 1, cols, Target::Tool(*i)));
+                self.targets.push((lead + n + 1, 1, cols, Target::Tool(*i)));
             }
             screen.push(row);
         }
 
-        if rule == 1 {
-            // The rule takes the accent while a question waits below it.
-            let asking = self.pending.is_some() && !matches!(self.pending, Some(Pending::Pick(_)));
-            let tone = if asking {
-                Role::Info
-            } else if self.yolo() {
-                Role::Error
-            } else {
-                Role::Border
-            };
-            // While a turn runs the rule says what Enter will do.
-            let label = match (self.queue_at, asking || !self.status.streaming) {
-                (Some(i), _) => {
-                    let verb = if self.status.streaming { "steer" } else { "send" };
-                    format!(
-                        "editing {}/{} · Enter save · ^S {verb} · ^X del",
-                        i + 1,
-                        self.queued.len()
-                    )
-                }
-                (None, true) if self.status.suggestion.is_some() => "→ accept".into(),
-                // ↑ does nothing while a question or confirmation is open.
-                (None, true) if !asking && !self.queued.is_empty() => "↑ edit queue".into(),
-                (None, true) => String::new(),
-                // The prompt glyph shows steer or queue; the rule stays quiet.
-                (None, false) => String::new(),
-            };
+        if let Some((label, tone)) = note {
             let rule = if label.is_empty() || cols < label.chars().count() + 6 {
                 "─".repeat(cols)
             } else {
@@ -6787,7 +6747,7 @@ impl App {
             };
             screen.push(self.palette.paint(tone, &rule));
         }
-        let first = title + body_rows + rule + 1;
+        let first = body_rows + rule + 1;
         for (i, row) in composer.iter().enumerate() {
             screen.push(row.clone());
             if matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. })) {
@@ -7580,6 +7540,42 @@ impl App {
     }
 
     /// The status line, muted, with the unseen and waiting counts in accent.
+    /// The rule above the composer: its label and tone, or nothing when it
+    /// would be a bare divider.
+    fn rule_note(&self) -> Option<(String, Role)> {
+        // The rule takes the accent while a question waits below it.
+        let asking = self.pending.is_some() && !matches!(self.pending, Some(Pending::Pick(_)));
+        // While a turn runs the rule says what Enter will do.
+        let label = match (self.queue_at, asking || !self.status.streaming) {
+            (Some(i), _) => {
+                let verb = if self.status.streaming { "steer" } else { "send" };
+                format!(
+                    "editing {}/{} · Enter save · ^S {verb} · ^X del",
+                    i + 1,
+                    self.queued.len()
+                )
+            }
+            (None, true) if self.status.suggestion.is_some() => "→ accept".into(),
+            // ↑ does nothing while a question or confirmation is open.
+            (None, true) if !asking && !self.queued.is_empty() => "↑ edit queue".into(),
+            (None, true) => String::new(),
+            // The prompt glyph shows steer or queue; the rule stays quiet.
+            (None, false) => String::new(),
+        };
+        let tinted = asking || self.yolo();
+        if label.is_empty() && !tinted {
+            return None;
+        }
+        let tone = if asking {
+            Role::Info
+        } else if self.yolo() {
+            Role::Error
+        } else {
+            Role::Border
+        };
+        Some((label, tone))
+    }
+
     fn paint_status(&self, cols: usize) -> String {
         // Before the first message, the status line names the slash menu first.
         const HINT: &str = "/ for commands · ";
@@ -7672,8 +7668,10 @@ impl App {
             .map(|p| format!(" {p}%"))
             .unwrap_or_default();
         let tok = compact_tokens(self.status.tokens);
+        // The session's place in the pool leads the line while there is one.
+        let pos = if self.panes.len() > 1 { format!("{}/{} · ", self.at + 1, self.panes.len()) } else { String::new() };
         let build = |meter: &str, money: &str, thinking: &str| {
-            format!("{model} · {mode}{tok} tok{meter}{money}{goal}{paused}{unseen}{thinking}{waiting}")
+            format!("{pos}{model} · {mode}{tok} tok{meter}{money}{goal}{paused}{unseen}{thinking}{waiting}")
         };
         // As the line narrows, the least useful parts go first: thinking, then
         // cost, then the percentage. The model and tokens always stay.
@@ -7968,34 +7966,6 @@ fn char_boundary(text: &str, at: usize) -> usize {
     let mut at = at.min(text.len());
     while !text.is_char_boundary(at) { at -= 1; }
     at
-}
-
-/// The local time as `HH:MM`.
-fn clock() -> String {
-    // ponytail: the leading fields of `struct tm` match on macOS and glibc;
-    // the rest is padding we never read.
-    #[repr(C)]
-    struct Tm {
-        sec: i32,
-        min: i32,
-        hour: i32,
-        rest: [i64; 8],
-    }
-    extern "C" {
-        fn localtime_r(time: *const i64, out: *mut Tm) -> *mut Tm;
-        fn tzset();
-    }
-    // `localtime_r` need not read `TZ` itself; `tzset` makes it.
-    static ZONE: std::sync::Once = std::sync::Once::new();
-    // SAFETY: no arguments; sets libc's zone globals once.
-    ZONE.call_once(|| unsafe { tzset() });
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let mut tm = Tm { sec: 0, min: 0, hour: 0, rest: [0; 8] };
-    // SAFETY: both pointers are valid for the call; `tm` is large enough.
-    if unsafe { localtime_r(&now, &mut tm) }.is_null() {
-        return String::new();
-    }
-    format!("{:02}:{:02}", tm.hour, tm.min)
 }
 
 /// A drawn row without its escape sequences.
@@ -8781,9 +8751,6 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if app.expire_toast() {
-                    redraw = true;
-                }
-                if app.clock_due() {
                     redraw = true;
                 }
                 // Ten frames a second is enough for a spinner. Repainting faster

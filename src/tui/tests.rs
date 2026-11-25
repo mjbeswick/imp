@@ -1507,11 +1507,10 @@ fn ctrl_n_switches_sessions_and_keeps_drafts() {
     a.cursor = a.input.len();
     a.run_command("new", &tx);
     a.input = "draft two".into();
-    assert!(strip(&a.title_bar(80)).starts_with("2/2 imp "), "{}", strip(&a.title_bar(80)));
-    assert!(a.status_line(80).starts_with(&a.cfg.model), "the position stayed in the status line");
+    assert!(a.status_line(80).starts_with("2/2 · "), "{}", a.status_line(80));
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
-    assert!(strip(&a.title_bar(80)).starts_with("1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
+    assert!(a.status_line(80).starts_with("1/2 · "), "{}", a.status_line(80));
 }
 
 #[test]
@@ -2092,25 +2091,36 @@ fn down_moves_between_rows() {
 }
 
 #[test]
-fn a_rule_sets_the_composer_apart_and_turns_are_spaced() {
+fn turns_are_spaced() {
     let mut a = app();
     a.push(Role::User, "first");
     a.push(Role::Assistant, "reply");
     a.push(Role::User, "second");
     let frame = strip(&a.frame(80, 24));
     let rows: Vec<&str> = frame.split("\r\n").collect();
-    let rule = rows.iter().position(|r| r.starts_with("────")).expect("no rule");
-    assert!(rows[rule + 1].starts_with("> "), "the composer does not follow: {rows:?}");
-    assert_eq!(rows[rule].chars().count(), 80);
     let first = rows.iter().position(|r| *r == "> first").unwrap();
     let second = rows.iter().position(|r| *r == "> second").unwrap();
     assert_eq!(rows[second - 1], "", "no gap before the second turn: {rows:?}");
     assert_ne!(rows[first - 1], "> first");
-    assert!(rows[0].starts_with("first ") && rows[0].trim_end().len() > 70, "no title bar: {rows:?}");
-    assert!(rows[1..first].iter().all(|r| r.is_empty()), "{rows:?}");
+}
 
+#[test]
+fn a_quiet_screen_has_no_rule() {
+    let mut a = app();
+    a.push(Role::User, "first");
+    let frame = strip(&a.frame(80, 24));
+    assert!(!frame.contains("────"), "a bare rule: {frame:?}");
     let short = strip(&a.frame(80, 7));
     assert!(!short.contains("────"), "a rule on a 7-row screen: {short:?}");
+}
+
+#[test]
+fn yolo_draws_the_rule_without_a_label() {
+    let mut a = app();
+    a.cfg.set_permissions(crate::config::Permissions::Yolo);
+    a.push(Role::User, "first");
+    let frame = strip(&a.frame(80, 24));
+    assert!(frame.contains("────"), "no rule in yolo: {frame:?}");
 }
 
 #[test]
@@ -2205,9 +2215,11 @@ fn yolo_paints_the_prompt_and_rule_in_the_error_colour() {
     let after = plain.frame(80, 20);
     assert!(!after.contains("38;"), "colour with colour off");
     let rows = |f: &str| f.split("\r\n").map(str::to_string).collect::<Vec<_>>();
-    let (b, a2) = (rows(&before), rows(&after));
-    assert_eq!(b[..b.len() - 1], a2[..a2.len() - 1], "more than the status line changed");
-    assert!(a2.last().unwrap().contains("deepseek-flash · yolo · "), "{after:?}");
+    let quiet: Vec<_> = rows(&before).into_iter().filter(|r| !r.starts_with('─')).collect();
+    let loud: Vec<_> = rows(&after).into_iter().filter(|r| !r.starts_with('─')).collect();
+    assert_eq!(quiet[quiet.len() - 2], loud[loud.len() - 2], "the composer moved or changed");
+    assert!(rows(&after).iter().any(|r| r.starts_with('─')), "no rule in yolo: {after:?}");
+    assert!(loud.last().unwrap().contains("deepseek-flash · yolo · "), "{after:?}");
 }
 
 #[test]
@@ -5828,21 +5840,40 @@ fn a_toast_shows_then_goes() {
 }
 
 #[test]
-fn the_title_bar_names_the_session_and_the_time() {
+fn the_terminal_title_names_the_session() {
     let mut a = app();
-    let bar = strip(&a.title_bar(40));
-    assert_eq!(bar.chars().count(), 40);
-    assert!(bar.starts_with("imp "), "{bar:?}");
-    let time = clock();
-    assert!(time.len() == 5 && time.as_bytes()[2] == b':', "{time:?}");
-    assert!(bar.ends_with(&format!(" {time}")), "{bar:?}");
-    a.push(Role::User, "a very long session title that cannot fit in forty columns");
-    let bar = strip(&a.title_bar(40));
-    assert!(bar.contains('…') && bar.ends_with(&format!(" {time}")), "{bar:?}");
-    assert!(!strip(&a.frame(40, 7)).contains(&time), "a title bar on a 7-row screen");
-    assert!(!a.clock_due(), "a repaint with the minute unchanged");
-    a.clock_shown = "99:99".into();
-    assert!(a.clock_due());
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;imp\x1b\\"));
+    assert_eq!(a.title_seq(), None, "an unchanged title was written again");
+    a.push(Role::User, "fix the parser");
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;fix the parser · imp\x1b\\"));
+    let (tx, _rx) = channel();
+    a.run_command("rename fix sync", &tx);
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;fix sync · imp\x1b\\"));
+}
+
+#[test]
+fn a_session_switch_retitles_the_terminal() {
+    let mut a = multi_app("title-switch");
+    let (tx, _rx) = channel();
+    a.push(Role::User, "first task");
+    a.title_seq();
+    a.run_command("new", &tx);
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;imp\x1b\\"), "the new session kept the old title");
+    a.handle_key(Key::Ctrl('n'), &tx);
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;first task · imp\x1b\\"), "the switch kept the old title");
+}
+
+#[test]
+fn the_terminal_title_drops_controls_and_fits() {
+    let mut a = app();
+    a.title = format!("\u{1b}\u{7}{}", "x".repeat(100));
+    let seq = a.title_seq().expect("no title");
+    let body = seq
+        .strip_prefix("\x1b]0;")
+        .and_then(|s| s.strip_suffix("\x1b\\"))
+        .expect("not an OSC 0 title");
+    assert!(!body.chars().any(char::is_control), "{body:?}");
+    assert_eq!(body.chars().count(), 80, "{body:?}");
 }
 
 #[test]
@@ -5876,29 +5907,6 @@ fn a_new_session_takes_the_reloaded_config() {
     assert!(a.cfg.allow_sudo);
     let s = a.fresh_session().expect("a factory");
     assert!(s.cfg.allow_sudo, "a new session kept the startup config");
-}
-
-#[test]
-fn the_clock_matches_date_in_this_zone() {
-    // Run under any `TZ`: both sides read the same zone.
-    let date = std::process::Command::new("date").arg("+%H:%M").output().unwrap();
-    let date = String::from_utf8_lossy(&date.stdout).trim().to_string();
-    let ours = clock();
-    // A minute may turn between the two reads.
-    let again = std::process::Command::new("date").arg("+%H:%M").output().unwrap();
-    let again = String::from_utf8_lossy(&again.stdout).trim().to_string();
-    assert!(ours == date || ours == again, "clock {ours} but date {date}");
-}
-
-#[test]
-fn the_title_is_a_rule_with_no_background() {
-    let mut a = colour_app();
-    a.push(Role::User, "fix the parser");
-    let bar = a.title_bar(40);
-    assert!(!bar.contains("\x1b[48;2;") && !bar.contains("\x1b[48;5;"), "a background: {bar:?}");
-    assert_eq!(strip(&bar).chars().count(), 40, "{bar:?}");
-    assert!(strip(&bar).starts_with("fix the parser "), "{}", strip(&bar));
-    assert!(strip(&bar).ends_with(&clock()), "{}", strip(&bar));
 }
 
 #[test]
@@ -6095,23 +6103,12 @@ fn after_the_answer_the_oldest_queued_message_starts_when_the_turn_ends() {
 }
 
 #[test]
-fn the_title_bar_shows_the_cut_first_message() {
+fn the_terminal_title_shows_the_cut_first_message() {
     let mut a = app();
     a.push(Role::User, "Can you please look at why the rsync test keeps failing on the Pi when the network is slow");
-    let shown = strip(&a.frame(60, 10));
-    assert!(shown.contains("look at why the rsync test keeps… "), "{shown:?}");
-}
-
-#[test]
-fn a_rename_shows_in_the_title_bar() {
-    let mut a = app();
-    a.push(Role::User, "Can you please look at why the rsync test keeps failing");
-    let (tx, _cmds) = channel();
-    a.run_command("rename fix sync", &tx);
-    let shown = strip(&a.frame(60, 10));
-    let title_row = shown.split("\r\n").next().unwrap_or("");
-    assert!(title_row.contains("fix sync "), "the rename did not show: {title_row:?}");
-    assert!(!title_row.contains("look at why"), "the old title stayed: {title_row:?}");
+    let seq = a.title_seq().expect("no title");
+    assert!(seq.contains("look at why the rsync test keeps…"), "{seq:?}");
+    assert!(!seq.contains("Can you please"), "{seq:?}");
 }
 
 #[test]
@@ -6120,16 +6117,14 @@ fn a_summary_replaces_the_cut_title_unless_it_was_renamed() {
     let long = "Can you please look at why the rsync test keeps failing on the Pi when the network is slow";
     a.push(Role::User, long);
     a.apply(Ev::Title("Flaky rsync test on slow network".into()));
-    let shown = strip(&a.frame(70, 10));
-    assert!(shown.split("\r\n").next().unwrap_or("").contains("Flaky rsync test on slow network"), "{shown:?}");
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;Flaky rsync test on slow network · imp\x1b\\"));
 
     let mut b = app();
     b.push(Role::User, long);
     let (tx, _cmds) = channel();
     b.run_command("rename fix sync", &tx);
     b.apply(Ev::Title("Flaky rsync test on slow network".into()));
-    let shown = strip(&b.frame(70, 10));
-    assert!(shown.split("\r\n").next().unwrap_or("").contains("fix sync "), "a summary replaced a rename: {shown:?}");
+    assert_eq!(b.title_seq().as_deref(), Some("\x1b]0;fix sync · imp\x1b\\"), "a summary replaced a rename");
 }
 
 fn provider_form(a: &App) -> (Vec<(String, String)>, usize) {
