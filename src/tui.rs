@@ -4175,8 +4175,7 @@ impl App {
             crate::providers::Provider::Custom,
         ] {
             let name = format!("{provider:?}").to_lowercase();
-            let usable = name == active
-                || (self.cfg.provider_configured(provider, crate::config::key_lookup()) && !self.cfg.provider_disabled(&name));
+            let usable = self.cfg.provider_listed(provider, crate::config::key_lookup());
             if usable {
                 providers.push((name, vec![provider.profile().model.to_string()]));
             }
@@ -4340,6 +4339,10 @@ impl App {
         ] {
             let name = format!("{provider:?}").to_lowercase();
             let profile = provider.profile();
+            // A built-in that needs no key is hidden until it is switched on.
+            if profile.key_var.is_none() && !self.cfg.provider_opted_in(&name) && name != self.cfg.active_name {
+                continue;
+            }
             let mut about = format!("{}  {}", profile.base_url, profile.model);
             // Switched off wins over unconfigured: an off provider is not offered at all.
             if self.cfg.provider_disabled(&name) {

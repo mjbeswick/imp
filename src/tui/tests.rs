@@ -3460,6 +3460,18 @@ fn renaming_the_active_profile_keeps_it_active() {
 }
 
 #[test]
+fn a_keyless_built_in_is_hidden_from_both_lists_until_switched_on() {
+    let (mut a, _config) = provider_app();
+    a.cfg.enabled_providers.clear();
+    let values: Vec<String> = a.provider_items().into_iter().map(|i| i.value).collect();
+    assert!(!values.iter().any(|v| v == "custom" || v == "ollama"), "{values:?}");
+    assert!(a.model_items().iter().all(|i| !i.value.starts_with("custom::") && !i.value.starts_with("ollama::")));
+    a.cfg.set("provider.ollama.enabled", "true").unwrap();
+    let values: Vec<String> = a.provider_items().into_iter().map(|i| i.value).collect();
+    assert!(values.iter().any(|v| v == "ollama"), "{values:?}");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
@@ -3581,6 +3593,10 @@ fn provider_app() -> (App, std::path::PathBuf) {
     std::fs::write(&config, "# keep me\nmodel = old\n").unwrap();
     let mut a = app();
     a.config_path = config.clone();
+    // The keyless built-ins are hidden by default; the fixture switches them on
+    // so the tests of the other provider rows can reach them.
+    a.cfg.set("provider.custom.enabled", "true").unwrap();
+    a.cfg.set("provider.ollama.enabled", "true").unwrap();
     (a, config)
 }
 
@@ -7111,6 +7127,8 @@ fn a_missing_target_asks_then_creates_it() {
 #[test]
 fn the_provider_list_shows_every_built_in_and_named_provider() {
     let mut a = app();
+    a.cfg.set("provider.ollama.enabled", "true").unwrap();
+    a.cfg.set("provider.custom.enabled", "true").unwrap();
     a.cfg.named = vec![crate::config::NamedProvider {
         name: "local".into(),
         base: "http://localhost:4141/v1".into(),
@@ -7857,6 +7875,7 @@ fn typing_after_opening_the_add_form_goes_into_the_first_field() {
 #[test]
 fn enter_on_custom_opens_the_provider_editor_and_keeps_the_provider() {
     let mut a = app();
+    a.cfg.set("provider.custom.enabled", "true").unwrap();
     a.config_path = scratch("provider-picker-enter").join("config");
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
@@ -7896,6 +7915,7 @@ fn enter_on_custom_after_slash_provider_opens_the_editor() {
 #[test]
 fn u_still_switches_to_the_highlighted_provider() {
     let mut a = app();
+    a.cfg.set("provider.custom.enabled", "true").unwrap();
     a.config_path = scratch("provider-picker-use").join("config");
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
