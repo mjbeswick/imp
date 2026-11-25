@@ -3541,6 +3541,55 @@ fn a_saved_waiting_session_that_is_not_open_gets_a_mark() {
 }
 
 #[test]
+fn a_saved_unread_session_that_is_not_open_gets_a_dot() {
+    let dir = scratch("marks-unread");
+    let mut a = app();
+    a.sessions_dir = dir.clone();
+    let unread = crate::store::Log::create(&dir, &dir, "deepseek-flash");
+    unread.set_marks(false, true);
+    let marks = a.session_marks();
+    assert!(marks.iter().any(|(id, mark)| *id == unread.id && *mark == '•'), "{marks:?}");
+}
+
+fn worker_for(id: &str) -> Worker {
+    let (ctx, _crx) = channel::<Cmd>();
+    let (_etx, erx) = channel::<Ev>();
+    (ctx, erx, std::sync::Arc::new(std::sync::Mutex::new(id.to_string())))
+}
+
+#[test]
+fn an_open_session_shows_its_live_state_not_the_saved_flag() {
+    let dir = scratch("marks-open");
+    let mut a = app();
+    a.sessions_dir = dir.clone();
+    let open = crate::store::Log::create(&dir, &dir, "deepseek-flash");
+    open.set_marks(true, false);
+    a.worker = Some(worker_for(&open.id));
+    a.status.streaming = true;
+    let mark = a.session_marks().into_iter().find(|(id, _)| *id == open.id).map(|(_, m)| m);
+    assert_ne!(mark, Some('?'), "the saved waiting flag showed over the live turn");
+    assert!(mark.is_some(), "the open streaming session shows no live mark");
+}
+
+#[test]
+fn a_question_in_view_saves_waiting_until_it_is_answered() {
+    let dir = scratch("marks-sync");
+    let mut a = app();
+    a.sessions_dir = dir.clone();
+    let open = crate::store::Log::create(&dir, &dir, "deepseek-flash");
+    // A started session has a transcript file; `Log::open` needs one.
+    std::fs::write(dir.join(format!("{}.jsonl", open.id)), "").unwrap();
+    a.worker = Some(worker_for(&open.id));
+    let (rtx, _rrx) = channel::<crate::tui::Answer>();
+    a.pending = Some(Pending::Confirm { what: "run it".into(), reply: rtx, always: false });
+    a.sync_marks();
+    assert!(open.meta().waiting, "the question was not saved");
+    a.pending = None;
+    a.sync_marks();
+    assert!(!open.meta().waiting, "the answered question stayed saved");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
