@@ -2,7 +2,7 @@
 
 ## 0. Baseline check
 
-- [ ] 0.1 Diagnose and correct the pre-existing `composer_rows_fit_the_terminal` assertion on fetched `main`, which counts an extra `x` outside the draft; targeted test and `cargo test`.
+- [x] 0.1 Diagnose and correct the pre-existing `composer_rows_fit_the_terminal` assertion on fetched `main`, which counts an extra `x` outside the draft; targeted test and `cargo test`.
 
 ## 1. Contract and dispatch
 
