@@ -659,7 +659,8 @@ fn slash_keys_opens_the_keys_card() {
     a.run_command("keys", &tx);
     assert!(matches!(&a.pending, Some(Pending::Pick(p)) if p.kind == PickKind::Keys));
     let out = strip(&a.frame(80, 30));
-    assert!(out.contains("Ctrl+S") && out.contains("Shift+Tab"), "{out:?}");
+    // The card pages; Ctrl+P is on the first page now that it has a row.
+    assert!(out.contains("Ctrl+S") && out.contains("Ctrl+P"), "{out:?}");
 }
 
 #[test]
@@ -3469,6 +3470,56 @@ fn a_keyless_built_in_is_hidden_from_both_lists_until_switched_on() {
     a.cfg.set("provider.ollama.enabled", "true").unwrap();
     let values: Vec<String> = a.provider_items().into_iter().map(|i| i.value).collect();
     assert!(values.iter().any(|v| v == "ollama"), "{values:?}");
+}
+
+fn palette_open(a: &App) -> bool {
+    matches!(&a.pending, Some(Pending::Pick(p)) if p.kind == PickKind::Command && p.prefix.is_none())
+}
+
+#[test]
+fn ctrl_p_opens_the_command_palette_with_every_command() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('p'), &tx);
+    assert!(palette_open(&a), "Ctrl+P did not open the palette");
+    let picker = open_picker(&a);
+    assert_eq!(picker.items.len(), crate::help::COMMANDS.len());
+    assert!(picker.filter.is_empty());
+}
+
+#[test]
+fn typing_in_the_palette_filters_the_commands() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('p'), &tx);
+    a.handle_key(Key::Char('q'), &tx);
+    a.handle_key(Key::Char('u'), &tx);
+    let picker = open_picker(&a);
+    assert_eq!(picker.filter, "qu");
+    assert!(picker.matches().iter().any(|&i| picker.items[i].label == "/quit"));
+}
+
+#[test]
+fn enter_in_the_palette_runs_the_highlighted_command() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('p'), &tx);
+    for c in "quit".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    a.handle_key(Key::Enter, &tx);
+    assert!(a.quit, "Enter did not run /quit");
+}
+
+#[test]
+fn esc_closes_the_palette_and_keeps_the_composer() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.input = "draft".into();
+    a.handle_key(Key::Ctrl('p'), &tx);
+    a.handle_key(Key::Esc, &tx);
+    assert!(a.pending.is_none(), "Esc did not close the palette");
+    assert_eq!(a.input, "draft");
 }
 
 #[test]

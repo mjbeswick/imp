@@ -6,6 +6,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Ctrl+S", "steer now; send when idle"),
     ("Shift+Enter, Alt+Enter, Ctrl+J", "newline"),
     ("Esc", "stop the turn or close a picker"),
+    ("Ctrl+P", "command palette: every command, filter and Enter to run"),
     ("Ctrl+C", "stop the turn; idle, twice to quit (the draft stays)"),
     ("Ctrl+D", "quit, from anywhere"),
     ("Tab", "complete a command"),

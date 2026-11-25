@@ -3882,6 +3882,11 @@ impl App {
         }
 
         match key {
+            // Ctrl+P opens the command palette: the slash picker's list, with no `/` prefix.
+            Key::Ctrl('p') => {
+                self.pending = Some(Pending::Pick(Picker::new("commands", command_items(), PickKind::Command)));
+                self.dirty = true;
+            }
             Key::Select(m) => {
                 self.anchor.get_or_insert(self.cursor);
                 self.move_caret(m);
