@@ -46,3 +46,25 @@ config as `bind.<chord>` lines.
 #### Scenario: Keys card lists bindings
 - **WHEN** the user has a binding and opens `/keys`
 - **THEN** the card lists the binding after the built-in keys
+
+### Requirement: Command lists show bindings
+
+The system SHALL show each command's bound key or chord beside the command in the slash command list and in
+the command palette, SHALL leave the description of a command with no binding unchanged, and SHALL update the
+shown key when a binding is added, removed or reset.
+
+#### Scenario: Bound command in the slash list
+- **WHEN** the user has bound `ctrl+x n` to `/model` and types `/` in the composer
+- **THEN** the `/model` row shows `ctrl+x n` beside its description
+
+#### Scenario: Bound command in the palette
+- **WHEN** the user has bound `ctrl+p` to `/skills` and opens the command palette with Ctrl+P
+- **THEN** the `/skills` row shows `ctrl+p` beside its description
+
+#### Scenario: Unbound command
+- **WHEN** a command has no binding
+- **THEN** its row shows its description only
+
+#### Scenario: Reset updates the list
+- **WHEN** the user runs `/keys reset` and then opens the slash list
+- **THEN** no row shows a user binding

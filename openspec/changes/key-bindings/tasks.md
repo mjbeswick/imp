@@ -28,6 +28,12 @@
 - [ ] 4.2 Implement: the list in `src/help.rs`, and the `/bind`, `/unbind` and `/keys reset` lines in `src/help.rs`.
 - [ ] 4.3 Update `README.md` with the commands and the chord syntax.
 
-## 5. Validation
+## 5. Command lists
 
-- [ ] 5.1 Run `cargo test` and `openspec validate --all --strict`, and record the outcome.
+- [ ] 5.1 Test: the slash list shows `ctrl+x n` beside `/model` when that binding exists, and shows no key for an unbound command.
+- [ ] 5.2 Test: the command palette shows a bound key beside its command.
+- [ ] 5.3 Implement: read the bindings into the command rows in `src/tui.rs`, for the slash picker and the palette.
+
+## 6. Validation
+
+- [ ] 6.1 Run `cargo test` and `openspec validate --all --strict`, and record the outcome.
