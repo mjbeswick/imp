@@ -94,10 +94,12 @@ many others are `waiting`. There is no close command: `/new` moves on, and the
 pool makes room by itself.
 
 In `/sessions`, every saved session is listed, a new one as `(untitled)`. A mark
-in front of a row shows a session open in this window: `?` waiting for your
-answer or a confirmation, a spinner while it runs, `!` when its last turn
-failed, and `•` when it finished and you have not viewed it. An idle row has
-no mark. When the filter matches no title, Enter searches what was said in
+in front of a row shows its state: `?` waiting for your answer or a
+confirmation, and `•` when it finished and you have not viewed it. These two
+marks are saved with the session, so they show for sessions that are not open
+and survive a restart. A session open in this window also shows a spinner while
+it runs, and `!` when its last turn failed; those two are live only. An idle row
+has no mark. When the filter matches no title, Enter searches what was said in
 every session and lists the hits with a snippet, with the same marks.
 
 Ctrl+O or `/next` goes to the session that has waited longest for you: an
