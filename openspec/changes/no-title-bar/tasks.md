@@ -14,4 +14,4 @@
 
 ## 4. Docs
 
-- [ ] 4.1 `README.md` and `docs/getting-started.md` describe the terminal title and the status-line position, not a title bar or a bare rule
+- [x] 4.1 `README.md` and `docs/getting-started.md` describe the terminal title and the status-line position, not a title bar or a bare rule

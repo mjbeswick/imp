@@ -87,9 +87,9 @@ Ctrl+O next waiting · Ctrl+N next session · ? keys, from an empty composer
 `/new` and resuming from `/sessions` open another live session beside the
 current one, up to four; the oldest idle one closes to make room and stays in
 `/sessions`, and its background jobs stop, as every session's do when imp exits. Ctrl+N moves to the next one.
-The title bar shows which one is in view, such as `2/3 fix the parser`, and
-the status line how many others are `waiting`. There is no close
-command: `/new` moves on, and the pool makes room by itself.
+The status line starts with which one is in view, such as `2/3`, and says how
+many others are `waiting`. There is no close command: `/new` moves on, and the
+pool makes room by itself.
 
 In `/sessions`, every saved session is listed, a new one as `(untitled)`. A mark
 in front of a row shows a session open in this window: `?` waiting for your
