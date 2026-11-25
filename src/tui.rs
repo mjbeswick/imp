@@ -713,7 +713,8 @@ fn unpaint(s: &str) -> String {
 
 /// `y` and `n` pick only when the choices are Yes and No; elsewhere they type.
 fn yes_no(opts: &[String]) -> bool {
-    matches!(opts, [y, n] if y.eq_ignore_ascii_case("yes") && n.eq_ignore_ascii_case("no"))
+    matches!(opts, [y, n] if y.trim_end_matches(" (Recommended)").eq_ignore_ascii_case("yes")
+        && n.trim_end_matches(" (Recommended)").eq_ignore_ascii_case("no"))
 }
 
 /// Click targets in one drawn row: each `[k] label` chip replays `k`, and
@@ -1106,7 +1107,7 @@ pub enum Ev {
         /// One per option; empty when it has none.
         descs: Vec<String>,
         multiple: bool,
-        reply: Sender<Option<String>>,
+        reply: Sender<Option<Vec<String>>>,
     },
     Done(Option<String>),
     /// A failed request waits `secs` before retry `attempt` of `of`.
@@ -1213,6 +1214,23 @@ impl Hooks for WorkerHooks {
     }
 
     fn ask_choices(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<String> {
+        self.ask_selected(question, options, multiple).map(|labels| labels.join(", "))
+    }
+
+    fn ask_many(&mut self, questions: &[crate::agent::AskQuestion]) -> Option<Vec<Vec<String>>> {
+        questions.iter().enumerate().map(|(i, q)| {
+            let title = if q.header.is_empty() {
+                format!("{}/{} · {}", i + 1, questions.len(), q.question)
+            } else {
+                format!("{}/{} · {}\n{}", i + 1, questions.len(), q.header, q.question)
+            };
+            self.ask_selected(&title, &q.options, q.multiple)
+        }).collect()
+    }
+}
+
+impl WorkerHooks {
+    fn ask_selected(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<Vec<String>> {
         let (tx, rx) = channel();
         if self
             .tx
@@ -1754,8 +1772,6 @@ pub struct App {
     ask_multiple: bool,
     ask_marked: Vec<bool>,
     /// The caret in a typed answer to the open question.
-    // ponytail: one for the app, not saved per session; clamped where used,
-    // so a switch mid-answer moves the caret, never past the text.
     ask_caret: usize,
     /// Messages waiting for the running turn to end, oldest first.
     queued: Vec<String>,
@@ -1884,6 +1900,7 @@ struct Pane {
     ask_descs: Vec<String>,
     ask_multiple: bool,
     ask_marked: Vec<bool>,
+    ask_caret: usize,
     /// Messages waiting for the running turn to end, oldest first.
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
@@ -1934,6 +1951,7 @@ impl Pane {
             ask_descs: Vec::new(),
             ask_multiple: false,
             ask_marked: Vec::new(),
+            ask_caret: 0,
             queued: Vec::new(),
             queue_at: None,
             title: session.log.as_ref().map(|log| log.meta().title).unwrap_or_default(),
@@ -2026,7 +2044,7 @@ enum Pending {
     Question {
         q: String,
         opts: Vec<String>,
-        reply: Sender<Option<String>>,
+        reply: Sender<Option<Vec<String>>>,
         mode: AskMode,
         typed: String,
     },
@@ -2760,6 +2778,7 @@ impl App {
         swap(&mut self.ask_descs, &mut p.ask_descs);
         swap(&mut self.ask_multiple, &mut p.ask_multiple);
         swap(&mut self.ask_marked, &mut p.ask_marked);
+        swap(&mut self.ask_caret, &mut p.ask_caret);
         swap(&mut self.queued, &mut p.queued);
         swap(&mut self.queue_at, &mut p.queue_at);
         swap(&mut self.title, &mut p.title);
@@ -3024,7 +3043,7 @@ impl App {
             Some(Pending::Confirm { .. } | Pending::ConfirmDelete { .. } | Pending::Pick(_)) => {}
             Some(Pending::Question { mode, typed, .. }) => {
                 *mode = AskMode::Custom;
-                let at = self.ask_caret.min(typed.len());
+                let at = char_boundary(typed, self.ask_caret);
                 typed.insert_str(at, &flat);
                 self.ask_caret = at + flat.len();
             }
@@ -6324,18 +6343,18 @@ impl App {
                         self.dirty = true;
                     }
                     Key::Char('y') | Key::Char('Y') if yes_no(&opts) && !self.ask_multiple => {
-                        let _ = reply.send(Some(opts[0].clone()));
+                        let _ = reply.send(Some(vec![opts[0].clone()]));
                         self.dirty = true;
                     }
                     Key::Char('n') | Key::Char('N') if yes_no(&opts) && !self.ask_multiple => {
-                        let _ = reply.send(Some(opts[1].clone()));
+                        let _ = reply.send(Some(vec![opts[1].clone()]));
                         self.dirty = true;
                     }
                     Key::Char(c) if c.is_ascii_digit() => {
                         let n = c.to_digit(10).unwrap_or(0) as usize;
                         let valid = n >= 1 && n <= opts.len();
                         if valid && !self.ask_multiple {
-                            let _ = reply.send(Some(opts[n - 1].clone()));
+                            let _ = reply.send(Some(vec![opts[n - 1].clone()]));
                         } else {
                             // Several picks: the key marks or unmarks. Out of
                             // range: the question stays open.
@@ -6354,7 +6373,7 @@ impl App {
                         if picked.is_empty() {
                             self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Choose, typed });
                         } else {
-                            let _ = reply.send(Some(picked.join(", ")));
+                            let _ = reply.send(Some(picked));
                         }
                         self.dirty = true;
                     }
@@ -6387,7 +6406,7 @@ impl App {
                         self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Custom, typed });
                     }
                     Key::Enter => {
-                        let _ = reply.send(Some(typed.clone()));
+                        let _ = reply.send(Some(vec![typed.clone()]));
                         self.dirty = true;
                     }
                     key => {
@@ -7219,7 +7238,7 @@ impl App {
             AskMode::Choose if self.ask_multiple => (format!("type to answer   Esc stop   1-{} mark   Enter send{queued}", opts.len()), 2, false),
             AskMode::Choose => (format!("type to answer   Esc stop{queued}"), 2, false),
             AskMode::Custom => {
-                let (before, after) = typed.split_at(self.ask_caret.min(typed.len()));
+                let (before, after) = typed.split_at(char_boundary(typed, self.ask_caret));
                 (format!("> {before}{CARET}{after}{queued}"), 4, false)
             }
         });
@@ -7910,7 +7929,8 @@ fn verb(what: &str) -> &'static str {
 /// word, or row, caret moves, and pasting `clip` on Ctrl+V. The composer and
 /// the answer row share it. Returns false for a key it does not edit with.
 fn edit_line(text: &mut String, caret: &mut usize, key: &Key, clip: &str) -> bool {
-    let c = (*caret).min(text.len());
+    let c = char_boundary(text, *caret);
+    *caret = c;
     let start = text[..c].rfind('\n').map_or(0, |i| i + 1);
     let end = text[c..].find('\n').map_or(text.len(), |i| c + i);
     let (cut, at) = match key {
@@ -7940,6 +7960,12 @@ fn edit_line(text: &mut String, caret: &mut usize, key: &Key, clip: &str) -> boo
     }
     *caret = at;
     true
+}
+
+fn char_boundary(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) { at -= 1; }
+    at
 }
 
 /// A drawn row without its escape sequences.
