@@ -2507,7 +2507,11 @@ fn composer_rows_fit_the_terminal() {
         !out.lines().filter(|l| l.contains('x') || l.contains('y')).any(|l| l.contains('…')),
         "a wrapped row was cut instead of wrapped"
     );
-    assert_eq!(out.matches('x').count(), 90, "the draft lost characters");
+    let draft_x = out.lines().filter(|line| {
+        let line = strip(line);
+        line.starts_with("> x") || line.starts_with("  x")
+    }).map(|line| line.matches('x').count()).sum::<usize>();
+    assert_eq!(draft_x, 90, "the draft lost characters");
 }
 
 #[test]
