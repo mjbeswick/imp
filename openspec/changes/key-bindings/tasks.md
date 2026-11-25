@@ -8,11 +8,11 @@
 
 ## 2. Commands
 
-- [ ] 2.1 Test: `/bind ctrl+x n /model` saves the binding and shows a confirmation.
-- [ ] 2.2 Test: `/bind ctrl+c /model` is refused and saves nothing.
-- [ ] 2.3 Test: `/unbind ctrl+x n` removes the binding.
-- [ ] 2.4 Test: `/keys reset` removes every `bind.*` line and leaves other settings.
-- [ ] 2.5 Implement: the `bind`, `unbind` and `keys reset` arms in `run_command` in `src/tui.rs`.
+- [x] 2.1 Test: `/bind ctrl+x n /model` saves the binding and shows a confirmation. Covered by `bind_saves_a_chord_to_the_config_and_the_session`. Bare `/bind` (capture) is task 3.
+- [x] 2.2 Test: `/bind ctrl+c /model` is refused and saves nothing.
+- [x] 2.3 Test: `/unbind ctrl+x n` removes the binding.
+- [x] 2.4 Test: `/keys reset` removes every `bind.*` line and leaves other settings.
+- [x] 2.5 Implement: the `bind`, `unbind` and `keys reset` arms in `run_command` in `src/tui.rs`.
 
 ## 3. Keys
 
