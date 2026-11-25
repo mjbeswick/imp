@@ -844,7 +844,7 @@ fn question_options_show_descriptions_and_take_several_picks() {
     a.handle_key(Key::Char('9'), &tx);
     assert!(a.pending.is_some(), "an out-of-range key dropped the question");
     a.handle_key(Key::Enter, &tx);
-    assert_eq!(answers.try_recv().ok(), Some(Some("Rust (Recommended), Zig".into())));
+    assert_eq!(answers.try_recv().ok(), Some(Some(vec!["Rust (Recommended)".into(), "Zig".into()])));
 }
 
 #[test]
@@ -854,8 +854,47 @@ fn a_question_waits_for_its_answer() {
     let asker = std::thread::spawn(move || hooks.ask_choices("which?", &[("a".into(), String::new())], false));
     let Ok(Ev::Question { reply, .. }) = rx.recv_timeout(Duration::from_secs(2)) else { panic!("no question") };
     std::thread::sleep(Duration::from_millis(200));
-    reply.send(Some("a".into())).unwrap();
+    reply.send(Some(vec!["a".into()])).unwrap();
     assert_eq!(asker.join().unwrap().as_deref(), Some("a"));
+}
+
+#[test]
+fn batch_questions_show_progress_and_keep_each_selected_label() {
+    let (tx, rx) = channel();
+    let mut hooks = WorkerHooks { tx, waited: Duration::ZERO };
+    let questions = vec![
+        crate::agent::AskQuestion { header: "Languages".into(), question: "which?".into(), options: vec![("Rust, fast".into(), "safe".into()), ("Go".into(), String::new()), ("Zig".into(), "small".into())], multiple: true },
+        crate::agent::AskQuestion { header: "Reason".into(), question: "why?".into(), options: vec![], multiple: false },
+    ];
+    let asker = std::thread::spawn(move || hooks.ask_many(&questions));
+    let mut a = colour_app();
+    let (key_tx, _keys) = channel();
+    let first = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(&first, Ev::Question { q, .. } if q.contains("1/2") && q.contains("Languages")));
+    a.apply(first);
+    let first_frame = strip(&a.frame(70, 20));
+    assert!(first_frame.contains("1/2 · Languages") && first_frame.contains("which?"), "{first_frame}");
+    a.handle_key(Key::Char('1'), &key_tx);
+    a.handle_key(Key::Char('3'), &key_tx);
+    a.handle_key(Key::Enter, &key_tx);
+    let second = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(&second, Ev::Question { q, .. } if q.contains("2/2") && q.contains("Reason")));
+    a.apply(second);
+    let second_frame = strip(&a.frame(70, 20));
+    assert!(second_frame.contains("2/2 · Reason") && second_frame.contains("why?"), "{second_frame}");
+    for c in "because".chars() { a.handle_key(Key::Char(c), &key_tx); }
+    a.handle_key(Key::Enter, &key_tx);
+    assert_eq!(asker.join().unwrap(), Some(vec![vec!["Rust, fast".into(), "Zig".into()], vec!["because".into()]]));
+}
+
+#[test]
+fn recommended_yes_is_answered_with_one_key() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    a.apply(Ev::Question { q: "continue?".into(), opts: vec!["Yes (Recommended)".into(), "No".into()], descs: Vec::new(), multiple: false, reply: tx });
+    let (cmd, _rx) = channel();
+    a.handle_key(Key::Char('y'), &cmd);
+    assert_eq!(rx.try_recv().ok(), Some(Some(vec!["Yes (Recommended)".into()])));
 }
 
 #[test]
@@ -1788,7 +1827,7 @@ fn a_click_on_an_option_answers_the_question() {
     a.apply(Ev::Question { q: "which?".into(), opts: vec!["red".into(), "blue".into()], descs: Vec::new(), multiple: false, reply });
     a.frame(80, 16);
     click(&mut a, &tx, |t| matches!(t, Target::Key(Key::Char('2'))));
-    assert_eq!(rx.try_recv().ok(), Some(Some("blue".to_string())));
+    assert_eq!(rx.try_recv().ok(), Some(Some(vec!["blue".to_string()])));
 }
 
 #[test]
@@ -2821,7 +2860,7 @@ fn yes_no_shortcuts_answer() {
     });
     let (cmd_tx, _cmd_rx) = channel();
     a.handle_key(Key::Char('y'), &cmd_tx);
-    assert_eq!(rx.recv().unwrap().as_deref(), Some("Yes"));
+    assert_eq!(rx.recv().unwrap(), Some(vec!["Yes".into()]));
 }
 
 #[test]
@@ -2844,7 +2883,7 @@ fn typing_starts_a_custom_answer() {
     assert!(rx.try_recv().is_err(), "y picked a choice that is not Yes");
     assert!(strip(&a.frame(60, 20)).contains("> yes, go"), "the first letter was lost");
     a.handle_key(Key::Enter, &cmd_tx);
-    assert_eq!(rx.recv().unwrap().as_deref(), Some("yes, go"));
+    assert_eq!(rx.recv().unwrap(), Some(vec!["yes, go".into()]));
 }
 
 #[test]
@@ -2865,7 +2904,7 @@ fn an_empty_answer_is_not_sent() {
 }
 
 /// An open three-choice question and the channel its answer arrives on.
-fn asked(a: &mut App) -> Receiver<Option<String>> {
+fn asked(a: &mut App) -> Receiver<Option<Vec<String>>> {
     let (tx, rx) = channel();
     a.pending = Some(Pending::Question {
         q: "which?".into(),
@@ -2894,7 +2933,7 @@ fn the_answer_row_edits_like_the_composer() {
     let shown = strip(&a.frame(60, 20));
     assert!(shown.contains("> new  use the xold"), "the caret is not after the paste: {shown}");
     a.handle_key(Key::Enter, &tx);
-    assert_eq!(rx.recv().unwrap().as_deref(), Some("new use the xold "));
+    assert_eq!(rx.recv().unwrap(), Some(vec!["new use the xold ".into()]));
 }
 
 #[test]
@@ -2908,7 +2947,7 @@ fn space_starts_an_answer_with_a_digit() {
     }
     assert!(rx.try_recv().is_err(), "a digit picked a choice");
     a.handle_key(Key::Enter, &tx);
-    assert_eq!(rx.recv().unwrap().as_deref(), Some("3 files"));
+    assert_eq!(rx.recv().unwrap(), Some(vec!["3 files".into()]));
 }
 
 #[test]
@@ -5659,7 +5698,7 @@ fn a_paste_fills_the_draft_and_never_answers() {
     let got = asked(&mut a);
     a.handle_key(Key::Paste("3 files\nonly".into()), &tx);
     a.handle_key(Key::Enter, &tx);
-    assert_eq!(got.recv().unwrap().as_deref(), Some("3 files only"));
+    assert_eq!(got.recv().unwrap(), Some(vec!["3 files only".into()]));
 }
 
 #[test]
@@ -5929,7 +5968,7 @@ fn the_status_line_names_auto_and_not_normal() {
     assert!(!a.status_line(100).contains("auto"), "{}", a.status_line(100));
 }
 
-fn open_question_with_queue(a: &mut App, queued: &[&str]) -> Receiver<Option<String>> {
+fn open_question_with_queue(a: &mut App, queued: &[&str]) -> Receiver<Option<Vec<String>>> {
     let (reply, rx) = channel();
     a.status.streaming = true;
     a.queued = queued.iter().map(|s| s.to_string()).collect();
@@ -5983,7 +6022,7 @@ fn after_the_answer_the_oldest_queued_message_starts_when_the_turn_ends() {
     let tx = a.worker.as_ref().unwrap().0.clone();
     let rx = open_question_with_queue(&mut a, &["use pnpm", "also add tests"]);
     a.handle_key(Key::Char('2'), &tx);
-    assert!(matches!(rx.try_recv(), Ok(Some(t)) if t == "pnpm"), "the answer was not sent");
+    assert!(matches!(rx.try_recv(), Ok(Some(t)) if t == ["pnpm"]), "the answer was not sent");
     a.apply(Ev::Done(None));
     assert!(matches!(cmds.try_recv(), Ok(Cmd::Prompt(t)) if t == "use pnpm"), "the oldest message did not start");
     assert_eq!(a.queued, vec!["also add tests"]);

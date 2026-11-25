@@ -713,7 +713,8 @@ fn unpaint(s: &str) -> String {
 
 /// `y` and `n` pick only when the choices are Yes and No; elsewhere they type.
 fn yes_no(opts: &[String]) -> bool {
-    matches!(opts, [y, n] if y.eq_ignore_ascii_case("yes") && n.eq_ignore_ascii_case("no"))
+    matches!(opts, [y, n] if y.trim_end_matches(" (Recommended)").eq_ignore_ascii_case("yes")
+        && n.trim_end_matches(" (Recommended)").eq_ignore_ascii_case("no"))
 }
 
 /// Click targets in one drawn row: each `[k] label` chip replays `k`, and
@@ -1106,7 +1107,7 @@ pub enum Ev {
         /// One per option; empty when it has none.
         descs: Vec<String>,
         multiple: bool,
-        reply: Sender<Option<String>>,
+        reply: Sender<Option<Vec<String>>>,
     },
     Done(Option<String>),
     /// A failed request waits `secs` before retry `attempt` of `of`.
@@ -1213,6 +1214,23 @@ impl Hooks for WorkerHooks {
     }
 
     fn ask_choices(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<String> {
+        self.ask_selected(question, options, multiple).map(|labels| labels.join(", "))
+    }
+
+    fn ask_many(&mut self, questions: &[crate::agent::AskQuestion]) -> Option<Vec<Vec<String>>> {
+        questions.iter().enumerate().map(|(i, q)| {
+            let title = if q.header.is_empty() {
+                format!("{}/{} · {}", i + 1, questions.len(), q.question)
+            } else {
+                format!("{}/{} · {}\n{}", i + 1, questions.len(), q.header, q.question)
+            };
+            self.ask_selected(&title, &q.options, q.multiple)
+        }).collect()
+    }
+}
+
+impl WorkerHooks {
+    fn ask_selected(&mut self, question: &str, options: &[(String, String)], multiple: bool) -> Option<Vec<String>> {
         let (tx, rx) = channel();
         if self
             .tx
@@ -2026,7 +2044,7 @@ enum Pending {
     Question {
         q: String,
         opts: Vec<String>,
-        reply: Sender<Option<String>>,
+        reply: Sender<Option<Vec<String>>>,
         mode: AskMode,
         typed: String,
     },
@@ -6339,18 +6357,18 @@ impl App {
                         self.dirty = true;
                     }
                     Key::Char('y') | Key::Char('Y') if yes_no(&opts) && !self.ask_multiple => {
-                        let _ = reply.send(Some(opts[0].clone()));
+                        let _ = reply.send(Some(vec![opts[0].clone()]));
                         self.dirty = true;
                     }
                     Key::Char('n') | Key::Char('N') if yes_no(&opts) && !self.ask_multiple => {
-                        let _ = reply.send(Some(opts[1].clone()));
+                        let _ = reply.send(Some(vec![opts[1].clone()]));
                         self.dirty = true;
                     }
                     Key::Char(c) if c.is_ascii_digit() => {
                         let n = c.to_digit(10).unwrap_or(0) as usize;
                         let valid = n >= 1 && n <= opts.len();
                         if valid && !self.ask_multiple {
-                            let _ = reply.send(Some(opts[n - 1].clone()));
+                            let _ = reply.send(Some(vec![opts[n - 1].clone()]));
                         } else {
                             // Several picks: the key marks or unmarks. Out of
                             // range: the question stays open.
@@ -6369,7 +6387,7 @@ impl App {
                         if picked.is_empty() {
                             self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Choose, typed });
                         } else {
-                            let _ = reply.send(Some(picked.join(", ")));
+                            let _ = reply.send(Some(picked));
                         }
                         self.dirty = true;
                     }
@@ -6402,7 +6420,7 @@ impl App {
                         self.pending = Some(Pending::Question { q, opts, reply, mode: AskMode::Custom, typed });
                     }
                     Key::Enter => {
-                        let _ = reply.send(Some(typed.clone()));
+                        let _ = reply.send(Some(vec![typed.clone()]));
                         self.dirty = true;
                     }
                     key => {
