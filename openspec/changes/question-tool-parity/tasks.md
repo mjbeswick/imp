@@ -6,7 +6,7 @@
 
 ## 1. Contract and dispatch
 
-- [ ] 1.1 Add batch question schema, validation, ordered structured results and legacy compatibility in `src/agent.rs`; targeted tests and `cargo test`.
+- [x] 1.1 Add batch question schema, validation, ordered structured results and legacy compatibility in `src/agent.rs`; targeted tests and `cargo test`.
 
 ## 2. Interactive front ends
 
