@@ -7,6 +7,12 @@ const WINDOWS: &[(&str, u64)] = &[
     // DeepSeek Models & Pricing page, "CONTEXT LENGTH 1M", read 23 Nov 2026:
     // https://api-docs.deepseek.com/quick_start/pricing
     ("deepseek-flash", 1_000_000),
+    // OpenAI GPT-4.1 mini model page, "1,047,576 context window", checked 25 Nov 2026:
+    // https://developers.openai.com/api/docs/models/gpt-4.1-mini
+    ("gpt-4.1-mini", 1_047_576),
+    // Google Gemini 2.5 Pro, Gemini Enterprise Agent Platform docs, "Context window 1,048,576", checked 25 Nov 2026:
+    // https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/2-5-pro
+    ("gemini-2.5-pro", 1_048_576),
 ];
 
 /// The window for `model`: the configured size when set, else the table, else
@@ -74,5 +80,17 @@ mod tests {
     #[test]
     fn percent_of_zero_tokens_is_zero() {
         assert_eq!(percent(0, Some(200_000)), Some(0));
+    }
+
+    #[test]
+    fn the_built_in_gpt_and_gemini_models_have_a_window() {
+        assert_eq!(window("gpt-4.1-mini", None), Some(1_047_576));
+        assert_eq!(window("gemini-2.5-pro", None), Some(1_048_576));
+    }
+
+    #[test]
+    fn a_configured_window_overrides_the_table_and_an_unlisted_model_has_none() {
+        assert_eq!(window("gpt-4.1-mini", Some(128_000)), Some(128_000));
+        assert_eq!(window("some-unlisted-model", None), None);
     }
 }
