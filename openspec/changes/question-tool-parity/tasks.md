@@ -11,7 +11,7 @@
 ## 2. Interactive front ends
 
 - [x] 2.1 Present progress, header, multiple selections, and custom answers for batches in `src/tui.rs`, preserving legacy picker behavior; TUI tests and `cargo test`.
-- [ ] 2.2 Support headers, descriptions, and several selections in `src/main.rs` line mode; parser tests and `cargo test`.
+- [x] 2.2 Support headers, descriptions, and several selections in `src/main.rs` line mode; parser tests and `cargo test`.
 
 ## 3. Safety
 
