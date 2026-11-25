@@ -3429,6 +3429,22 @@ fn renaming_a_saved_profile_replaces_its_old_name() {
 }
 
 #[test]
+fn saving_a_saved_profile_under_its_own_name_succeeds() {
+    let (mut a, _config) = provider_app();
+    a.configure_provider("openai");
+    let (name, mut fields) = form_of(&a);
+    set_name_field(&mut fields, "work");
+    a.finish_provider_form(name, fields);
+    a.configure_provider("work");
+    let (name, fields) = form_of(&a);
+    // The key handler takes the form out before saving; mirror that here.
+    a.pending = None;
+    a.finish_provider_form(name, fields);
+    assert!(a.pending.is_none(), "the form stayed open");
+    assert_eq!(a.cfg.named.iter().filter(|n| n.name == "work").count(), 1, "work was duplicated");
+}
+
+#[test]
 fn renaming_the_active_profile_keeps_it_active() {
     let (mut a, _config) = provider_app();
     a.configure_provider("openai");
