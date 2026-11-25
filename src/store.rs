@@ -563,6 +563,18 @@ impl Log {
         self.write_meta(&meta);
     }
 
+    /// Save the waiting and unread marks, leaving the rest of the metadata as it
+    /// is. Nothing is written when both marks already have these values.
+    pub fn set_marks(&self, waiting: bool, unread: bool) {
+        let mut meta = self.meta();
+        if meta.waiting == waiting && meta.unread == unread {
+            return;
+        }
+        meta.waiting = waiting;
+        meta.unread = unread;
+        self.write_meta(&meta);
+    }
+
     pub fn append(&self, message: &Message) {
         let line = serde_json::json!({ "t": "msg", "m": message.to_json() }).to_string();
         use std::io::Write;
@@ -1528,6 +1540,20 @@ mod listing_tests {
         let meta = log.meta();
         assert_eq!(meta.title, "old");
         assert!(!meta.waiting && !meta.unread, "an old file read a mark");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_marks_saves_the_two_flags_and_keeps_the_title() {
+        let dir = std::env::temp_dir().join(format!("imp-set-marks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        log.write_meta(&Meta { title: "kept".into(), ..log.meta() });
+        log.set_marks(true, false);
+        let meta = log.meta();
+        assert!(meta.waiting && !meta.unread, "the marks were not saved");
+        assert_eq!(meta.title, "kept", "the title was lost");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
