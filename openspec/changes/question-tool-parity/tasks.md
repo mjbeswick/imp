@@ -15,7 +15,7 @@
 
 ## 3. Safety
 
-- [ ] 3.1 Dismissing any question aborts remaining tool calls in the response and the turn; regression test and `cargo test`.
+- [x] 3.1 Dismissing any question aborts remaining tool calls in the response and the turn; regression test and `cargo test`.
 
 Each task also requires `openspec validate --all --strict` and
 `./scripts/size.sh` before its scoped commit, followed by release reinstall
