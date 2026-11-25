@@ -3626,6 +3626,51 @@ fn a_reply_in_view_is_saved_as_read() {
     assert!(!open.meta().unread, "a reply in view was saved as unread");
 }
 
+fn a_queued_skill_goes_with_the_next_prompt_only() {
+    let mut queue = vec!["SKILL BODY".to_string()];
+    assert_eq!(compose_turn(&mut queue, "check"), "SKILL BODY\n\ncheck");
+    assert!(queue.is_empty(), "the queue was not cleared");
+    assert_eq!(compose_turn(&mut queue, "again"), "again");
+}
+
+#[test]
+fn an_unknown_or_switched_off_skill_is_refused() {
+    let skills = vec![crate::store::Skill {
+        name: "config".into(),
+        description: String::new(),
+        body: "B".into(),
+        path: None,
+    }];
+    assert_eq!(skill_body(&skills, &[], "config"), Ok("B".to_string()));
+    assert!(skill_body(&skills, &[], "nosuch").is_err());
+    assert!(skill_body(&skills, &["config".to_string()], "config").is_err());
+}
+
+#[test]
+fn slash_skill_queues_an_enabled_skill() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    a.run_command("skill config", &tx);
+    assert!(matches!(rx.try_recv(), Ok(Cmd::LoadSkill(name)) if name == "config"));
+}
+
+#[test]
+fn slash_skill_with_an_unknown_name_sends_nothing() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    a.run_command("skill nosuch", &tx);
+    assert!(rx.try_recv().is_err(), "a skill was queued");
+}
+
+#[test]
+fn bare_slash_skill_shows_the_usage_line() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("skill", &tx);
+    let shown = strip(&a.frame(120, 30));
+    assert!(shown.contains("usage: /skill <name>"), "{shown:?}");
+}
+
 #[test]
 fn a_reply_out_of_view_is_saved_unread_until_the_session_is_viewed() {
     let mut a = multi_app("unread-view");

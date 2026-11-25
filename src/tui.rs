@@ -1052,6 +1052,8 @@ pub enum Cmd {
     Attach(Vec<crate::api::Image>),
     /// Drop the last unsent attachment.
     Detach,
+    /// `/skill <name>`: send this skill's instructions with the next message only.
+    LoadSkill(String),
     /// `/diff` with its arguments.
     Diff(String),
     SetThinking(bool),
@@ -1610,6 +1612,30 @@ fn state_mark(waiting: bool, streaming: bool, failed: bool, replied: bool, frame
     } else {
         None
     }
+}
+
+/// The text a turn sends: the queued skill instructions, each followed by a blank
+/// line, then the message. The queue is emptied, so a skill goes with one message.
+fn compose_turn(queue: &mut Vec<String>, text: &str) -> String {
+    let mut out = String::new();
+    for body in queue.drain(..) {
+        out.push_str(&body);
+        out.push_str("\n\n");
+    }
+    out.push_str(text);
+    out
+}
+
+/// The instructions of an enabled skill, or the reason it cannot be loaded.
+fn skill_body(skills: &[crate::store::Skill], disabled: &[String], name: &str) -> Result<String, String> {
+    if disabled.iter().any(|d| d == name) {
+        return Err(format!("skill {name} is switched off; turn it on with /skills"));
+    }
+    skills
+        .iter()
+        .find(|s| s.name == name)
+        .map(|s| s.body.clone())
+        .ok_or_else(|| format!("no skill called {name}; see /skills"))
 }
 
 /// A session's saved marks: `(waiting, unread)`. A session is waiting while a
@@ -5493,6 +5519,27 @@ impl App {
             "quit" | "exit" => self.quit = true,
             "keys" => self.open_keys(),
             "settings" => self.open_settings(),
+            other if other == "skill" || other.starts_with("skill ") => {
+                let name = other.strip_prefix("skill").unwrap_or("").trim();
+                if name.is_empty() {
+                    let enabled: Vec<String> = self
+                        .skill_items()
+                        .into_iter()
+                        .map(|i| i.value)
+                        .filter(|n| !self.cfg.skill_disabled(n))
+                        .collect();
+                    self.push(Role::Info, format!("usage: /skill <name>; enabled: {}", enabled.join(", ")));
+                } else {
+                    let skills = crate::store::load_skills(&self.cfg, &self.root);
+                    match skill_body(&skills, &self.cfg.disabled_skills, name) {
+                        Ok(_) => {
+                            let _ = tx.send(Cmd::LoadSkill(name.to_string()));
+                            self.toast(format!("skill {name} loads with your next message"));
+                        }
+                        Err(reason) => self.push(Role::Error, reason),
+                    }
+                }
+            }
             other if other == "diff" || other.starts_with("diff ") => {
                 let _ = tx.send(Cmd::Diff(other["diff".len()..].trim().to_string()));
             }
@@ -8628,6 +8675,8 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel::<Ev>();
     let mut worker_session = session;
+    // Skill instructions queued by `/skill`, sent with the next prompt only.
+    let mut pending_skills: Vec<String> = Vec::new();
     // This worker can wake the session for check-ins.
     worker_session.wakes = true;
     if worker_session
@@ -8754,6 +8803,14 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                         let _ = ev_tx.send(Ev::GoalEnd("goal cleared".into()));
                     }
                 }
+                Ok(Cmd::LoadSkill(name)) => {
+                    match skill_body(&worker_session.skills, &worker_session.cfg.disabled_skills, &name) {
+                        Ok(body) => pending_skills.push(body),
+                        Err(reason) => {
+                            let _ = ev_tx.send(Ev::Info(reason));
+                        }
+                    }
+                }
                 Ok(Cmd::Attach(images)) => {
                     for image in images {
                         if let Err(e) = worker_session.attach_image(image) {
@@ -8783,7 +8840,8 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                             let _ = ev_tx.send(Ev::Done(None));
                             continue;
                         }
-                        Cmd::Prompt(text) | Cmd::Retry(text) => text,
+                        Cmd::Prompt(text) => compose_turn(&mut pending_skills, &text),
+                        Cmd::Retry(text) => text,
                         _ => unreachable!(),
                     };
                     let mut hooks = WorkerHooks {
