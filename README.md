@@ -229,6 +229,10 @@ the same limits as the `bash` tool.
 `skill_load` when configured. No per-CLI tools: `gh`, `jq`, `rg` and friends are
 skills that teach `bash`.
 
+`/skill <name>` queues an enabled skill for your next message: its instructions go
+to the model with that message only, and the transcript still shows only what you
+typed. Bare `/skill` lists the enabled skills.
+
 - Memory notes are listed in the prompt by title, up to 40, so the model knows
   what to search for. Bodies load only on a search; `/reload` picks up new notes.
 - Results over 4 KB spill to a file; you get a head, a tail, and the path.
