@@ -1643,6 +1643,15 @@ fn skill_body(skills: &[crate::store::Skill], disabled: &[String], name: &str) -
         .ok_or_else(|| format!("no skill called {name}; see /skills"))
 }
 
+/// The config form of a single key that can be bound: `ctrl-x` for Ctrl+X. A
+/// printable key is not bound yet, because binding it would stop it being typed.
+fn key_chord(key: &Key) -> Option<String> {
+    match key {
+        Key::Ctrl(c) if c.is_ascii_lowercase() => Some(format!("ctrl-{c}")),
+        _ => None,
+    }
+}
+
 /// A chord as the user types it (`ctrl+x n`) in config form (`ctrl-x-n`): lower
 /// case, with `+` and spaces between keys written as `-`.
 fn normalize_chord(text: &str) -> String {
@@ -3680,6 +3689,15 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
+        // A bound key runs its slash command from the composer. The draft stays as it is.
+        if self.pending.is_none() {
+            if let Some(chord) = key_chord(&key) {
+                if let Some((_, command)) = self.cfg.bindings.iter().find(|(c, _)| *c == chord).cloned() {
+                    self.run_command(command.trim_start_matches('/'), tx);
+                    return;
+                }
+            }
+        }
         if matches!(key, Key::Ctrl('o')) && !matches!(self.pending, Some(Pending::Pick(_))) {
             self.go_next();
         } else {

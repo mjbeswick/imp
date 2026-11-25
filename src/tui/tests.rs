@@ -3766,6 +3766,23 @@ fn keys_reset_removes_every_binding_and_keeps_other_settings() {
 }
 
 #[test]
+fn a_bound_single_key_runs_its_command_from_the_composer() {
+    let mut a = app();
+    a.cfg.bindings.push(("ctrl-y".to_string(), "/quit".to_string()));
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('y'), &tx);
+    assert!(a.quit, "Ctrl+Y did not run /quit");
+}
+
+#[test]
+fn a_key_with_no_binding_is_unchanged() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('y'), &tx);
+    assert!(!a.quit);
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
