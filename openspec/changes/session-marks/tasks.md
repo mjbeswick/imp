@@ -15,7 +15,7 @@
 
 ## 3. Marks
 
-- [ ] 3.1 Test: a closed session with `waiting` set shows `?` in the session picker. Covered by `a_saved_waiting_session_that_is_not_open_gets_a_mark`.
+- [x] 3.1 Test: a closed session with `waiting` set shows `?` in the session picker. Covered by `a_saved_waiting_session_that_is_not_open_gets_a_mark`.
 - [x] 3.2 Test: a closed session with `unread` set shows `•`. Covered by `a_saved_unread_session_that_is_not_open_gets_a_dot`; the file is read from disk, so a restart shows the same mark.
 - [x] 3.3 Test: an open session shows its live state, not the saved flag. Covered by `an_open_session_shows_its_live_state_not_the_saved_flag`.
 - [x] 3.4 Implement: saved marks read for sessions that are not open, at the end of `session_marks`, with `state_mark`.
