@@ -279,11 +279,11 @@ The system SHALL render a frame only when a key was handled, an event arrived fr
 
 ### Requirement: The interface is one chat column
 
-The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width, and the height when known, before a turn whenever either has changed since the previous turn.
+The system SHALL render a scrolling transcript, an input area of one or more rows, and one dim status line at the bottom, SHALL draw a rule above the input only when it carries a label or a warning tint and SHALL draw none otherwise, SHALL NOT use panes, tabs, or widgets, SHALL allow exactly one centred bordered overlay for the picker and no other border, and SHALL tell the model the terminal width, and the height when known, before a turn whenever either has changed since the previous turn.
 
 #### Scenario: Quiet layout
 - **WHEN** the session is idle and the transcript is empty
-- **THEN** the screen shows the welcome row, the rule, an empty input row, and one status line
+- **THEN** the screen shows the welcome row, an empty input row, and one status line
 
 #### Scenario: Welcome leaves
 - **WHEN** the first message is sent
@@ -303,7 +303,7 @@ The system SHALL render a scrolling transcript, an input area of one or more row
 
 #### Scenario: Taller composer
 - **WHEN** the composer holds three rows
-- **THEN** the transcript gives up two rows, the rule and status line keep their places, and the layout is otherwise unchanged
+- **THEN** the transcript gives up two rows, the rule when drawn and the status line keep their places, and the layout is otherwise unchanged
 
 #### Scenario: Resized window
 - **WHEN** the window width changes between turns
@@ -2109,22 +2109,6 @@ The system SHALL show confirmations of what the user just did, namely how much w
 - **WHEN** three seconds pass with no key
 - **THEN** the status line shows its usual content again
 
-### Requirement: A title bar names the session
-
-The system SHALL draw a title bar as the top row when the screen has at least eight rows, on the theme's select background or reversed without colour, with the session title on the left, `imp` before the first message, preceded by the position while several sessions are live, and the local time as `HH:MM` on the right, SHALL shorten the title before the time, and SHALL repaint it when the minute changes.
-
-#### Scenario: Title and time
-- **WHEN** the session is titled `fix the parser` and it is 14:05
-- **THEN** the top row starts with ` fix the parser` and ends with `14:05 `
-
-#### Scenario: Narrow
-- **WHEN** the title is longer than the row
-- **THEN** the title is cut with `…` and the time stays whole
-
-#### Scenario: Short screen
-- **WHEN** the screen has seven rows
-- **THEN** no title bar is drawn
-
 ### Requirement: Line mode leaves no blank lines
 
 The system SHALL start a tool, info, or error row in line mode on a new line only when the output before it stopped mid-line, and SHALL NOT print an empty line before it otherwise.
@@ -2136,3 +2120,31 @@ The system SHALL start a tool, info, or error row in line mode on a new line onl
 #### Scenario: After a partial reply
 - **WHEN** the reply so far ends without a newline and a tool call follows
 - **THEN** the tool row starts on the next line, with no blank line between
+
+### Requirement: The terminal title names the session
+
+The system SHALL set the terminal title to `imp` before the session's first message and to `<title> · imp` after it, SHALL update it on the first frame and whenever the session in view, its title, or a rename changes it, SHALL strip control characters, SHALL cap it at 80 characters, SHALL NOT reserve a screen row for a title bar, and SHALL NOT draw a clock.
+
+#### Scenario: Before the first message
+- **WHEN** imp starts with no message sent
+- **THEN** the terminal title is `imp`
+
+#### Scenario: After the first message
+- **WHEN** the session is titled `fix the parser`
+- **THEN** the terminal title is `fix the parser · imp`
+
+#### Scenario: Rename
+- **WHEN** the user renames the session to `fix sync`
+- **THEN** the terminal title becomes `fix sync · imp`
+
+#### Scenario: Session switch
+- **WHEN** the user switches to another live session
+- **THEN** the terminal title becomes that session's title
+
+#### Scenario: Control characters
+- **WHEN** the first message contains an escape sequence
+- **THEN** the terminal title carries none of it
+
+#### Scenario: No title row
+- **WHEN** the screen has 24 rows
+- **THEN** no row carries a title bar or a clock
