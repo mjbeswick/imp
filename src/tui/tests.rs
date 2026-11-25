@@ -3783,6 +3783,44 @@ fn a_key_with_no_binding_is_unchanged() {
 }
 
 #[test]
+fn a_two_key_chord_runs_its_command() {
+    let mut a = app();
+    a.cfg.bindings.push(("ctrl-y-q".to_string(), "/quit".to_string()));
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('y'), &tx);
+    assert!(!a.quit, "the first key ran the command alone");
+    a.handle_key(Key::Char('q'), &tx);
+    assert!(a.quit, "the second key did not complete the chord");
+}
+
+#[test]
+fn a_held_first_key_does_its_own_effect_after_the_wait() {
+    let mut a = app();
+    a.cfg.bindings.push(("ctrl-u-q".to_string(), "/quit".to_string()));
+    a.input = "abc".into();
+    a.cursor = 3;
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('u'), &tx);
+    assert_eq!(a.input, "abc", "the held key ran early");
+    a.chord_first = a.chord_first.clone().map(|(f, k, _)| (f, k, Instant::now() - Duration::from_secs(2)));
+    a.flush_chord(&tx);
+    assert_eq!(a.input, "", "Ctrl+U did not act after the wait");
+}
+
+#[test]
+fn a_wrong_second_key_does_the_first_keys_effect_then_types_the_second() {
+    let mut a = app();
+    a.cfg.bindings.push(("ctrl-u-q".to_string(), "/quit".to_string()));
+    a.input = "abc".into();
+    a.cursor = 3;
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('u'), &tx);
+    a.handle_key(Key::Char('x'), &tx);
+    assert!(!a.quit);
+    assert_eq!(a.input, "x", "the first key did not act, or x was not typed");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);

@@ -1643,6 +1643,27 @@ fn skill_body(skills: &[crate::store::Skill], disabled: &[String], name: &str) -
         .ok_or_else(|| format!("no skill called {name}; see /skills"))
 }
 
+/// How long a held chord key waits for its second key.
+const CHORD_WAIT: Duration = Duration::from_millis(1500);
+
+/// The config form of a key as the second key of a chord: `ctrl-x`, or a lower
+/// case letter or digit.
+fn key_token(key: &Key) -> Option<String> {
+    match key {
+        Key::Ctrl(c) if c.is_ascii_lowercase() => Some(format!("ctrl-{c}")),
+        Key::Char(c) if c.is_ascii_alphanumeric() => Some(c.to_ascii_lowercase().to_string()),
+        _ => None,
+    }
+}
+
+/// Whether some bound chord has `first` as its first key and a second key after it.
+fn starts_chord(bindings: &[(String, String)], first: &str) -> bool {
+    bindings.iter().any(|(c, _)| {
+        c.strip_prefix(first).and_then(|rest| rest.strip_prefix('-')).is_some()
+            && crate::config::parse_chord(c).is_ok_and(|keys| keys.len() == 2)
+    })
+}
+
 /// The config form of a single key that can be bound: `ctrl-x` for Ctrl+X. A
 /// printable key is not bound yet, because binding it would stop it being typed.
 fn key_chord(key: &Key) -> Option<String> {
@@ -1921,6 +1942,8 @@ pub struct App {
     config_path: std::path::PathBuf,
     /// Where recently chosen models are remembered.
     models_path: std::path::PathBuf,
+    /// The first key of a chord, held until a second key arrives or the wait ends.
+    chord_first: Option<(String, Key, Instant)>,
     /// An `/edit` or `/open` waiting on the user's yes: GUI or not, the argument
     /// list, and a file to create first when the target is missing.
     confirm_open: Option<(bool, Vec<String>, Option<std::path::PathBuf>)>,
@@ -2933,6 +2956,7 @@ impl App {
             unseen: 0,
             pending: None,
             preview_from: None,
+            chord_first: None,
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
             confirm_open: None,
@@ -3688,16 +3712,57 @@ impl App {
         }
     }
 
+    /// Key entry with chords. A bound key or chord runs its command. A key that starts
+    /// a chord is held for a second key; if none follows in time, or the second key
+    /// completes nothing, the held key does its own effect.
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
-        // A bound key runs its slash command from the composer. The draft stays as it is.
+        if let Some((first, held, _)) = self.chord_first.take() {
+            // A prompt or picker opened while the key was held: the held key goes to it first.
+            if self.pending.is_some() {
+                self.handle_key_plain(held, tx);
+                return self.handle_key(key, tx);
+            }
+            if let Some(second) = key_token(&key) {
+                let chord = format!("{first}-{second}");
+                if self.cfg.bindings.iter().any(|(c, _)| *c == chord) {
+                    return self.run_bound(&chord, tx);
+                }
+            }
+            self.handle_key_plain(held, tx);
+            return self.handle_key(key, tx);
+        }
         if self.pending.is_none() {
             if let Some(chord) = key_chord(&key) {
-                if let Some((_, command)) = self.cfg.bindings.iter().find(|(c, _)| *c == chord).cloned() {
-                    self.run_command(command.trim_start_matches('/'), tx);
+                if self.cfg.bindings.iter().any(|(c, _)| *c == chord) {
+                    return self.run_bound(&chord, tx);
+                }
+                if starts_chord(&self.cfg.bindings, &chord) {
+                    self.chord_first = Some((chord, key, Instant::now()));
                     return;
                 }
             }
         }
+        self.handle_key_plain(key, tx);
+    }
+
+    /// Run the command bound to `chord`. The composer draft is left as it is.
+    fn run_bound(&mut self, chord: &str, tx: &Sender<Cmd>) {
+        if let Some((_, command)) = self.cfg.bindings.iter().find(|(c, _)| c == chord).cloned() {
+            self.run_command(command.trim_start_matches('/'), tx);
+        }
+    }
+
+    /// Give a held chord key its own effect once the wait has passed.
+    fn flush_chord(&mut self, tx: &Sender<Cmd>) {
+        let due = matches!(&self.chord_first, Some((_, _, at)) if at.elapsed() >= CHORD_WAIT);
+        if due {
+            if let Some((_, held, _)) = self.chord_first.take() {
+                self.handle_key_plain(held, tx);
+            }
+        }
+    }
+
+    fn handle_key_plain(&mut self, key: Key, tx: &Sender<Cmd>) {
         if matches!(key, Key::Ctrl('o')) && !matches!(self.pending, Some(Pending::Pick(_))) {
             self.go_next();
         } else {
@@ -6938,7 +7003,11 @@ impl App {
     /// long otherwise, an open prompt included. `quiet` is the time since
     /// the last key or event.
     fn loop_wait(&self, quiet: Duration) -> Duration {
-        let wait = self.usual_wait(quiet);
+        let mut wait = self.usual_wait(quiet);
+        // A held chord key wakes the loop when its wait ends.
+        if let Some((_, _, at)) = &self.chord_first {
+            wait = wait.min(CHORD_WAIT.saturating_sub(at.elapsed()).max(Duration::from_millis(50)));
+        }
         // A toast also wakes the loop when it is due to go, never later.
         match &self.status.toast {
             Some((_, at)) => wait.min(TOAST.saturating_sub(at.elapsed()).max(Duration::from_millis(50))),
@@ -9353,6 +9422,9 @@ pub fn run(session: Session, cfg: Config, fresh: Fresh, missing_key: Option<Stri
 
         if app.poll() {
             redraw = true;
+        }
+        if let Some(tx) = app.worker.as_ref().map(|w| w.0.clone()) {
+            app.flush_chord(&tx);
         }
         app.sync_marks();
         if redraw {
