@@ -16,6 +16,7 @@
 ## 3. Safety
 
 - [x] 3.1 Dismissing any question aborts remaining tool calls in the response and the turn; regression test and `cargo test`.
+- [ ] 3.2 Preserve the custom-answer caret per session and clamp it to a UTF-8 boundary when drawing/editing; session-switch regression test and `cargo test`.
 
 Each task also requires `openspec validate --all --strict` and
 `./scripts/size.sh` before its scoped commit, followed by release reinstall

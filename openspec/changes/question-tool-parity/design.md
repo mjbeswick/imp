@@ -30,6 +30,9 @@ scenarios live in `openspec/specs/tools/spec.md` and
   response; the agent then ends the turn.
 - Yes/No keyboard shortcuts recognize an optional ` (Recommended)` suffix
   on the Yes or No label, without changing the returned exact label.
+- The custom-answer caret belongs to its session's question. Store and swap
+  its byte offset with the pane, and guard UTF-8 boundaries at rendering
+  and editing so switching sessions cannot split a multibyte character.
 
 ## Risks and validation
 
@@ -40,6 +43,10 @@ and an `ask` followed by another tool call in the same response.
 The fetched `main` already fails `composer_rows_fit_the_terminal` (91 `x`
 characters vs 90 in the draft); diagnose and correct its assertion before
 accepting the full suite. No unrelated rendering change is intended.
+Review identified a second question-specific risk: the shared `ask_caret`
+is not swapped with session panes in `src/tui.rs:2681-2691`; an offset from
+another answer may fall inside a UTF-8 character. Test both pane switching
+and subsequent editing with non-ASCII answers.
 
 Expected release binary change: +2,000 to +12,000 bytes. Run
 `./scripts/size.sh` before each commit and compare the final result.

@@ -16,6 +16,10 @@ The TUI SHALL show each batch question's short header and its position in the ba
 - **WHEN** the user presses Esc on the second question
 - **THEN** the partial first answer is discarded and the turn stops
 
+#### Scenario: Switch sessions during a Unicode answer
+- **WHEN** the user switches between two open questions, one with a non-ASCII custom answer and a caret inside it
+- **THEN** each session retains its own answer and caret, and editing or redrawing either question does not crash
+
 ### Requirement: Line mode supports the question contract
 
 Line mode SHALL show the header and descriptions for each question, accept one or more numbered choices under `multiple`, accept custom text, and return exact selected labels without discarding punctuation.
