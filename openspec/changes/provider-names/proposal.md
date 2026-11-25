@@ -12,7 +12,8 @@ the user cannot choose a meaningful name.
 
 - Every new provider profile gets a default name taken from its dialect: `custom`, `openai`, and so on.
   If that name is taken, a numeric suffix is added (`custom-2`, `custom-3`).
-- The name is an editable field in the provider form, shown first, and pre-filled with the default.
+- The name is an editable field in the provider form, shown as its last field so the existing field
+  positions stay the same, and pre-filled with the default.
 - A name is refused, with an error row, when it is a built-in provider name or belongs to another saved
   profile. The check runs on add, on configure-to-copy, and on rename in the form. A profile may keep
   its own name when it is saved again.
