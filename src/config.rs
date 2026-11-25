@@ -528,6 +528,9 @@ impl Config {
                 if parse_chord(&chord).is_ok() && value.starts_with('/') {
                     self.bindings.retain(|(c, _)| *c != chord);
                     self.bindings.push((chord, value.to_string()));
+                } else if !self.unknown.iter().any(|u| u == key) {
+                    // Named like an unknown key, so the user sees why it did nothing.
+                    self.unknown.push(key.to_string());
                 }
             }
             // Managed profile lines were read before this pass.
@@ -1976,6 +1979,11 @@ mod provider_models_tests {
         assert_eq!(cfg.bindings.len(), 1, "{:?}", cfg.bindings);
         assert_eq!(cfg.bindings[0].0, "ctrl-x-n");
         assert_eq!(cfg.model, "deepseek-pro", "a bad bind line stopped the file loading");
+        assert_eq!(
+            unknown_note(&cfg.unknown).as_deref(),
+            Some("config: unknown key bind.ctrl-c ignored"),
+            "the ignored bind line was not named"
+        );
     }
 
     #[test]
