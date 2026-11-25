@@ -16,5 +16,5 @@
 
 ## 3. Docs and validation
 
-- [ ] 3.1 Update `README.md`, which lists the built-in providers, to say Ollama and Custom are switched on in the config.
-- [ ] 3.2 Run `cargo test` and `openspec validate --all --strict`, and record the outcome.
+- [x] 3.1 Update `README.md`, which lists the built-in providers, to say Ollama and Custom are switched on in the config.
+- [x] 3.2 Run `cargo test` and `openspec validate --all --strict`, and record the outcome. Result: 830 unit tests pass. The two `tests/tty.rs` failures predate this change (they also fail on `main`).
