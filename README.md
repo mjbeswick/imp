@@ -180,7 +180,10 @@ Nothing is written to the config. Press `f` on a model row to mark it as a
 favourite: favourites are listed first, marked with a star, and kept in
 `favourite-models` beside the recents file in the state directory.
 
-Bare `/provider` picks from built-in and custom profiles. Enter opens the
+Bare `/provider` picks from built-in and custom profiles. The built-in Ollama
+and Custom need no key, so they are listed only once switched on with
+`provider.ollama.enabled = true` or `provider.custom.enabled = true` in the config;
+the active provider is always listed. Enter opens the
 highlighted one's configuration form, `e` does the same, and `u` switches to
 it. After typing `/provider`, letters filter the list, so the keys there are
 Ctrl+E (configure) and Ctrl+U (use). Saving a built-in provider from the form
