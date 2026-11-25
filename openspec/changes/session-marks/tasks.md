@@ -2,9 +2,9 @@
 
 ## 1. Metadata
 
-- [ ] 1.1 Test: a session file without `waiting` or `unread` reads both as false, and an older file opens without error.
-- [ ] 1.2 Test: writing `waiting` and `unread` and reading them back returns the same values.
-- [ ] 1.3 Implement: the two fields in `Meta` and in `Log::write_meta` in `src/store.rs`, with defaults.
+- [x] 1.1 Test: a session file without `waiting` or `unread` reads both as false, and an older file opens without error.
+- [x] 1.2 Test: writing `waiting` and `unread` and reading them back returns the same values.
+- [x] 1.3 Implement: the two fields in `Meta` and in `Log::write_meta` in `src/store.rs`, with defaults.
 
 ## 2. Saving state
 
