@@ -93,6 +93,11 @@ The status line starts with which one is in view, such as `2/3`, and says how
 many others are `waiting`. There is no close command: `/new` moves on, and the
 pool makes room by itself.
 
+The status line shows the share of the context window in use when the window is
+known: for `deepseek-flash`, `gpt-4.1-mini` and `gemini-2.5-pro` from the built-in
+table, or for any model with `context_window` set in the config. Other models show
+no percentage.
+
 In `/sessions`, every saved session is listed, a new one as `(untitled)`. A mark
 in front of a row shows its state: `?` waiting for your answer or a
 confirmation, and `•` when it finished and you have not viewed it. These two
