@@ -1643,6 +1643,17 @@ fn skill_body(skills: &[crate::store::Skill], disabled: &[String], name: &str) -
         .ok_or_else(|| format!("no skill called {name}; see /skills"))
 }
 
+/// A chord as the user types it (`ctrl+x n`) in config form (`ctrl-x-n`): lower
+/// case, with `+` and spaces between keys written as `-`.
+fn normalize_chord(text: &str) -> String {
+    text.trim()
+        .to_ascii_lowercase()
+        .split(|c: char| c == '+' || c == '-' || c.is_whitespace())
+        .filter(|k| !k.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 /// A session's saved marks: `(waiting, unread)`. A session is waiting while a
 /// question or permission is pending. Its reply is unread when it finished
 /// out of view.
@@ -5522,7 +5533,14 @@ impl App {
                 self.push(Role::Info, format!("{RAW}{}", help.replace("\x1b[36m", &accent)))
             }
             "quit" | "exit" => self.quit = true,
+            "keys reset" => self.reset_bindings(),
             "keys" => self.open_keys(),
+            other if other == "bind" || other.starts_with("bind ") => {
+                self.bind_command(other["bind".len()..].trim());
+            }
+            other if other == "unbind" || other.starts_with("unbind ") => {
+                self.unbind_command(other["unbind".len()..].trim());
+            }
             "settings" => self.open_settings(),
             other if other == "skill" || other.starts_with("skill ") => {
                 let name = other.strip_prefix("skill").unwrap_or("").trim();
@@ -6801,6 +6819,64 @@ impl App {
             }
         }
         out
+    }
+
+    /// `/bind <chord> <command>`: the last word is the command, the rest is the chord
+    /// (`ctrl+x n /model`). Saved to the config and applied at once.
+    fn bind_command(&mut self, rest: &str) {
+        let words: Vec<&str> = rest.split_whitespace().collect();
+        let Some((command, chord_words)) = words.split_last() else {
+            self.push(Role::Info, "usage: /bind <chord> <command>, such as /bind ctrl+x n /model");
+            return;
+        };
+        if chord_words.is_empty() || !command.starts_with('/') {
+            self.push(Role::Info, "usage: /bind <chord> <command>, such as /bind ctrl+x n /model");
+            return;
+        }
+        match self.save_binding(&chord_words.join("-"), command) {
+            Ok(chord) => self.push(Role::Info, format!("bound {chord} to {command}")),
+            Err(reason) => self.push(Role::Error, reason),
+        }
+    }
+
+    /// Save one binding to the config and the session. Returns the chord in config form.
+    fn save_binding(&mut self, chord_text: &str, command: &str) -> Result<String, String> {
+        let chord = normalize_chord(chord_text);
+        crate::config::parse_chord(&chord)?;
+        if !command.starts_with('/') {
+            return Err(format!("{command} is not a command; it must start with /"));
+        }
+        let key = format!("bind.{chord}");
+        crate::config::save_setting(&self.config_path, &key, command)?;
+        self.cfg.set(&key, command)?;
+        Ok(chord)
+    }
+
+    /// `/unbind <chord>`: remove one binding from the config and the session.
+    fn unbind_command(&mut self, chord_text: &str) {
+        let chord = normalize_chord(&chord_text.split_whitespace().collect::<Vec<_>>().join("-"));
+        if chord.is_empty() {
+            self.push(Role::Info, "usage: /unbind <chord>, such as /unbind ctrl+x n");
+            return;
+        }
+        match crate::config::remove_setting(&self.config_path, &format!("bind.{chord}")) {
+            Ok(()) => {
+                self.cfg.bindings.retain(|(c, _)| *c != chord);
+                self.push(Role::Info, format!("unbound {chord}"));
+            }
+            Err(reason) => self.push(Role::Error, reason),
+        }
+    }
+
+    /// `/keys reset`: remove every user binding, so the built-in keys are back.
+    fn reset_bindings(&mut self) {
+        match crate::config::remove_settings_with_prefix(&self.config_path, "bind.") {
+            Ok(()) => {
+                self.cfg.bindings.clear();
+                self.push(Role::Info, "key bindings reset to the defaults");
+            }
+            Err(reason) => self.push(Role::Error, reason),
+        }
     }
 
     /// Save each session's waiting and unread marks, so the session list shows

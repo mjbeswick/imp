@@ -3713,6 +3713,58 @@ fn a_picker_leaves_a_margin_and_narrow_terminals_keep_their_width() {
     assert_eq!(modal_width(50, 0), 46, "narrow terminals keep cols - 4");
 }
 
+fn bind_app(name: &str) -> (App, std::path::PathBuf) {
+    let dir = scratch(name);
+    let config = dir.join("config");
+    std::fs::write(&config, "# keep me\nmodel = old\n").unwrap();
+    let mut a = app();
+    a.config_path = config.clone();
+    (a, config)
+}
+
+#[test]
+fn bind_saves_a_chord_to_the_config_and_the_session() {
+    let (mut a, config) = bind_app("bind-save");
+    let (tx, _rx) = channel();
+    a.run_command("bind ctrl+x n /model", &tx);
+    assert_eq!(a.cfg.bindings, vec![("ctrl-x-n".to_string(), "/model".to_string())]);
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains("bind.ctrl-x-n = /model"), "{text}");
+    assert!(text.contains("# keep me"), "the rest of the file was lost: {text}");
+}
+
+#[test]
+fn bind_refuses_a_reserved_key_and_saves_nothing() {
+    let (mut a, config) = bind_app("bind-reserved");
+    let (tx, _rx) = channel();
+    a.run_command("bind ctrl+c /model", &tx);
+    assert!(a.cfg.bindings.is_empty());
+    assert!(!std::fs::read_to_string(&config).unwrap().contains("bind."), "a bind line was saved");
+}
+
+#[test]
+fn unbind_removes_the_chord() {
+    let (mut a, config) = bind_app("bind-unbind");
+    let (tx, _rx) = channel();
+    a.run_command("bind ctrl+x n /model", &tx);
+    a.run_command("unbind ctrl+x n", &tx);
+    assert!(a.cfg.bindings.is_empty());
+    assert!(!std::fs::read_to_string(&config).unwrap().contains("bind."), "the bind line stayed");
+}
+
+#[test]
+fn keys_reset_removes_every_binding_and_keeps_other_settings() {
+    let (mut a, config) = bind_app("bind-reset");
+    let (tx, _rx) = channel();
+    a.run_command("bind ctrl+x n /model", &tx);
+    a.run_command("bind ctrl+p /skills", &tx);
+    a.run_command("keys reset", &tx);
+    assert!(a.cfg.bindings.is_empty());
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(!text.contains("bind."), "{text}");
+    assert!(text.contains("# keep me") && text.contains("model = old"), "{text}");
+}
+
 #[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();

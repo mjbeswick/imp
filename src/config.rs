@@ -972,6 +972,26 @@ pub fn save_setting(path: &Path, key: &str, value: &str) -> Result<(), String> {
     write_private(path, &set_line(&text, key, value))
 }
 
+/// Remove the setting named `key` from the config. Other lines stay as they are.
+pub fn remove_setting(path: &Path, key: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|line| line.split_once('=').map(|(k, _)| k.trim()) != Some(key))
+        .collect();
+    write_private(path, &(kept.join("\n") + "\n"))
+}
+
+/// Remove every setting whose key starts with `prefix`, such as `bind.`.
+pub fn remove_settings_with_prefix(path: &Path, prefix: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(prefix))
+        .collect();
+    write_private(path, &(kept.join("\n") + "\n"))
+}
+
 /// Write the config so only its owner can read it: it can hold API keys.
 fn write_private(path: &Path, text: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
