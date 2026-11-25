@@ -3590,6 +3590,43 @@ fn a_question_in_view_saves_waiting_until_it_is_answered() {
 }
 
 #[test]
+fn streaming_does_not_rewrite_the_saved_marks() {
+    let dir = scratch("marks-stream");
+    let mut a = app();
+    a.sessions_dir = dir.clone();
+    let open = crate::store::Log::create(&dir, &dir, "deepseek-flash");
+    std::fs::write(dir.join(format!("{}.jsonl", open.id)), "").unwrap();
+    a.worker = Some(worker_for(&open.id));
+    let (rtx, _rrx) = channel::<crate::tui::Answer>();
+    a.pending = Some(Pending::Confirm { what: "run it".into(), reply: rtx, always: false });
+    a.sync_marks();
+    // A rewrite would drop a field the writer does not know about. Keep one in the file.
+    let path = open.meta_path.clone();
+    let mut json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    json["sentinel"] = serde_json::json!(true);
+    std::fs::write(&path, json.to_string()).unwrap();
+    // The question stays open, so `waiting` is unchanged; only token activity moves.
+    a.status.streaming = true;
+    a.sync_marks();
+    a.sync_marks();
+    let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(after["sentinel"], serde_json::json!(true), "streaming rewrote the marks");
+}
+
+#[test]
+fn a_reply_in_view_is_saved_as_read() {
+    let dir = scratch("marks-view");
+    let mut a = app();
+    a.sessions_dir = dir.clone();
+    let open = crate::store::Log::create(&dir, &dir, "deepseek-flash");
+    std::fs::write(dir.join(format!("{}.jsonl", open.id)), "").unwrap();
+    a.worker = Some(worker_for(&open.id));
+    a.replied = true;
+    a.sync_marks();
+    assert!(!open.meta().unread, "a reply in view was saved as unread");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
