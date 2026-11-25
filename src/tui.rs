@@ -3882,8 +3882,9 @@ impl App {
         }
 
         match key {
-            // Ctrl+P opens the command palette: the slash picker's list, with no `/` prefix.
-            Key::Ctrl('p') => {
+            // Ctrl+P opens the command palette: the slash picker's list, with no `/` prefix,
+            // and only on an empty composer, so a draft is never covered.
+            Key::Ctrl('p') if self.input.is_empty() => {
                 self.pending = Some(Pending::Pick(Picker::new("commands", command_items(), PickKind::Command)));
                 self.dirty = true;
             }
@@ -3921,8 +3922,6 @@ impl App {
                 let n = self.panes.len();
                 self.show((self.at + 1) % n);
             }
-            // The status bar's `ctrl+p commands` opens the menu the way `/` does, but only on an empty composer.
-            Key::Ctrl('p') if self.input.is_empty() => self.open_commands(String::new()),
             Key::Ctrl('t') => self.run_command("think", tx),
             Key::Ctrl('r') => self.retry(tx),
             Key::Ctrl('e') => {
