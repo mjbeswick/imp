@@ -1772,8 +1772,6 @@ pub struct App {
     ask_multiple: bool,
     ask_marked: Vec<bool>,
     /// The caret in a typed answer to the open question.
-    // ponytail: one for the app, not saved per session; clamped where used,
-    // so a switch mid-answer moves the caret, never past the text.
     ask_caret: usize,
     /// Messages waiting for the running turn to end, oldest first.
     queued: Vec<String>,
@@ -1902,6 +1900,7 @@ struct Pane {
     ask_descs: Vec<String>,
     ask_multiple: bool,
     ask_marked: Vec<bool>,
+    ask_caret: usize,
     /// Messages waiting for the running turn to end, oldest first.
     queued: Vec<String>,
     /// The queued message open in the composer, while one is.
@@ -1952,6 +1951,7 @@ impl Pane {
             ask_descs: Vec::new(),
             ask_multiple: false,
             ask_marked: Vec::new(),
+            ask_caret: 0,
             queued: Vec::new(),
             queue_at: None,
             title: session.log.as_ref().map(|log| log.meta().title).unwrap_or_default(),
@@ -2778,6 +2778,7 @@ impl App {
         swap(&mut self.ask_descs, &mut p.ask_descs);
         swap(&mut self.ask_multiple, &mut p.ask_multiple);
         swap(&mut self.ask_marked, &mut p.ask_marked);
+        swap(&mut self.ask_caret, &mut p.ask_caret);
         swap(&mut self.queued, &mut p.queued);
         swap(&mut self.queue_at, &mut p.queue_at);
         swap(&mut self.title, &mut p.title);
@@ -3042,7 +3043,7 @@ impl App {
             Some(Pending::Confirm { .. } | Pending::ConfirmDelete { .. } | Pending::Pick(_)) => {}
             Some(Pending::Question { mode, typed, .. }) => {
                 *mode = AskMode::Custom;
-                let at = self.ask_caret.min(typed.len());
+                let at = char_boundary(typed, self.ask_caret);
                 typed.insert_str(at, &flat);
                 self.ask_caret = at + flat.len();
             }
@@ -7277,7 +7278,7 @@ impl App {
             AskMode::Choose if self.ask_multiple => (format!("type to answer   Esc stop   1-{} mark   Enter send{queued}", opts.len()), 2, false),
             AskMode::Choose => (format!("type to answer   Esc stop{queued}"), 2, false),
             AskMode::Custom => {
-                let (before, after) = typed.split_at(self.ask_caret.min(typed.len()));
+                let (before, after) = typed.split_at(char_boundary(typed, self.ask_caret));
                 (format!("> {before}{CARET}{after}{queued}"), 4, false)
             }
         });
@@ -7930,7 +7931,8 @@ fn verb(what: &str) -> &'static str {
 /// word, or row, caret moves, and pasting `clip` on Ctrl+V. The composer and
 /// the answer row share it. Returns false for a key it does not edit with.
 fn edit_line(text: &mut String, caret: &mut usize, key: &Key, clip: &str) -> bool {
-    let c = (*caret).min(text.len());
+    let c = char_boundary(text, *caret);
+    *caret = c;
     let start = text[..c].rfind('\n').map_or(0, |i| i + 1);
     let end = text[c..].find('\n').map_or(text.len(), |i| c + i);
     let (cut, at) = match key {
@@ -7960,6 +7962,12 @@ fn edit_line(text: &mut String, caret: &mut usize, key: &Key, clip: &str) -> boo
     }
     *caret = at;
     true
+}
+
+fn char_boundary(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) { at -= 1; }
+    at
 }
 
 /// The local time as `HH:MM`.

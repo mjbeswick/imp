@@ -1514,6 +1514,54 @@ fn ctrl_n_switches_sessions_and_keeps_drafts() {
     assert!(strip(&a.title_bar(80)).starts_with("1/2 fix the parser "), "{}", strip(&a.title_bar(80)));
 }
 
+#[test]
+fn a_unicode_question_keeps_its_caret_across_session_switches() {
+    let mut a = multi_app("question caret");
+    let (tx, _cmds) = channel();
+    a.run_command("new", &tx);
+    let (answer, rx) = channel();
+    a.pending = Some(Pending::Question { q: "which?".into(), opts: vec![], reply: answer, mode: AskMode::Custom, typed: "éx".into() });
+    a.ask_caret = 2;
+    a.show(0);
+    let (other, _rx) = channel();
+    a.pending = Some(Pending::Question { q: "other?".into(), opts: vec![], reply: other, mode: AskMode::Custom, typed: "a".into() });
+    a.ask_caret = 1;
+    a.show(1);
+    assert_eq!(a.ask_caret, 2, "switching changed the custom answer's caret");
+    let frame = strip(&a.frame(70, 12));
+    assert!(frame.contains("é") && frame.contains("which?"), "{frame}");
+    a.handle_key(Key::Char('!'), &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(rx.recv().unwrap(), Some(vec!["é!x".into()]));
+    a.show(0);
+    assert_eq!(a.ask_caret, 1);
+}
+
+#[test]
+fn an_invalid_question_byte_caret_cannot_split_a_character() {
+    let mut a = app();
+    let (reply, rx) = channel();
+    a.pending = Some(Pending::Question { q: "which?".into(), opts: vec![], reply, mode: AskMode::Custom, typed: "éx".into() });
+    a.ask_caret = 1;
+    let _ = a.frame(70, 12);
+    let (tx, _cmds) = channel();
+    a.handle_key(Key::Char('!'), &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(rx.recv().unwrap(), Some(vec!["!éx".into()]));
+}
+
+#[test]
+fn pasting_into_a_unicode_question_clamps_an_invalid_caret() {
+    let mut a = app();
+    let (reply, rx) = channel();
+    a.pending = Some(Pending::Question { q: "which?".into(), opts: vec![], reply, mode: AskMode::Custom, typed: "éx".into() });
+    a.ask_caret = 1;
+    let (tx, _cmds) = channel();
+    a.paste("Z".into(), &tx);
+    a.handle_key(Key::Enter, &tx);
+    assert_eq!(rx.recv().unwrap(), Some(vec!["Zéx".into()]));
+}
+
 /// Three live sessions: 0 waits for approval, 1 has replied, 2 is in view.
 fn inbox_app(name: &str) -> (App, Receiver<Answer>) {
     let mut a = multi_app(name);
