@@ -6,7 +6,7 @@
 - [x] 1.2 Test: typing `qu` in the palette filters the rows to commands containing `qu`.
 - [x] 1.3 Test: Enter on `/quit` in the palette quits the session.
 - [x] 1.4 Test: Esc closes the palette and leaves the composer text unchanged.
-- [ ] 1.5 Test: `/quit` typed in the composer still quits, with the palette code present. Not yet written; the slash path is unchanged in code.
+- [x] 1.5 Test: `/quit` typed in the composer still quits, with the palette code present. Covered by `a_typed_quit_still_quits_with_the_palette_present`.
 - [x] 1.6 Implement: the `Key::Ctrl('p')` handler in `src/tui.rs` that opens the command picker with no prefix.
 
 ## 2. Docs and validation

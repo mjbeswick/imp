@@ -2,10 +2,10 @@
 
 ### Requirement: Command palette
 
-The system SHALL open a command palette with Ctrl+P that lists every command from the `/help` table with its description, SHALL filter that list as the user types, SHALL run the highlighted command with Enter, SHALL close the palette with Esc and leave the composer unchanged, and SHALL keep the slash commands working as before.
+The system SHALL open a command palette with Ctrl+P on an empty composer, lists every command from the `/help` table with its description, SHALL filter that list as the user types, SHALL run the highlighted command with Enter, SHALL close the palette with Esc and leave the composer unchanged, and SHALL keep the slash commands working as before.
 
 #### Scenario: Open the palette
-- **WHEN** the user presses Ctrl+P with no other picker open
+- **WHEN** the user presses Ctrl+P with no other picker open and the composer empty
 - **THEN** the palette opens with every command listed, each with its description, and the filter empty
 
 #### Scenario: Filter the palette
