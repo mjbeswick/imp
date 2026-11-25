@@ -13,8 +13,10 @@ terminal title.
   after it, updating on startup, session switches, and renames.
 - Show `n/m` at the start of the status line while more than one session is
   live, not on a row of its own.
+- Draw the rule above the composer only when it carries a label or a warning
+  tint, never as a bare divider.
 - Remove the clock and the once-a-minute repaint it drove.
-- Update the docs and the two specs that named the title bar.
+- Update the docs and the specs that named the title bar or the bare rule.
 
 ## Keyboard and resources
 
