@@ -3,7 +3,7 @@
 ## 1. Config
 
 - [x] 1.1 Test: `bind.ctrl-x-n = /model` is read into a binding with chord `ctrl-x-n` and command `/model`. Covered by `a_bind_line_reads_as_a_chord_and_a_command`.
-- [ ] 1.2 Test: a `bind.` line naming a reserved key is ignored with a note, and other lines still load. Partly done: the line is ignored and the rest loads (`a_bind_line_on_a_reserved_key_is_ignored_and_the_others_load`). The note is not shown yet.
+- [x] 1.2 Test: a `bind.` line naming a reserved key is ignored with a note, and other lines still load. Covered by `a_bind_line_on_a_reserved_key_is_ignored_and_the_others_load`: the line is named as an ignored key.
 - [x] 1.3 Implement: `parse_chord`, the reserved-key list and the `bind.` arm in `src/config.rs`. Saving bindings is not yet written.
 
 ## 2. Commands
