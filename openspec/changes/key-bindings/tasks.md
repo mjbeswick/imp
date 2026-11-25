@@ -16,7 +16,7 @@
 
 ## 3. Keys
 
-- [ ] 3.1 Test: a bound single key runs its command when pressed in the composer.
+- [x] 3.1 Test: a bound single key runs its command when pressed in the composer. Covered for Ctrl keys by `a_bound_single_key_runs_its_command_from_the_composer`; printable keys are not bound yet.
 - [ ] 3.2 Test: a bound chord runs its command when both keys arrive within 1.5 seconds.
 - [ ] 3.3 Test: after the 1.5 second wait, the first key does what it did before.
 - [ ] 3.4 Test: during capture, Enter saves the captured chord and Esc cancels it.
