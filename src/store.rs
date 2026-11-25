@@ -406,6 +406,10 @@ pub struct Meta {
     pub updated: u64,
     /// The session's goal, saved so it survives a restart.
     pub goal: Option<SavedGoal>,
+    /// A question or permission is waiting for an answer.
+    pub waiting: bool,
+    /// A reply finished and the session has not been viewed since.
+    pub unread: bool,
 }
 
 /// A goal as the session file keeps it. The agent restores it as paused.
@@ -441,6 +445,8 @@ impl Log {
             messages: 0,
             updated: now(),
             goal: None,
+            waiting: false,
+            unread: false,
         });
         log
     }
@@ -475,6 +481,9 @@ impl Log {
                 messages: v["messages"].as_u64().unwrap_or(0),
                 updated: v["updated"].as_u64().unwrap_or(0),
                 goal: saved_goal(&v["goal"]),
+                // Files saved before the marks existed have no such fields: both read as false.
+                waiting: v["waiting"].as_bool().unwrap_or(false),
+                unread: v["unread"].as_bool().unwrap_or(false),
             })
             .unwrap_or(Meta {
                 id: self.id.clone(),
@@ -484,6 +493,8 @@ impl Log {
                 messages: 0,
                 updated: 0,
                 goal: None,
+                waiting: false,
+                unread: false,
             })
     }
 
@@ -539,6 +550,8 @@ impl Log {
             "goal": meta.goal.as_ref().map(|g| serde_json::json!({
                 "text": g.text, "round": g.round, "rounds": g.rounds, "paused": g.paused,
             })),
+            "waiting": meta.waiting,
+            "unread": meta.unread,
         });
         let _ = std::fs::write(&self.meta_path, v.to_string());
     }
@@ -1347,6 +1360,8 @@ mod session_tests {
             messages,
             updated: 1_000,
             goal: None,
+            waiting: false,
+            unread: false,
         }
     }
 
@@ -1500,6 +1515,34 @@ mod listing_tests {
         let _blank = Log::create(&dir, &dir, "deepseek-flash");
         assert_eq!(Log::listing(&dir).len(), 1, "the blank session was not listed");
         assert!(Log::list(&dir).is_empty(), "list changed: resume would see blank sessions");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_meta_file_without_the_mark_fields_reads_both_as_false() {
+        let dir = std::env::temp_dir().join(format!("imp-old-meta-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        std::fs::write(&log.meta_path, r#"{"id":"x","title":"old","cwd":"","model":"m","messages":1,"updated":5}"#).unwrap();
+        let meta = log.meta();
+        assert_eq!(meta.title, "old");
+        assert!(!meta.waiting && !meta.unread, "an old file read a mark");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_mark_fields_round_trip_through_the_meta_file() {
+        let dir = std::env::temp_dir().join(format!("imp-marks-meta-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = Log::create(&dir, &dir, "deepseek-flash");
+        let mut meta = log.meta();
+        meta.waiting = true;
+        meta.unread = true;
+        log.write_meta(&meta);
+        let back = log.meta();
+        assert!(back.waiting && back.unread, "the marks were not saved");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
