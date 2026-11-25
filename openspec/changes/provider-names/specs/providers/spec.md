@@ -5,12 +5,12 @@
 The system SHALL give each new provider profile a default name taken from its dialect, with a numeric suffix when that name is taken, SHALL let the user edit the name in the provider form, and SHALL refuse a name that matches a built-in provider or another saved profile.
 
 #### Scenario: Default name for a new profile
-- **WHEN** the user adds a provider with dialect `custom` and no other profile is named `custom`
-- **THEN** the form's name field is pre-filled with `custom`
+- **WHEN** the user adds a provider with dialect `openai` and no saved profile is named `openai-2`
+- **THEN** the form's name field is pre-filled with `openai-2`, because every dialect name is a built-in name and cannot be used
 
 #### Scenario: Default name with a taken name
-- **WHEN** a profile named `custom` already exists and the user adds another custom provider
-- **THEN** the form's name field is pre-filled with `custom-2`
+- **WHEN** a profile named `custom-2` already exists and the user adds another provider with dialect `custom`
+- **THEN** the form's name field is pre-filled with `custom-3`
 
 #### Scenario: Built-in copy
 - **WHEN** the user configures the built-in `deepseek` provider and saves it as a copy
