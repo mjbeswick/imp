@@ -16,7 +16,9 @@ directly, and a way to undo their own bindings.
 - Bindings are saved in the config under `bind.<chord>`, one line per binding.
 - `/unbind <chord>` removes one binding.
 - `/keys reset` removes every user binding, so the built-in keys are back.
-- Built-in keys that imp uses itself, such as Ctrl+C, Ctrl+D, Esc, Enter and Tab, cannot be bound. A chord
+- Any key can start a chord, except Ctrl+C, Esc and Enter, which stop, cancel and send and keep their
+  immediate effect. A key that starts a bound chord, such as Ctrl+X, waits up to 1.5 seconds before it acts,
+  and only while a chord uses it. A chord that clashes with one of the three keys is refused. A
   that clashes with one is refused with a message and nothing is saved.
 - The `/keys` card lists the user's bindings after the built-in keys.
 

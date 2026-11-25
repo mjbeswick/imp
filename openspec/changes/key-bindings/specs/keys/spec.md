@@ -28,8 +28,12 @@ config as `bind.<chord>` lines.
 - **THEN** Ctrl+X does what it did before the binding, and the next key is handled normally
 
 #### Scenario: Reserved key
-- **WHEN** the user binds Ctrl+C
+- **WHEN** the user binds Ctrl+C, Esc or Enter
 - **THEN** the binding is refused with a message, and no line is saved
+
+#### Scenario: Chord from a key used elsewhere
+- **WHEN** the user has bound `ctrl+x n` to `/model`, and presses Ctrl+X with a message queued
+- **THEN** Ctrl+X waits up to 1.5 seconds; if n follows, the model picker opens, and otherwise Ctrl+X deletes the queued message as before
 
 #### Scenario: Unbind
 - **WHEN** the user types `/unbind ctrl+x n`

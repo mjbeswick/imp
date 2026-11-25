@@ -21,7 +21,9 @@
 - **Chord timer.** A first key that starts a chord is held for up to 1.5 seconds. A second key that completes
   a bound chord runs its command. If the timer runs out, or the second key matches nothing, the first key runs
   as it did before, and the second key is handled normally.
-- **Reserved keys.** The reserved set is every key the main handler matches explicitly, plus Esc and Enter.
+- **Reserved keys.** The reserved set is Ctrl+C, Esc and Enter. Any other key may start a chord or be bound
+  alone, including keys the main handler uses, such as Ctrl+X and Ctrl+D. A binding on one of those keys
+  replaces its built-in effect while the chord is bound; `/keys reset` restores it.
   Checked when a binding is saved and at each key press. A reserved key is refused, never overwritten.
 - **Reset.** `/keys reset` removes every `bind.*` line with `save_setting`-style editing of the config file,
   leaving other lines as they are.
