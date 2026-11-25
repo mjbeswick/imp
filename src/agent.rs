@@ -1085,8 +1085,17 @@ impl Session {
             }
 
             for call in calls {
-                let out = self.dispatch(&call, hooks);
+                let out = if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    "refused: the turn was cancelled".into()
+                } else {
+                    self.dispatch(&call, hooks)
+                };
                 self.say(Message::tool(call.id.clone(), out));
+            }
+
+            if self.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                hooks.ui(Ui::Info("cancelled".into()));
+                return Ok(());
             }
 
             if step + 1 == max_steps {
@@ -1289,6 +1298,9 @@ impl Session {
 
     fn dispatch(&mut self, call: &ToolCall, hooks: &mut dyn Hooks) -> String {
         let out = self.dispatch_inner(call, hooks);
+        if out == "refused: the user did not answer" {
+            self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         // Every decline reads "refused: the user declined …".
         if out.starts_with("refused: the user declined") {
             self.declined = true;
@@ -3094,6 +3106,27 @@ mod tests {
             let out = s.run_tool("ask", &json!({"questions":questions}), &mut NoPrompt);
             assert!(!out.0, "invalid batch accepted: {out:?}");
         }
+    }
+
+    #[test]
+    fn dismissed_batch_does_not_run_later_calls_in_the_same_response() {
+        struct Dismiss { started: Vec<String> }
+        impl Hooks for Dismiss {
+            fn ui(&mut self, event: Ui) {
+                if let Ui::ToolStart { name, .. } = event { self.started.push(name); }
+            }
+            fn confirm(&mut self, _: &str) -> bool { true }
+            fn ask(&mut self, _: &str, _: &[String]) -> Option<String> { None }
+        }
+        let mut response = tool_reply("c1", "ask", &json!({"questions":[{"question":"continue?"}]}).to_string());
+        response.insert(2, format!("data: {}\n\n", json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+            "index":1,"id":"c2","type":"function","function":{"name":"bash","arguments":"{\"command\":\"true\"}"}
+        }]},"finish_reason":null}]})));
+        let (mut s, _fake) = scripted(vec![Script::Ok(response), Script::Ok(text_reply("unused"))]);
+        let mut hooks = Dismiss { started: Vec::new() };
+        s.turn("go", &mut hooks).unwrap();
+        assert_eq!(hooks.started, ["ask"]);
+        assert!(s.history.iter().any(|m| m.role == crate::api::Role::Tool && m.content.contains("user did not answer")));
     }
 
     #[test]

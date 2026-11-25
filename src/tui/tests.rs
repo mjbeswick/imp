@@ -898,6 +898,24 @@ fn recommended_yes_is_answered_with_one_key() {
 }
 
 #[test]
+fn dismissing_a_later_question_discards_earlier_answers() {
+    let (tx, rx) = channel();
+    let mut hooks = WorkerHooks { tx, waited: Duration::ZERO };
+    let question = |name: &str| crate::agent::AskQuestion {
+        header: name.into(), question: "continue?".into(), options: vec![("Yes".into(), String::new()), ("No".into(), String::new())], multiple: false,
+    };
+    let asker = std::thread::spawn(move || hooks.ask_many(&[question("first"), question("second")]));
+    let mut a = colour_app();
+    let (key_tx, _keys) = channel();
+    a.apply(rx.recv_timeout(Duration::from_secs(2)).unwrap());
+    a.handle_key(Key::Char('1'), &key_tx);
+    a.apply(rx.recv_timeout(Duration::from_secs(2)).unwrap());
+    a.handle_key(Key::Esc, &key_tx);
+    assert_eq!(asker.join().unwrap(), None);
+    assert!(a.cancel.load(Ordering::Relaxed));
+}
+
+#[test]
 fn delete_removes_forward() {
     let (tx, _cmds) = channel();
     let mut a = app();
