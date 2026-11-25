@@ -3701,6 +3701,19 @@ fn a_reply_out_of_view_is_saved_unread_until_the_session_is_viewed() {
 }
 
 #[test]
+fn a_picker_grows_to_its_widest_row_within_the_bounds() {
+    assert_eq!(modal_width(200, 110), 110, "fits the content");
+    assert_eq!(modal_width(200, 60), 72, "short rows keep the minimum");
+    assert_eq!(modal_width(200, 300), 120, "capped at 120");
+}
+
+#[test]
+fn a_picker_leaves_a_margin_and_narrow_terminals_keep_their_width() {
+    assert_eq!(modal_width(100, 110), 90, "90% of 100");
+    assert_eq!(modal_width(50, 0), 46, "narrow terminals keep cols - 4");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);

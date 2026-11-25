@@ -1417,9 +1417,14 @@ const SIDE_BY_SIDE_COLS: usize = 120;
 
 /// Width of a centred modal. Two-fifths of the screen on wide terminals, capped at
 /// 72. Narrow terminals give the modal nearly the whole width, minus a 4-column margin.
-fn modal_width(cols: usize) -> usize {
-    let width = if cols < 60 { cols.saturating_sub(4).max(40) } else { (cols * 80 / 100).clamp(40, 72) };
-    width.min(cols)
+fn modal_width(cols: usize, wanted: usize) -> usize {
+    if cols < 60 {
+        return cols.saturating_sub(4).max(40).min(cols);
+    }
+    // The 90% margin wins over the 72-column floor on terminals narrower than 80.
+    let cap = (cols * 90 / 100).min(120);
+    let floor = 72.min(cap);
+    wanted.clamp(floor, cap)
 }
 
 /// Whether a diff is drawn side by side at this terminal width.
@@ -7331,7 +7336,7 @@ impl App {
         cols: usize,
         rows: usize,
     ) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
-        let width = modal_width(cols);
+        let width = modal_width(cols, 0);
         if width < 4 || rows < 8 {
             return None;
         }
@@ -7391,10 +7396,21 @@ impl App {
 
     /// Give the open picker the window for this terminal, before it is drawn.
     fn fit_picker(&mut self, cols: usize, rows: usize) {
-        let inner = modal_width(cols);
+        // The same width the overlay draws: the widest row sets it.
+        let inner_for = |picker: &Picker| {
+            let label = picker.items.iter().map(|i| i.label.chars().count()).max().unwrap_or(0);
+            let desc = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+            modal_width(cols, 6 + label + desc)
+        };
         match self.pending.as_mut() {
-            Some(Pending::Pick(picker)) => picker.fit(inner, rows),
-            Some(Pending::ConfirmDelete { picker, .. }) => picker.fit(inner, rows),
+            Some(Pending::Pick(picker)) => {
+                let inner = inner_for(picker);
+                picker.fit(inner, rows)
+            }
+            Some(Pending::ConfirmDelete { picker, .. }) => {
+                let inner = inner_for(picker);
+                picker.fit(inner, rows)
+            }
             _ => {}
         }
     }
@@ -7409,7 +7425,10 @@ impl App {
             Some(Pending::ConfirmDelete { picker, .. }) => &**picker,
             _ => return None,
         };
-        let width = modal_width(cols);
+        // The modal grows to its widest row: label, gap, description, and the frame and marker.
+        let longest_label = picker.items.iter().map(|i| i.label.chars().count()).max().unwrap_or(0);
+        let longest_desc = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+        let width = modal_width(cols, 6 + longest_label + longest_desc);
         if width < 4 || rows < 5 {
             return None;
         }
