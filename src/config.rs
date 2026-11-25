@@ -204,6 +204,9 @@ pub struct Config {
     pub disabled_skills: Vec<String>,
     /// Providers switched off with `provider.<name>.enabled = false`.
     pub disabled_providers: Vec<String>,
+    /// Providers switched on with `provider.<name>.enabled = true`. A built-in
+    /// that needs no key is listed only when it appears here.
+    pub enabled_providers: Vec<String>,
     /// Terminal editor command for `/edit`, e.g. `vim -u NONE`.
     pub editor: Option<String>,
     /// GUI editor command for `/open`, e.g. `code --wait`.
@@ -282,6 +285,29 @@ impl Config {
         self.disabled_providers.iter().any(|p| p == name)
     }
 
+    /// Whether `provider.<name>.enabled` was set to true.
+    pub fn provider_opted_in(&self, name: &str) -> bool {
+        self.enabled_providers.iter().any(|p| p == name)
+    }
+
+    /// Whether a built-in is offered in the provider and model lists. The active
+    /// provider always is, and a switched-off one never is. A built-in that needs
+    /// a key is offered once the key is set. One that needs no key (Ollama,
+    /// Custom) is offered only once it is switched on.
+    pub fn provider_listed(&self, provider: Provider, lookup: impl Fn(&str) -> Option<String>) -> bool {
+        let name = format!("{provider:?}").to_lowercase();
+        if name == self.active_name {
+            return true;
+        }
+        if self.provider_disabled(&name) {
+            return false;
+        }
+        match provider.profile().key_var {
+            None => self.provider_opted_in(&name),
+            Some(_) => self.provider_configured(provider, lookup),
+        }
+    }
+
     /// Whether `skill.<name>.enabled` is set to false.
     pub fn skill_disabled(&self, name: &str) -> bool {
         self.disabled_skills.iter().any(|s| s == name)
@@ -331,6 +357,7 @@ impl Default for Config {
             editor: None,
             visual: None,
             disabled_providers: Vec::new(),
+            enabled_providers: Vec::new(),
         }
     }
 }
@@ -454,8 +481,11 @@ impl Config {
                 }
                 let enabled = parse_bool(value)?;
                 self.disabled_providers.retain(|p| *p != name);
+                self.enabled_providers.retain(|p| *p != name);
                 if !enabled {
                     self.disabled_providers.push(name);
+                } else {
+                    self.enabled_providers.push(name);
                 }
             }
             // Managed profile lines were read before this pass.
@@ -1858,6 +1888,32 @@ mod provider_models_tests {
         assert!(check_provider_name("work", None, &named).is_err());
         assert!(check_provider_name("bad name", None, &named).is_err());
         assert!(check_provider_name("office", None, &named).is_ok());
+    }
+
+    #[test]
+    fn a_keyless_built_in_is_listed_only_once_switched_on() {
+        let mut cfg = Config::default();
+        let no_env = |_: &str| None::<String>;
+        assert!(!cfg.provider_listed(Provider::Custom, no_env), "custom listed by default");
+        assert!(!cfg.provider_listed(Provider::Ollama, no_env), "ollama listed by default");
+        cfg.set("provider.custom.enabled", "true").unwrap();
+        assert!(cfg.provider_listed(Provider::Custom, no_env));
+        cfg.set("provider.custom.enabled", "false").unwrap();
+        assert!(!cfg.provider_listed(Provider::Custom, no_env));
+    }
+
+    #[test]
+    fn a_config_line_switches_a_keyless_built_in_on() {
+        let cfg = Config::from_str("provider.ollama.enabled = true\n").unwrap();
+        assert!(cfg.provider_listed(Provider::Ollama, |_: &str| None::<String>));
+        assert!(!cfg.provider_listed(Provider::Custom, |_: &str| None::<String>));
+    }
+
+    #[test]
+    fn a_keyed_built_in_is_listed_once_its_key_is_set() {
+        let cfg = Config::default();
+        assert!(!cfg.provider_listed(Provider::OpenAi, |_: &str| None::<String>));
+        assert!(cfg.provider_listed(Provider::OpenAi, |_: &str| Some("k".to_string())));
     }
 
     #[test]
