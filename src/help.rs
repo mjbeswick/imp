@@ -73,7 +73,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/open", "open a file or folder in the GUI editor"),
     ("/skills", "turn each skill on or off; applies on /reload"),
     ("/diff", "what imp changed this session; git for git diff"),
-    ("/model", "set or pick the session model"),
+    ("/model", "set or pick the session model; f marks a favourite"),
     ("/provider", "providers: space on/off, u use, e edit, d delete, n new"),
     ("/queue", "messages waiting to send: add, pop, delete, clear"),
     ("/copy", "copy the last reply; code for its last block"),

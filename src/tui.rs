@@ -2208,6 +2208,38 @@ fn record_model(path: &std::path::Path, name: &str) {
     let _ = std::fs::write(path, names.join("\n"));
 }
 
+/// The favourite models, one `provider::model` value per line, in file order.
+fn load_favourites(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Add a favourite, or remove it when it is already one. Returns true when
+/// the value is a favourite afterwards.
+fn toggle_favourite(path: &std::path::Path, value: &str) -> std::io::Result<bool> {
+    let mut values = load_favourites(path);
+    let now = match values.iter().position(|v| v == value) {
+        Some(at) => {
+            values.remove(at);
+            false
+        }
+        None => {
+            values.push(value.to_string());
+            true
+        }
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, values.join("\n"))?;
+    Ok(now)
+}
+
 /// The rows of the `/settings` form: config key and label.
 const SETTING_ROWS: &[(&str, &str)] = &[
     ("permissions", "start mode"),
@@ -4170,7 +4202,24 @@ impl App {
                 });
             }
         }
+        // Favourites go first, each keeping its catalog order. `f` toggles them.
+        let favourites = load_favourites(&self.favourites_path());
+        let (starred, rest): (Vec<PickItem>, Vec<PickItem>) =
+            items.into_iter().partition(|i| favourites.contains(&i.value));
+        let mut items: Vec<PickItem> = starred;
+        items.extend(rest);
+        for item in &mut items {
+            item.actions = vec![('f', "favourite")];
+            if favourites.contains(&item.value) {
+                item.desc = if item.desc.is_empty() { "★".into() } else { format!("★ {}", item.desc) };
+            }
+        }
         items
+    }
+
+    /// Where favourite models are kept: beside the recent-models file.
+    fn favourites_path(&self) -> std::path::PathBuf {
+        self.models_path.with_file_name("favourite-models")
     }
 
     /// Every skill on disk and every switched-off one, each marked on or off.
@@ -6158,6 +6207,21 @@ impl App {
                                     self.save_rule(&shape, tx);
                                     picker.items = self.mode_items();
                                     picker.offset = picker.offset.min(picker.index);
+                                }
+                                self.pending = Some(Pending::Pick(picker));
+                            }
+                            "favourite" => {
+                                if let Some(choice) = picker.selected().cloned() {
+                                    match toggle_favourite(&self.favourites_path(), &choice.value) {
+                                        Ok(now) => {
+                                            let word = if now { "favourite" } else { "unfavourite" };
+                                            self.toast(format!("{word}: {}", choice.label));
+                                            // The row may move to the top, so the highlight follows its value.
+                                            picker.items = self.model_items();
+                                            picker.index = picker.items.iter().position(|i| i.value == choice.value).unwrap_or(0);
+                                        }
+                                        Err(e) => self.push(Role::Error, format!("favourite: {e}")),
+                                    }
                                 }
                                 self.pending = Some(Pending::Pick(picker));
                             }

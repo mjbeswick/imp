@@ -176,7 +176,9 @@ highlighted image.
 `/model <name>` sets the session model; bare `/model` lists the provider's
 models, fetched live with a built-in catalog as the immediate and fallback
 list, plus the current model, the provider default, and recent choices.
-Nothing is written to the config.
+Nothing is written to the config. Press `f` on a model row to mark it as a
+favourite: favourites are listed first, marked with a star, and kept in
+`favourite-models` beside the recents file in the state directory.
 
 Bare `/provider` picks from built-in and custom profiles. Enter opens the
 highlighted one's configuration form, `e` does the same, and `u` switches to

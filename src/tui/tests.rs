@@ -3292,6 +3292,92 @@ fn model_command_sets_the_session_and_records_recents() {
     assert!(labels.iter().all(|l| !l.contains("(current)")), "{labels:?}");
 }
 
+fn fav_app(name: &str) -> (App, std::path::PathBuf) {
+    let dir = scratch(name);
+    let config = dir.join("config");
+    let mut a = app();
+    a.config_path = config.clone();
+    a.models_path = config.with_file_name("models");
+    (a, config.with_file_name("favourite-models"))
+}
+
+#[test]
+fn load_favourites_reads_a_missing_and_a_saved_file() {
+    let dir = scratch("fav-load");
+    let path = dir.join("favourite-models");
+    assert!(load_favourites(&path).is_empty());
+    std::fs::write(&path, "deepseek::deepseek-pro\n\nopenai::gpt-x\n").unwrap();
+    assert_eq!(load_favourites(&path), vec!["deepseek::deepseek-pro", "openai::gpt-x"]);
+}
+
+#[test]
+fn toggle_favourite_adds_then_removes_one_value_per_line() {
+    let dir = scratch("fav-toggle");
+    let path = dir.join("favourite-models");
+    assert!(toggle_favourite(&path, "a::one").unwrap());
+    assert!(toggle_favourite(&path, "a::two").unwrap());
+    assert!(!toggle_favourite(&path, "a::one").unwrap());
+    assert_eq!(load_favourites(&path), vec!["a::two"]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a::two");
+}
+
+#[test]
+fn toggle_favourite_reports_a_write_failure() {
+    let dir = scratch("fav-fail");
+    let path = dir.join("favourite-models");
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(toggle_favourite(&path, "a::one").is_err());
+}
+
+#[test]
+fn favourite_models_are_listed_first_in_catalog_order_with_a_star() {
+    let (mut a, path) = fav_app("fav-order");
+    a.available_models = vec!["alpha".into(), "beta".into(), "gamma".into()];
+    let active = a.cfg.active_name.clone();
+    std::fs::write(&path, format!("{active}::gamma\n{active}::alpha\n")).unwrap();
+    let items = a.model_items();
+    assert_eq!(items[0].value, format!("{active}::alpha"), "{:?}", items.iter().map(|i| &i.value).collect::<Vec<_>>());
+    assert_eq!(items[1].value, format!("{active}::gamma"));
+    assert!(items[0].desc.starts_with("★ "), "{:?}", items[0].desc);
+    assert!(items[2..].iter().all(|i| !i.desc.contains('★')), "a non-favourite is starred");
+}
+
+#[test]
+fn a_favourite_whose_provider_is_not_usable_is_hidden_but_kept() {
+    let (mut a, path) = fav_app("fav-hidden");
+    std::fs::write(&path, "nosuchprovider::model-x\n").unwrap();
+    assert!(a.model_items().iter().all(|i| i.value != "nosuchprovider::model-x"));
+    assert_eq!(load_favourites(&path), vec!["nosuchprovider::model-x"]);
+}
+
+#[test]
+fn f_on_a_model_row_toggles_the_favourite_and_keeps_the_highlight() {
+    let (mut a, path) = fav_app("fav-key");
+    let (tx, _rx) = channel();
+    a.run_command("model", &tx);
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    let target = open_picker(&a).selected().unwrap().value.clone();
+    a.handle_key(Key::Char('f'), &tx);
+    assert_eq!(load_favourites(&path), vec![target.clone()]);
+    assert_eq!(open_picker(&a).selected().unwrap().value, target, "highlight moved");
+    assert!(a.status.toast.as_ref().is_some_and(|(t, _)| t.starts_with("favourite: ")), "{:?}", a.status.toast);
+    a.handle_key(Key::Char('f'), &tx);
+    assert!(load_favourites(&path).is_empty());
+    assert!(a.status.toast.as_ref().is_some_and(|(t, _)| t.starts_with("unfavourite: ")), "{:?}", a.status.toast);
+}
+
+#[test]
+fn f_with_a_filter_types_into_the_filter() {
+    let (mut a, path) = fav_app("fav-filter");
+    let (tx, _rx) = channel();
+    a.run_command("model", &tx);
+    a.handle_key(Key::Char('d'), &tx);
+    a.handle_key(Key::Char('f'), &tx);
+    assert_eq!(open_picker(&a).filter, "df");
+    assert!(!path.exists(), "a favourite was written while filtering");
+}
+
 #[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
