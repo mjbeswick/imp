@@ -34,8 +34,8 @@
 
 - A chord's first key hides that key's normal effect for up to 1.5 seconds. The recommended wait is short,
   and the timer is shown in the composer while it runs.
-- Terminals send some keys the same way (Ctrl+H and Backspace). The reserved set includes both, so binding
-  either is refused.
+- Terminals send some keys the same way (Ctrl+H and Backspace send one byte). Binding either would bind both,
+  so a binding on one of them is refused with a message naming the other.
 - Two bindings whose first keys match form a prefix. A chord starting with a key that is also a single-key
   binding is refused, so one key never has two meanings.
 
