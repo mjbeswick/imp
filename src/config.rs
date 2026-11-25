@@ -769,6 +769,40 @@ fn set_named_field(named: &mut Vec<NamedProvider>, name: &str, field: &str, valu
     }
 }
 
+/// The built-in provider names a profile may not take.
+const BUILT_IN_NAMES: &[&str] = &["deepseek", "openai", "anthropic", "gemini", "ollama", "custom"];
+
+/// The default name for a profile of this dialect: the dialect, or `<dialect>-2`,
+/// `<dialect>-3`, and so on, whichever is the first name not already taken.
+pub fn default_provider_name(dialect: &str, named: &[NamedProvider]) -> String {
+    let taken = |name: &str| BUILT_IN_NAMES.contains(&name) || named.iter().any(|p| p.name.eq_ignore_ascii_case(name));
+    if !taken(dialect) {
+        return dialect.to_string();
+    }
+    (2..)
+        .map(|n| format!("{dialect}-{n}"))
+        .find(|name| !taken(name))
+        .unwrap_or_default()
+}
+
+/// Check a name before a profile takes it. `editing` is the profile's current
+/// name when it is being saved again, so keeping its own name is allowed.
+pub fn check_provider_name(candidate: &str, editing: Option<&str>, named: &[NamedProvider]) -> Result<(), String> {
+    if !valid_profile_name(candidate) {
+        return Err("name must be letters, digits, - or _".into());
+    }
+    if BUILT_IN_NAMES.contains(&candidate.to_ascii_lowercase().as_str()) {
+        return Err(format!("{candidate} is a built-in provider name"));
+    }
+    if editing == Some(candidate) {
+        return Ok(());
+    }
+    if named.iter().any(|p| p.name.eq_ignore_ascii_case(candidate)) {
+        return Err(format!("provider {candidate} already exists"));
+    }
+    Ok(())
+}
+
 /// A valid custom profile name.
 pub fn valid_profile_name(name: &str) -> bool {
     !name.is_empty()
@@ -1802,5 +1836,35 @@ mod provider_models_tests {
         assert_eq!(back.named[0].models, vec!["m2", "m3"]);
         let without = NamedProvider { models: Vec::new(), ..with };
         assert!(!providers_block(&[without]).contains(".models"), "an empty list was written");
+    }
+
+    fn saved(name: &str) -> NamedProvider {
+        NamedProvider { name: name.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn a_default_name_is_the_dialect_then_the_lowest_free_number() {
+        // Every dialect is a built-in name, so the first default is `<dialect>-2`.
+        assert_eq!(default_provider_name("gemini", &[]), "gemini-2");
+        assert_eq!(default_provider_name("gemini", &[saved("gemini-2")]), "gemini-3");
+        assert_eq!(default_provider_name("zebra", &[]), "zebra");
+    }
+
+    #[test]
+    fn check_provider_name_refuses_built_ins_duplicates_and_bad_characters() {
+        let named = [saved("work")];
+        assert!(check_provider_name("openai", None, &named).is_err());
+        assert!(check_provider_name("OpenAI", None, &named).is_err());
+        assert!(check_provider_name("work", None, &named).is_err());
+        assert!(check_provider_name("bad name", None, &named).is_err());
+        assert!(check_provider_name("office", None, &named).is_ok());
+    }
+
+    #[test]
+    fn a_profile_keeps_its_own_name_and_may_rename_to_a_free_one() {
+        let named = [saved("work")];
+        assert!(check_provider_name("work", Some("work"), &named).is_ok());
+        assert!(check_provider_name("office", Some("work"), &named).is_ok());
+        assert!(check_provider_name("work", Some("office"), &named).is_err());
     }
 }
