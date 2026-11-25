@@ -3530,6 +3530,17 @@ fn a_question_is_waiting_and_a_reply_is_unread_only_out_of_view() {
 }
 
 #[test]
+fn a_saved_waiting_session_that_is_not_open_gets_a_mark() {
+    let dir = scratch("marks-closed");
+    let mut a = app();
+    a.sessions_dir = dir.clone();
+    let waiting = crate::store::Log::create(&dir, &dir, "deepseek-flash");
+    waiting.set_marks(true, false);
+    let marks = a.session_marks();
+    assert!(marks.iter().any(|(id, mark)| *id == waiting.id && *mark == '?'), "{marks:?}");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);

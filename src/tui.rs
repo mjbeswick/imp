@@ -6739,6 +6739,15 @@ impl App {
         for p in self.panes.iter().flatten() {
             add(p.worker.as_ref(), asking(&p.pending), p.status.streaming, p.failed, p.replied);
         }
+        // A session that is not open shows the marks it saved. An open one keeps its live state.
+        for meta in crate::store::Log::listing(&self.sessions_dir) {
+            if out.iter().any(|(id, _)| *id == meta.id) {
+                continue;
+            }
+            if let Some(mark) = state_mark(meta.waiting, false, false, meta.unread, frame) {
+                out.push((meta.id, mark));
+            }
+        }
         out
     }
 
