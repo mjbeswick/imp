@@ -112,6 +112,36 @@ impl ColorMode {
     }
 }
 
+/// Keys that imp needs at once, so they cannot start a chord or be bound.
+const RESERVED_KEYS: &[&str] = &["ctrl+c", "esc", "enter"];
+
+/// Parse a chord from its config form: one or two keys separated by `-`, where
+/// `ctrl` applies to the key after it, as in `ctrl-x-n`. Returns the keys as
+/// `ctrl+x` and `n`.
+pub fn parse_chord(text: &str) -> Result<Vec<String>, String> {
+    let tokens: Vec<&str> = text.split('-').filter(|t| !t.is_empty()).collect();
+    let mut keys: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let key = if tokens[i] == "ctrl" {
+            let next = tokens.get(i + 1).ok_or_else(|| format!("ctrl needs a key in {text:?}"))?;
+            i += 2;
+            format!("ctrl+{next}")
+        } else {
+            i += 1;
+            tokens[i - 1].to_string()
+        };
+        keys.push(key);
+    }
+    if keys.is_empty() || keys.len() > 2 {
+        return Err(format!("a chord has one or two keys: {text:?}"));
+    }
+    if let Some(reserved) = keys.iter().find(|k| RESERVED_KEYS.contains(&k.as_str())) {
+        return Err(format!("{reserved} is reserved"));
+    }
+    Ok(keys)
+}
+
 /// A custom provider whose fields live in the config's managed block.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct NamedProvider {
@@ -207,6 +237,9 @@ pub struct Config {
     /// Providers switched on with `provider.<name>.enabled = true`. A built-in
     /// that needs no key is listed only when it appears here.
     pub enabled_providers: Vec<String>,
+    /// Slash command bindings, as `(chord, command)`. The chord is written as in
+    /// the config key: keys separated by `-`, with `ctrl` before a key.
+    pub bindings: Vec<(String, String)>,
     /// Terminal editor command for `/edit`, e.g. `vim -u NONE`.
     pub editor: Option<String>,
     /// GUI editor command for `/open`, e.g. `code --wait`.
@@ -358,6 +391,7 @@ impl Default for Config {
             visual: None,
             disabled_providers: Vec::new(),
             enabled_providers: Vec::new(),
+            bindings: Vec::new(),
         }
     }
 }
@@ -486,6 +520,14 @@ impl Config {
                     self.disabled_providers.push(name);
                 } else {
                     self.enabled_providers.push(name);
+                }
+            }
+            // A bad bind line is ignored, so the rest of the file still loads.
+            key if key.starts_with("bind.") => {
+                let chord = key["bind.".len()..].to_string();
+                if parse_chord(&chord).is_ok() && value.starts_with('/') {
+                    self.bindings.retain(|(c, _)| *c != chord);
+                    self.bindings.push((chord, value.to_string()));
                 }
             }
             // Managed profile lines were read before this pass.
@@ -1900,6 +1942,30 @@ mod provider_models_tests {
         assert!(cfg.provider_listed(Provider::Custom, no_env));
         cfg.set("provider.custom.enabled", "false").unwrap();
         assert!(!cfg.provider_listed(Provider::Custom, no_env));
+    }
+
+    #[test]
+    fn a_bind_line_reads_as_a_chord_and_a_command() {
+        let cfg = Config::from_str("bind.ctrl-x-n = /model\n").unwrap();
+        assert_eq!(cfg.bindings, vec![("ctrl-x-n".to_string(), "/model".to_string())]);
+    }
+
+    #[test]
+    fn a_bind_line_on_a_reserved_key_is_ignored_and_the_others_load() {
+        let cfg = Config::from_str("bind.ctrl-c = /model\nbind.ctrl-x-n = /skills\nmodel = deepseek-pro\n").unwrap();
+        assert_eq!(cfg.bindings.len(), 1, "{:?}", cfg.bindings);
+        assert_eq!(cfg.bindings[0].0, "ctrl-x-n");
+        assert_eq!(cfg.model, "deepseek-pro", "a bad bind line stopped the file loading");
+    }
+
+    #[test]
+    fn a_chord_has_one_or_two_keys_and_no_reserved_key() {
+        assert_eq!(parse_chord("ctrl-x-n"), Ok(vec!["ctrl+x".to_string(), "n".to_string()]));
+        assert_eq!(parse_chord("ctrl-p"), Ok(vec!["ctrl+p".to_string()]));
+        assert!(parse_chord("ctrl-c").is_err(), "Ctrl+C is reserved");
+        assert!(parse_chord("esc").is_err(), "Esc is reserved");
+        assert!(parse_chord("enter").is_err(), "Enter is reserved");
+        assert!(parse_chord("a-b-c").is_err(), "three keys");
     }
 
     #[test]
