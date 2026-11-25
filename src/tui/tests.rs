@@ -3523,6 +3523,16 @@ fn esc_closes_the_palette_and_keeps_the_composer() {
 }
 
 #[test]
+fn a_typed_quit_still_quits_with_the_palette_present() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.input = "/quit".into();
+    a.cursor = a.input.len();
+    a.handle_key(Key::Enter, &tx);
+    assert!(a.quit, "typed /quit did not quit");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
