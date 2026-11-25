@@ -1779,10 +1779,12 @@ pub struct App {
     top: usize,
     body_rows: usize,
     max_top: usize,
-    /// The time the title bar last showed, to repaint on a new minute.
     /// The provider-has-no-effort note was shown this run.
     effort_noted: bool,
+    /// The time the title bar last showed, to repaint on a new minute.
     clock_shown: String,
+    /// The title last written to the terminal, so an unchanged frame writes none.
+    term_title: String,
     unseen: usize,
     pending: Option<Pending>,
     /// The theme active when the theme picker opened, while it previews.
@@ -2690,6 +2692,7 @@ impl App {
             max_top: 0,
             effort_noted: false,
             clock_shown: String::new(),
+            term_title: String::new(),
             unseen: 0,
             pending: None,
             preview_from: None,
@@ -3087,6 +3090,18 @@ impl App {
         } else {
             "imp".into()
         }
+    }
+
+    /// The OSC 0 sequence for the terminal title, only when it changed.
+    fn title_seq(&mut self) -> Option<String> {
+        let name = self.session_name();
+        let title = if name == "imp" { name } else { format!("{name} · imp") };
+        let title: String = title.chars().filter(|c| !c.is_control()).take(80).collect();
+        if title == self.term_title {
+            return None;
+        }
+        self.term_title = title.clone();
+        Some(format!("\x1b]0;{title}\x1b\\"))
     }
 
     /// The title as a rule: `── fix the parser ───────── 20:51 ─`, no background.
@@ -6560,6 +6575,9 @@ impl App {
         }
         let screen = self.frame_changes(cols, rows);
         let mut out = std::io::stdout();
+        if let Some(seq) = self.title_seq() {
+            out.write_all(seq.as_bytes()).ok();
+        }
         out.write_all(screen.as_bytes()).ok();
         if let Some(seq) = self.osc52.take() {
             out.write_all(seq.as_bytes()).ok();

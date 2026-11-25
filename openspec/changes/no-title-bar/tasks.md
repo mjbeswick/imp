@@ -2,7 +2,7 @@
 
 ## 1. Terminal title
 
-- [ ] 1.1 `session_name` sets the terminal title as `imp` or `<title> · imp`, written only when it changes, with control characters stripped and 80 characters kept; tests
+- [x] 1.1 `session_name` sets the terminal title as `imp` or `<title> · imp`, written only when it changes, with control characters stripped and 80 characters kept; tests
 
 ## 2. Free the row
 

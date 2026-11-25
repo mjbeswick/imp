@@ -5737,6 +5737,43 @@ fn the_title_bar_names_the_session_and_the_time() {
 }
 
 #[test]
+fn the_terminal_title_names_the_session() {
+    let mut a = app();
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;imp\x1b\\"));
+    assert_eq!(a.title_seq(), None, "an unchanged title was written again");
+    a.push(Role::User, "fix the parser");
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;fix the parser · imp\x1b\\"));
+    let (tx, _rx) = channel();
+    a.run_command("rename fix sync", &tx);
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;fix sync · imp\x1b\\"));
+}
+
+#[test]
+fn a_session_switch_retitles_the_terminal() {
+    let mut a = multi_app("title-switch");
+    let (tx, _rx) = channel();
+    a.push(Role::User, "first task");
+    a.title_seq();
+    a.run_command("new", &tx);
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;imp\x1b\\"), "the new session kept the old title");
+    a.handle_key(Key::Ctrl('n'), &tx);
+    assert_eq!(a.title_seq().as_deref(), Some("\x1b]0;first task · imp\x1b\\"), "the switch kept the old title");
+}
+
+#[test]
+fn the_terminal_title_drops_controls_and_fits() {
+    let mut a = app();
+    a.title = format!("\u{1b}\u{7}{}", "x".repeat(100));
+    let seq = a.title_seq().expect("no title");
+    let body = seq
+        .strip_prefix("\x1b]0;")
+        .and_then(|s| s.strip_suffix("\x1b\\"))
+        .expect("not an OSC 0 title");
+    assert!(!body.chars().any(char::is_control), "{body:?}");
+    assert_eq!(body.chars().count(), 80, "{body:?}");
+}
+
+#[test]
 fn effort_is_set_shown_and_noted_once() {
     let mut a = app();
     let (tx, rx) = channel();
