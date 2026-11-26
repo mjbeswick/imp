@@ -7145,7 +7145,7 @@ impl App {
         while lines.len() < window {
             lines.push((String::new(), usize::MAX, false));
         }
-        let height = window + 2;
+        let height = window + 3;
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
@@ -7205,6 +7205,8 @@ impl App {
             };
             block.push(format!("{row} "));
         }
+        // A blank padding row below the item rows, painted with the panel.
+        block.push(" ".repeat(width));
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{}", y + i, x, self.palette.panel(line)));

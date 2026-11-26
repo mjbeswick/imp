@@ -5353,7 +5353,7 @@ fn the_box_height_is_fixed_for_any_item_count() {
     let short = drawn_rows(&mut few, 100, 30);
     let long = drawn_rows(&mut many, 100, 30);
     assert_eq!(short, long, "the box changed height with the item count");
-    assert_eq!(long, 19, "one padding row, one title row and seventeen item rows");
+    assert_eq!(long, 20, "padding, title row, seventeen item rows and padding");
 }
 
 #[test]
@@ -5451,6 +5451,23 @@ fn the_box_has_top_padding_and_no_left_margin() {
         .map(|i| start + pad.len() + i)
         .expect("no title row after the padding");
     assert!(strip(&out[start + pad.len()..end]).trim().is_empty(), "the padding row is not blank");
+}
+
+#[test]
+fn the_box_has_bottom_padding() {
+    let mut a = app();
+    open_many(&mut a, 40);
+    a.frame(100, 30);
+    // A 72-column box on 100 columns starts at column 15; the window is 17 rows.
+    let (out, _, title_row, _) = a.overlay(100, 30).expect("overlay");
+    let last_item = title_row + 17;
+    let pad = format!("\x1b[{};15H", last_item + 1);
+    let start = out.find(&pad).expect("no padding row below the items");
+    let end = match out[start + pad.len()..].find("\x1b[") {
+        Some(i) => start + pad.len() + i,
+        None => out.len(),
+    };
+    assert!(strip(&out[start + pad.len()..end]).trim().is_empty(), "the bottom row is not blank");
 }
 
 #[test]
