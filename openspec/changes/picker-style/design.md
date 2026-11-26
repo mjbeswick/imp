@@ -87,3 +87,12 @@ Expected change: a few hundred bytes of code, roughly flat. `./scripts/size.sh` 
     height becomes the window plus three: padding, title, items, padding. The padding row is painted with the
     panel like the top one. Judgement call: one row is the same measure as the top padding. Cost if wrong: one
     line in the frame.
+
+## Gap under the input and right padding (added after the bottom padding)
+
+11. **Gap and right edge.** "Space under input" is read as the blank row between the title row (the filter,
+    the input of the picker) and the first item, matching the reference image. The one-column right margin
+    goes: the content fills the full box width. The gap adds one row, so the height is the window plus four,
+    and the window is capped at the rows less five so the box still fits. Judgement call: the reading of
+    "under input" as the title-row gap rather than a gap below the box, which would sit above the composer.
+    Cost if wrong: one row moves.

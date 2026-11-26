@@ -32,7 +32,7 @@ The system SHALL draw the picker as a centred block over the transcript with no 
 
 ### Requirement: The picker height follows the terminal
 
-The system SHALL give the picker a fixed height of one blank padding row above the title row, the title row, the item rows, and one blank padding row below the item rows, the item rows being three fifths of the terminal rows less one, at least five, at most twenty, and at most the terminal rows less four, SHALL keep that height for any number of items by leaving spare rows blank, and SHALL keep the highlighted row in the window as the height changes.
+The system SHALL give the picker a fixed height, set by the terminal: the item rows are three fifths of the terminal rows less one, at least five, at most twenty, and at most the terminal rows less five, SHALL keep that height for any number of items by leaving spare rows blank, and SHALL keep the highlighted row in the window as the height changes.
 
 #### Scenario: Long list
 - **WHEN** forty profiles are available in a 30-row terminal
@@ -45,6 +45,14 @@ The system SHALL give the picker a fixed height of one blank padding row above t
 #### Scenario: Resize
 - **WHEN** the terminal grows from 30 rows to 40 rows
 - **THEN** the box grows to twenty item rows, the upper bound
+
+### Requirement: The picker has padding and a gap
+
+The system SHALL draw one blank padding row above the title row, one blank row between the title row and the first item, and one blank padding row below the last item row, SHALL fill the box to its full width with no right margin, and SHALL paint the padding with the panel background.
+
+#### Scenario: Padding and gap
+- **WHEN** the picker opens with forty items in a 30-row terminal
+- **THEN** the title row has a blank row above it and a blank row below it, the first item follows a blank row, and the item rows reach the box's right edge
 
 ### Requirement: The picker title row carries its labels
 
