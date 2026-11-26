@@ -34,5 +34,5 @@
 
 - [x] 7.1 Update tests that assert the `> ` glyph, the status line text, the command picker title and footer, and the rule above the input.
 - [x] 7.2 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
-- [ ] 7.3 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 7.3 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
 - [ ] 7.4 Check the composer, status bar, and menu in a real terminal against the reference, and record the result in design.md.
