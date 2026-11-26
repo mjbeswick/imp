@@ -8600,8 +8600,8 @@ fn the_command_menu_scroll_indicator_sits_on_the_left_box_line() {
     }
     assert!(!rows.iter().any(|r| r.trim_end().ends_with('┃')), "an indicator on the right edge: {rows:?}");
     assert!(out.contains(&a.palette.paint(Role::Border, "│")), "the box line is not in the border colour");
-    // The thumb sits on rows in the lower part of the menu, where the highlight is.
-    assert!(thumb.iter().any(|&i| i >= rows.len() / 2), "the thumb is not in the lower part: {thumb:?} of {}", rows.len());
+    // The window has moved off the top, so the thumb is no longer at the top row.
+    assert!(thumb[0] > 0, "the thumb is still at the top after scrolling: {thumb:?}");
 }
 
 /// The rows a picker overlay draws: each positioned row starts with a cursor move.

@@ -7776,7 +7776,7 @@ impl App {
     }
 
     /// The command menu: the list alone, at full width, on the rows just
-    /// above the composer. It has no title row, no footer and no border. Its
+    /// above the composer. It has no title row, no footer and no top or bottom edge. Its
     /// filter is the composer's own text, so it takes no row here, and it
     /// leaves the cursor where the composer has it.
     fn command_menu(&self, picker: &Picker, cols: usize, rows: usize) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
@@ -7787,7 +7787,7 @@ impl App {
         if matches.is_empty() {
             return None;
         }
-        // The menu's rails take a column at each edge, so the rows keep the inside.
+        // The box lines take a column at each edge, so the rows keep the inside.
         // `picker_lines` takes a line budget: the menu may show up to PICK_ROWS
         // lines, and the highlighted row wraps its description, as the picker's rows do.
         let inner = cols.saturating_sub(2);
@@ -7797,10 +7797,24 @@ impl App {
         let height = lines.len().min(body);
         let y = body + 1 - height;
         let column = desc_column(picker, inner);
-        let rail = self.palette.paint(Role::Thinking, "▏");
+        // Each row is boxed by a `│` at each edge in the border colour; the menu
+        // has no top or bottom edge. When the list scrolls, the scroll thumb is
+        // drawn over the left line on its rows, and the right line stays `│`.
+        let edge = self.palette.paint(Role::Border, "│");
+        let thumb_glyph = self.palette.paint(Role::Thinking, "┃");
+        let total = matches.len();
+        let drawn = lines.iter().take(height).fold((0, None), |(n, last), (_, at, _)| if last == Some(*at) { (n, last) } else { (n + 1, Some(*at)) }).0;
+        // The thumb shows only once the window has scrolled off the top of the list.
+        let (thumb_top, thumb_len) = if total > drawn && picker.offset > 0 {
+            let len = (height * drawn / total).max(1);
+            (((height - len) * picker.offset.min(total - drawn)) / (total - drawn), len)
+        } else {
+            (0, 0)
+        };
         let mut out = String::new();
         let mut targets = Vec::new();
         for (row, (text, at, selected)) in lines.iter().take(height).enumerate() {
+            let left = if (thumb_top..thumb_top + thumb_len).contains(&row) { &thumb_glyph } else { &edge };
             // The description is muted, except on the highlighted row, where the
             // name and the description take the accent on the select background.
             let text_row = match (column, *selected) {
@@ -7813,7 +7827,7 @@ impl App {
                 (None, false) => self.boxed(text, inner, false),
             };
             let state = matches.get(*at).map_or("", |&i| picker.items[i].desc.as_str());
-            let line = format!("{rail}{}{rail}", styled_state(state, text_row));
+            let line = format!("{left}{}{edge}", styled_state(state, text_row));
             let line = if *selected { self.palette.select_styled(&line) } else { self.fill(&line, cols) };
             out.push_str(&format!("\x1b[{};1H{line}", y + row));
             targets.push((y + row, 1, cols, Target::Row(*at)));
