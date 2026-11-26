@@ -73,3 +73,10 @@ Expected change: a few hundred bytes of code, roughly flat. `./scripts/size.sh` 
    A wrapped description takes a row from the bottom of the window, so the box never grows. Judgement call:
    the three-fifths figure and the bounds of five and twenty are chosen to match the reference image.
    Cost if wrong: the box may be taller or shorter than the user expects; the formula is one function.
+
+## Padding (added after the fixed height)
+
+9. **Padding.** The box loses its one-column left margin and gains one blank row above the title row. The
+   box keeps its width: the inner width becomes the box width less one, and the one-column right margin
+   remains. Judgement call: the top padding is painted with the panel background, so it reads as part of
+   the box. Cost if wrong: the padding can be removed by dropping one line in the frame.

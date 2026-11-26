@@ -38,3 +38,9 @@
 - [x] 7.1 Test: the box height is the same for three items and for forty in a 30-row terminal; the window is seventeen rows at 30 rows and twenty at 40 rows; a short screen cuts the highlighted description. Confirm the height test fails before the change.
 - [x] 7.2 Implement: the item rows follow the terminal height, the list fills them and pads the rest with blank rows, and the window scrolls to keep the highlight visible (`src/tui.rs`).
 - [x] 7.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+
+## 8. Padding
+
+- [ ] 8.1 Test: the title row and item rows start at the box's left edge with no padding column, and a blank padding row sits above the title row; the box keeps its width and the filter cursor follows the new column. Confirm the layout test fails before the change.
+- [ ] 8.2 Implement: drop the left margin, add one blank row above the title row, and move the title, rows, cursor, and click targets to match (`src/tui.rs`).
+- [ ] 8.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
