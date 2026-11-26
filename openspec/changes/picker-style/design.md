@@ -36,8 +36,9 @@ The picker frame is drawn in `src/tui.rs`. Citations are to `main` at `49c1b217`
 5. **Key hints.** Remove the bottom hint line. The title row shows `esc`. Row-action keys (session rename,
    and similar) sit before `esc`. Judgement call: `Enter choose` and `Tab/→ open` are no longer shown on
    screen. Cost if wrong: first-time users need to learn the keys; the mockup omits them.
-6. **Clicks.** The `esc` text in the title row is the only footer-style click target. Clicking it closes the
-   picker. Row clicks are unchanged.
+6. **Clicks.** The keys in the title row are click targets, as the footer keys were: `esc` closes the picker,
+   and a row-action key replays its key. Row clicks are unchanged. The old footer hints (`Enter choose`,
+   `Tab/→ open`, `← up`) are no longer drawn and are no longer click targets.
 
 ## Risks and assumptions
 
