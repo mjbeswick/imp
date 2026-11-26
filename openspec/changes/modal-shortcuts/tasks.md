@@ -6,22 +6,22 @@
 
 ## 1. Tests first
 
-- [ ] 1.1 Test: a picker with row actions draws a footer bar with the first action at the left and the rest at the right, in declaration order, and draws no other key-hint text. Confirm it fails before the change.
-- [ ] 1.2 Test: a picker with no row actions draws no footer bar and keeps its height.
-- [ ] 1.3 Test: with a non-empty filter, every letter types into the filter; Ctrl+R renames the highlighted session when the picker is open.
-- [ ] 1.4 Test: with a picker open, Ctrl+D runs the delete action and does not quit; with no picker open and the composer empty, Ctrl+D still quits.
+- [x] 1.1 Test: a picker with row actions draws a footer bar with the first action at the left and the rest at the right, in declaration order, and draws no other key-hint text. Confirm it fails before the change.
+- [x] 1.2 Test: a picker with no row actions draws no footer bar and keeps its height.
+- [x] 1.3 Test: with a non-empty filter, every letter types into the filter; Ctrl+R renames the highlighted session when the picker is open.
+- [x] 1.4 Test: with a picker open, Ctrl+D runs the delete action and does not quit; with no picker open and the composer empty, Ctrl+D still quits.
 - [ ] 1.5 Test: the session picker groups sessions under `Today` and earlier full dates; the highlight skips headings; a heading takes one window row.
 - [ ] 1.6 Test: the highlighted session's directory is in the right column, cut from the left; other rows have no right column.
 - [ ] 1.7 Test: Ctrl+A filters to the current directory and a second Ctrl+A clears it, with the typed filter unchanged.
 
 ## 2. Row actions
 
-- [ ] 2.1 Implement the Ctrl-key row action table in `Picker` and its key routing, so an open picker takes Ctrl+D and Ctrl+R before the global keys (`src/tui.rs`).
-- [ ] 2.2 Move the session, provider, revoke, add, and allow actions to their Ctrl keys (design.md table).
+- [x] 2.1 Implement the Ctrl-key row action table in `Picker` and its key routing, so an open picker takes Ctrl+D and Ctrl+R before the global keys (`src/tui.rs`).
+- [x] 2.2 Move the session, provider, revoke, add, and allow actions to their Ctrl keys (design.md table).
 
 ## 3. Footer bar
 
-- [ ] 3.1 Draw the footer bar at the bottom of the box with the panel fill, the first action at the left and the rest at the right, and remove the footer hint text (`src/tui.rs`).
+- [x] 3.1 Draw the footer bar at the bottom of the box with the panel fill, the first action at the left and the rest at the right, and remove the footer hint text (`src/tui.rs`).
 
 ## 4. Sessions
 
