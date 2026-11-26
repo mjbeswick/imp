@@ -2154,7 +2154,7 @@ fn is_heading(item: &PickItem) -> bool {
 }
 
 /// The session picker's row actions, in footer order: the first sits at the left.
-const SESSION_ACTIONS: &[(char, &'static str)] = &[('a', "current directory"), ('n', "new"), ('d', "delete"), ('r', "rename")];
+const SESSION_ACTIONS: &[(char, &'static str)] = &[('a', "current directory"), ('n', "new"), ('x', "delete"), ('r', "rename")];
 
 /// The one picker: a title, a filter, a scrolling list, and a selection.
 struct Picker {
@@ -3796,6 +3796,14 @@ impl App {
             }
             return;
         }
+        // Ctrl+D exits at once from anywhere, with or without a draft, a picker,
+        // or a confirmation open. The draft is discarded; there is no second press.
+        if matches!(key, Key::Ctrl('d')) {
+            self.input.clear();
+            self.cursor = 0;
+            self.quit = true;
+            return;
+        }
         if let Key::Paste(text) = &key {
             return self.paste(text.clone(), tx);
         }
@@ -3871,7 +3879,6 @@ impl App {
                 self.dirty = true;
             }
             Key::Ctrl('c') => self.quit = true,
-            Key::Ctrl('d') if self.input.is_empty() => self.quit = true,
             Key::Ctrl('n') if self.panes.len() > 1 => {
                 let n = self.panes.len();
                 self.show((self.at + 1) % n);
@@ -4294,7 +4301,7 @@ impl App {
                 desc: mark_current(name == self.cfg.active_name, &about),
                 label: name.clone(),
                 value: name.clone(),
-                actions: vec![('u', "use"), ('e', "configure"), ('d', "delete"), ('n', "new")],
+                actions: vec![('u', "use"), ('e', "configure"), ('x', "delete"), ('n', "new")],
             });
         }
         for profile in &self.cfg.named {
@@ -4305,7 +4312,7 @@ impl App {
                     profile.name == self.cfg.active_name,
                     &format!("{}  {}  {}", profile.base, profile.model, profile.dialect),
                 ),
-                actions: vec![('u', "use"), ('e', "configure"), ('d', "delete"), ('n', "new")],
+                actions: vec![('u', "use"), ('e', "configure"), ('x', "delete"), ('n', "new")],
             });
         }
         items

@@ -63,7 +63,7 @@ fn the_wheel_scrolls_the_transcript_and_moves_a_picker() {
 fn a_click_does_not_answer_a_prompt() {
     let mut a = picker();
     let (tx, rx) = channel();
-    a.handle_key(Key::Ctrl('d'), &tx);
+    a.handle_key(Key::Ctrl('x'), &tx);
     a.handle_key(Key::Unknown, &tx);
     a.handle_key(Key::WheelDown, &tx);
     assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })), "the question closed");
@@ -1310,18 +1310,24 @@ fn a_woken_session_out_of_view_joins_the_queue() {
 }
 
 #[test]
-fn ctrl_d_keeps_a_draft() {
+fn ctrl_d_exits_with_a_draft_and_discards_it() {
     let mut a = app();
     let (tx, _cmds) = channel();
     a.input = "half a thought".into();
     a.cursor = a.input.len();
     a.handle_key(Key::Ctrl('d'), &tx);
-    assert!(!a.quit, "Ctrl+D quit with a draft");
-    assert_eq!(a.input, "half a thought");
-    a.input.clear();
-    a.cursor = 0;
+    assert!(a.quit, "Ctrl+D did not exit with a draft");
+    assert!(a.input.is_empty(), "the draft was kept");
+}
+
+#[test]
+fn ctrl_d_quits_from_a_command_confirmation() {
+    let (mut a, _answers) = inbox_app("queue");
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('o'), &tx);
+    assert!(matches!(a.pending, Some(Pending::Confirm { .. })), "no confirmation is open");
     a.handle_key(Key::Ctrl('d'), &tx);
-    assert!(a.quit, "Ctrl+D did not quit from an empty draft");
+    assert!(a.quit, "Ctrl+D did not exit from a confirmation");
 }
 
 #[test]
@@ -4923,7 +4929,7 @@ fn picker_new_session_key() {
 fn picker_delete_needs_confirmation() {
     let mut a = picker();
     let (tx, rx) = channel();
-    a.handle_key(Key::Ctrl('d'), &tx);
+    a.handle_key(Key::Ctrl('x'), &tx);
     assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })));
     let frame = strip(&a.frame(100, 30));
     assert!(frame.contains("delete abc123? y/N"), "{frame}");
@@ -5004,7 +5010,7 @@ fn the_footer_names_the_row_actions() {
     assert!(frame.contains("esc"), "{frame}");
     assert!(frame.contains("new ctrl+n"), "{frame}");
     assert!(frame.contains("rename ctrl+r"), "{frame}");
-    assert!(frame.contains("delete ctrl+d"), "{frame}");
+    assert!(frame.contains("delete ctrl+x"), "{frame}");
 }
 
 #[test]
@@ -6967,14 +6973,14 @@ fn d_deletes_a_named_provider_and_refuses_a_built_in() {
     // A built-in is refused, and nothing changes.
     a.run_command("provider", &tx);
     a.handle_key(Key::Down, &tx); // OpenAI
-    a.handle_key(Key::Ctrl('d'), &tx);
+    a.handle_key(Key::Ctrl('x'), &tx);
     assert_eq!(a.cfg.named.len(), 1, "a built-in was deleted");
     // The named provider is deleted from the config.
     a.run_command("provider", &tx);
     for _ in 0..6 {
         a.handle_key(Key::Down, &tx); // past the six built-ins, to "local"
     }
-    a.handle_key(Key::Ctrl('d'), &tx);
+    a.handle_key(Key::Ctrl('x'), &tx);
     assert!(a.cfg.named.is_empty(), "the named provider was not deleted");
     assert!(!std::fs::read_to_string(&config).unwrap().contains("local"), "deleted provider still in the file");
 }
@@ -7898,8 +7904,8 @@ fn the_footer_bar_lists_the_session_actions_left_then_right() {
     let at = |s: &str| footer.find(s).unwrap_or_else(|| panic!("{s} missing from footer {footer:?}"));
     assert!(footer.trim_start().starts_with("current directory ctrl+a"), "{footer:?}");
     assert!(at("current directory ctrl+a") < at("new ctrl+n"), "{footer:?}");
-    assert!(at("new ctrl+n") < at("delete ctrl+d"), "{footer:?}");
-    assert!(at("delete ctrl+d") < at("rename ctrl+r"), "{footer:?}");
+    assert!(at("new ctrl+n") < at("delete ctrl+x"), "{footer:?}");
+    assert!(at("delete ctrl+x") < at("rename ctrl+r"), "{footer:?}");
     assert!(footer.trim_end().ends_with("rename ctrl+r"), "{footer:?}");
     let title = &rows[1];
     assert!(title.contains("esc") && !title.contains("ctrl+"), "key hints left in the title row: {title:?}");
@@ -7947,12 +7953,13 @@ fn with_a_filter_every_letter_types_and_ctrl_r_still_renames() {
 }
 
 #[test]
-fn ctrl_d_deletes_in_an_open_picker_and_quits_without_one() {
+fn ctrl_d_quits_from_an_open_picker_without_a_row_action() {
     let mut a = picker();
-    let (tx, _rx) = channel();
+    let (tx, rx) = channel();
     a.handle_key(Key::Ctrl('d'), &tx);
-    assert!(!a.quit, "an open picker quit the application");
-    assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })), "ctrl+d did not delete");
+    assert!(a.quit, "Ctrl+D did not exit from an open picker");
+    assert!(!matches!(a.pending, Some(Pending::ConfirmDelete { .. })), "Ctrl+D ran the delete action");
+    assert!(rx.try_recv().is_err(), "Ctrl+D sent a command");
 
     let mut b = app();
     b.handle_key(Key::Ctrl('d'), &tx);

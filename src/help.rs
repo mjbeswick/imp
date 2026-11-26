@@ -7,7 +7,7 @@ pub const KEYS: &[(&str, &str)] = &[
     ("Shift+Enter, Alt+Enter, Ctrl+J", "newline"),
     ("Esc", "stop the turn or close a picker"),
     ("Ctrl+C", "stop the turn; idle, twice to quit (the draft stays)"),
-    ("Ctrl+D", "quit, from an empty draft"),
+    ("Ctrl+D", "quit, from anywhere"),
     ("Tab", "complete a command"),
     ("Shift+Tab", "next agent, with or without a draft"),
     ("Ctrl+B", "next mode: normal, strict, yolo"),
