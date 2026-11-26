@@ -648,8 +648,7 @@ impl Palette {
             Role::Border => Slot::Border,
             Role::Code => Slot::Code,
             Role::Link => Slot::Link,
-            // Scaffold: the warning slot is wired in the green step.
-            Role::Warning => Slot::Accent,
+            Role::Warning => Slot::Warning,
         };
         let [r, g, b] = self.theme.rgb(slot);
         let fallback = crate::theme::to_256([r, g, b]);
@@ -8052,13 +8051,22 @@ impl App {
         self.block(input, cols)
     }
 
-    /// The composer block: a blank row, the input rows, a blank row, then the footer.
+    /// The composer block: a blank row, the input rows, a blank row, then the
+    /// footer. The accent bar runs down every row of the block, the blank ones
+    /// and the footer too, and the footer starts in the input's column.
     fn block(&self, input: Vec<String>, cols: usize) -> Vec<String> {
-        let mut rows = vec![self.fill("", cols)];
+        let mut rows = vec![self.bar_row("", cols)];
         rows.extend(input);
-        rows.push(self.fill("", cols));
-        rows.push(self.fill(&self.footer(cols), cols));
+        rows.push(self.bar_row("", cols));
+        rows.push(self.bar_row(&self.footer(cols.saturating_sub(self.prompt_width())), cols));
         rows
+    }
+
+    /// One row of the block outside the input: the accent bar and its gap, then
+    /// the painted text, on the panel fill.
+    fn bar_row(&self, painted: &str, cols: usize) -> String {
+        let bar = self.palette.paint(if self.yolo() { Role::Error } else { Role::Info }, "▌ ");
+        self.fill(&format!("{bar}{painted}"), cols)
     }
 
     /// The accent bar at the input's left edge: red in yolo, where the mode
@@ -8084,6 +8092,7 @@ impl App {
     /// provider, and the effort. A shell draft names the shell in place of the agent.
     fn footer(&self, cols: usize) -> String {
         let agent = if self.input.starts_with('!') { "shell".to_string() } else { self.next_agent().to_string() };
+        let agent = capitalise(&agent);
         let mode = self.cfg.live_permissions().as_str();
         let model = self.model_label();
         let provider = format!("{:?}", self.cfg.provider).to_lowercase();
@@ -8099,7 +8108,7 @@ impl App {
             self.palette.paint(Role::Assistant, mode),
             self.palette.paint(Role::Assistant, &model),
             self.palette.paint(Role::Thinking, &provider),
-            self.palette.paint(Role::Info, &effort),
+            self.palette.paint(Role::Warning, &effort),
         )
     }
 
@@ -8539,6 +8548,12 @@ fn fit_path(path: &str, room: usize) -> Option<String> {
         }
     }
     (room >= 8).then(|| tail(last, room))
+}
+
+/// The first letter in upper case: `build` shows as `Build`.
+fn capitalise(name: &str) -> String {
+    let mut chars = name.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
 /// The draft as drawn rows: byte ranges in `text`, broken at the last space

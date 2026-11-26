@@ -643,12 +643,12 @@ fn the_prompt_names_the_agent_and_the_status_line_the_mode() {
     let rows: Vec<String> = strip(&a.frame(60, 12)).split("\r\n").map(String::from).collect();
     let first = rows.iter().position(|r| r.starts_with("▌ xxx")).expect("no input row");
     assert!(rows[first + 1].starts_with("▌ x"), "the next row is not aligned: {rows:?}");
-    assert!(rows.iter().any(|r| r.starts_with("build normal ·")), "the footer names no agent: {rows:?}");
+    assert!(rows.iter().any(|r| r.starts_with("▌ Build normal ·")), "the footer names no agent: {rows:?}");
     a.agent_next = Some("plan".into());
-    assert!(strip(&a.frame(60, 12)).contains("plan normal ·"), "the footer names no next agent");
+    assert!(strip(&a.frame(60, 12)).contains("Plan normal ·"), "the footer names no next agent");
     assert!(a.status_line(80).starts_with("0 (0%)"), "{}", a.status_line(80));
     a.cfg.set_permissions(crate::config::Permissions::Strict);
-    assert!(strip(&a.frame(60, 12)).contains("plan strict ·"), "the footer does not show the mode");
+    assert!(strip(&a.frame(60, 12)).contains("Plan strict ·"), "the footer does not show the mode");
     assert!(a.status_line(54).chars().count() <= 54);
 }
 
@@ -2133,7 +2133,7 @@ fn yolo_draws_no_rule_and_names_the_mode_in_the_footer() {
     a.push(Role::User, "first");
     let frame = strip(&a.frame(80, 24));
     assert!(!frame.contains("────"), "a rule in yolo: {frame:?}");
-    assert!(frame.contains("default yolo ·"), "the footer does not show yolo: {frame:?}");
+    assert!(frame.contains("Default yolo ·"), "the footer does not show yolo: {frame:?}");
 }
 
 #[test]
@@ -2222,7 +2222,7 @@ fn yolo_paints_the_bar_in_the_error_colour() {
     // Only the footer names it; no colour appears.
     let after = plain.frame(80, 20);
     assert!(!after.contains("38;"), "colour with colour off");
-    assert!(strip(&after).contains("default yolo ·"), "{after:?}");
+    assert!(strip(&after).contains("Default yolo ·"), "{after:?}");
 }
 
 #[test]
@@ -6260,7 +6260,7 @@ fn a_shell_draft_names_the_shell_in_the_footer() {
     a.cursor = 3;
     let out = a.frame(60, 12);
     assert!(out.contains("▌ ls"), "the input lost its left edge: {out:?}");
-    assert!(out.contains("shell normal ·"), "the footer names no shell: {out:?}");
+    assert!(out.contains("Shell normal ·"), "the footer names no shell: {out:?}");
     assert!(out.contains("shell · local"), "no shell status: {out:?}");
 }
 
@@ -6800,7 +6800,7 @@ fn the_status_line_names_auto_and_not_normal() {
     let mut a = app();
     a.cfg.set_permissions(crate::config::Permissions::Auto);
     assert!(a.status_line(100).starts_with("0 (0%)"), "{}", a.status_line(100));
-    assert!(strip(&a.frame(100, 20)).contains("default auto ·"), "the footer does not show auto");
+    assert!(strip(&a.frame(100, 20)).contains("Default auto ·"), "the footer does not show auto");
     a.cfg.set_permissions(crate::config::Permissions::Normal);
     assert!(!strip(&a.frame(100, 20)).contains("auto ·"), "auto stayed in the footer");
 }
@@ -8395,8 +8395,8 @@ fn the_composer_is_a_filled_block_with_an_accent_bar_and_no_glyph() {
     let at = rows.iter().position(|r| strip(r).starts_with("▌ hello")).expect("no accent bar row");
     assert!(rows[at].contains(&a.palette.paint(Role::Info, "▌ ")), "{:?}", rows[at]);
     assert!(rows[at].contains(&a.palette.panel_bg()), "no panel fill: {:?}", rows[at]);
-    assert!(strip(rows[at - 1]).trim().is_empty(), "no blank row above: {frame:?}");
-    assert!(strip(rows[at + 1]).trim().is_empty(), "no blank row below: {frame:?}");
+    assert_eq!(strip(rows[at - 1]).trim(), "▌", "no blank row above: {frame:?}");
+    assert_eq!(strip(rows[at + 1]).trim(), "▌", "no blank row below: {frame:?}");
     assert!(!strip(&frame).contains("> "), "a prompt glyph is drawn: {frame:?}");
 }
 
@@ -8405,13 +8405,13 @@ fn the_footer_names_the_agent_mode_model_provider_and_effort() {
     let mut a = colour_app();
     a.agent = "build".into();
     let frame = a.frame(90, 14);
-    assert!(strip(&frame).contains("build normal · deepseek-flash deepseek · default"), "{frame:?}");
-    assert!(frame.contains(&a.palette.paint(Role::Info, "build")), "agent not accent: {frame:?}");
+    assert!(strip(&frame).contains("Build normal · deepseek-flash deepseek · default"), "{frame:?}");
+    assert!(frame.contains(&a.palette.paint(Role::Info, "Build")), "agent not accent: {frame:?}");
     assert!(frame.contains(&a.palette.paint(Role::Thinking, "deepseek")), "provider not muted: {frame:?}");
-    assert!(frame.contains(&a.palette.paint(Role::Info, "default")), "effort not accent: {frame:?}");
+    assert!(frame.contains(&a.palette.paint(Role::Warning, "default")), "effort not in the warning colour: {frame:?}");
     a.cfg.effort = Some("high".into());
     a.cfg.set_permissions(crate::config::Permissions::Strict);
-    assert!(strip(&a.frame(90, 14)).contains("build strict · deepseek-flash deepseek · high"));
+    assert!(strip(&a.frame(90, 14)).contains("Build strict · deepseek-flash deepseek · high"));
     a.status.served = "deepseek-flash-2026-11".into();
     assert!(strip(&a.frame(90, 14)).contains("deepseek-flash (deepseek-flash-2026-11) deepseek"));
     // A shell draft names the shell in the footer and keeps the input at the edge.
@@ -8420,7 +8420,7 @@ fn the_footer_names_the_agent_mode_model_provider_and_effort() {
     a.cursor = a.input.len();
     let shell = strip(&a.frame(90, 14));
     assert!(shell.contains("▌ ls"), "the input does not keep its left edge: {shell:?}");
-    assert!(shell.contains("shell strict · deepseek-flash"), "{shell:?}");
+    assert!(shell.contains("Shell strict · deepseek-flash"), "{shell:?}");
 }
 
 #[test]

@@ -17,7 +17,13 @@ pub enum Slot {
     Link,
     /// A background, for the highlighted picker row.
     Select,
+    /// Caution, such as the reasoning effort. Shared by every theme, so it
+    /// reads as amber whichever palette is chosen.
+    Warning,
 }
+
+/// The amber drawn for `Slot::Warning`.
+pub const WARNING: [u8; 3] = [0xe0, 0xaf, 0x68];
 
 pub struct Theme {
     pub name: &'static str,
@@ -27,7 +33,10 @@ pub struct Theme {
 
 impl Theme {
     pub fn rgb(&self, slot: Slot) -> [u8; 3] {
-        self.rgb[slot as usize]
+        match slot {
+            Slot::Warning => WARNING,
+            _ => self.rgb[slot as usize],
+        }
     }
 }
 
