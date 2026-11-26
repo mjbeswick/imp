@@ -7153,9 +7153,8 @@ impl App {
         if let Some(row) = running {
             composer.insert(0, row);
         }
-        // Narrow screens give the directory a row of its own under the status.
-        let narrow = cols < NARROW_COLS;
-        let status_rows = 1 + usize::from(narrow);
+        // The status bar is one row at every width.
+        let status_rows = 1;
         let body_rows = rows.saturating_sub(status_rows + composer.len()).max(1);
 
         let markdown = self.cfg.links.supported();
@@ -7307,10 +7306,6 @@ impl App {
             }
         }
         screen.push(self.paint_status(cols));
-        if narrow {
-            let dir = fit_path(&tilde(&self.root), cols).unwrap_or_default();
-            screen.push(self.palette.paint(Role::Thinking, &dir));
-        }
 
         let mut tail = String::new();
         self.fit_picker(cols, rows);
@@ -8296,15 +8291,7 @@ impl App {
     }
 
     fn paint_status(&self, cols: usize) -> String {
-        // Before the first message, the status line names the slash menu first.
-        const HINT: &str = "/ for commands · ";
-        let status = if self.entries.is_empty() {
-            let rest = cols.saturating_sub(HINT.chars().count());
-            // Too narrow for the status after it: the hint alone.
-            if rest >= 20 { format!("{HINT}{}", self.status_line(rest)) } else { fit("/ for commands", cols) }
-        } else {
-            self.status_line(cols)
-        };
+        let status = self.status_line(cols);
         let mut painted = self.palette.paint(Role::Thinking, &status);
         // What `paint` put ahead of the text: the muted colour, to resume after a count.
         let muted = painted.strip_suffix(&format!("{status}\x1b[0m")).unwrap_or("").to_string();
@@ -8344,7 +8331,13 @@ impl App {
         if self.input.starts_with('!') && !self.status.streaming {
             return fit(" shell · local · not sent to the model", cols);
         }
+        // The goal follows the directory; the rest of the left part keeps its order.
         let mut left: Vec<String> = Vec::new();
+        match &self.status.goal {
+            Some((_, round, rounds)) if self.status.goal_paused => left.push(format!("goal {round}/{rounds} · paused")),
+            Some((_, round, rounds)) => left.push(format!("goal {round}/{rounds}")),
+            None => {}
+        }
         if self.panes.len() > 1 {
             left.push(format!("{}/{}", self.at + 1, self.panes.len()));
         }
@@ -8362,11 +8355,6 @@ impl App {
         }
         if self.cfg.thinking {
             left.push("think".into());
-        }
-        match &self.status.goal {
-            Some((_, round, rounds)) if self.status.goal_paused => left.push(format!("goal {round}/{rounds} · paused")),
-            Some((_, round, rounds)) => left.push(format!("goal {round}/{rounds}")),
-            None => {}
         }
         if self.queue_at.is_some() && self.status.streaming {
             left.push("paused · editing queue".into());
@@ -8397,28 +8385,31 @@ impl App {
             }
         }
         right.push("ctrl+p commands".into());
-        let body = [left.join(" · "), right.join(" · ")]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" · ");
-        // Narrow screens give the directory its own row, so the bar keeps only the body.
-        if cols < NARROW_COLS {
-            return fit(&body, cols);
+        // The directory sits at the left with two spaces after it. It takes what
+        // is left once the left part and the figures have their room, and it is
+        // left out rather than cut the figures.
+        let head = left.join(" · ");
+        let figures = right.join(" · ");
+        let figures_w = figures.chars().count();
+        let head_w = head.chars().count();
+        let room = if head.is_empty() { cols.saturating_sub(figures_w + 2) } else { cols.saturating_sub(head_w + figures_w + 6) };
+        let dir = fit_path(&tilde(&self.root), room).unwrap_or_default();
+        let lead = match (dir.is_empty(), head.is_empty()) {
+            (true, _) => head,
+            (false, true) => dir,
+            (false, false) => format!("{dir}  {head}"),
+        };
+        if lead.is_empty() {
+            return fit(&format!("{}{figures}", " ".repeat(cols.saturating_sub(figures_w))), cols);
         }
-        let width = body.chars().count();
-        let dir = fit_path(&tilde(&self.root), cols.saturating_sub(width + 2)).unwrap_or_default();
-        let gap = cols.saturating_sub(width + dir.chars().count());
-        if dir.is_empty() || gap < 2 {
-            fit(&body, cols)
+        let gap = cols.saturating_sub(lead.chars().count() + figures_w);
+        if gap < 2 {
+            fit(&format!("{lead}  {figures}"), cols)
         } else {
-            format!("{body}{}{dir}", " ".repeat(gap))
+            format!("{lead}{}{figures}", " ".repeat(gap))
         }
     }
 }
-
-/// Below this width the directory moves to its own row under the status line.
-const NARROW_COLS: usize = 60;
 
 /// A live session's name: its first message, or `new` before one.
 fn title_of(entries: &[Entry]) -> String {

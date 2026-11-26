@@ -646,7 +646,7 @@ fn the_prompt_names_the_agent_and_the_status_line_the_mode() {
     assert!(rows.iter().any(|r| r.starts_with("▌ Build normal ·")), "the footer names no agent: {rows:?}");
     a.agent_next = Some("plan".into());
     assert!(strip(&a.frame(60, 12)).contains("Plan normal ·"), "the footer names no next agent");
-    assert!(a.status_line(80).starts_with("0 (0%)"), "{}", a.status_line(80));
+    assert!(a.status_line(80).ends_with("0 (0%) · $0.00 · ctrl+p commands"), "{}", a.status_line(80));
     a.cfg.set_permissions(crate::config::Permissions::Strict);
     assert!(strip(&a.frame(60, 12)).contains("Plan strict ·"), "the footer does not show the mode");
     assert!(a.status_line(54).chars().count() <= 54);
@@ -1513,16 +1513,16 @@ fn ctrl_n_switches_sessions_and_keeps_drafts() {
     let (tx, _rx) = channel();
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!(a.panes.len(), 1, "one session must not switch");
-    assert!(a.status_line(80).starts_with("0 (0%)"), "{}", a.status_line(80));
+    assert!(a.status_line(80).ends_with("0 (0%) · $0.00 · ctrl+p commands"), "{}", a.status_line(80));
     a.push(Role::User, "fix the parser");
     a.input = "draft one".into();
     a.cursor = a.input.len();
     a.run_command("new", &tx);
     a.input = "draft two".into();
-    assert!(a.status_line(80).starts_with("2/2 · "), "{}", a.status_line(80));
+    assert!(a.status_line(80).contains("  2/2"), "{}", a.status_line(80));
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!((a.at, a.input.as_str()), (0, "draft one"));
-    assert!(a.status_line(80).starts_with("1/2 · "), "{}", a.status_line(80));
+    assert!(a.status_line(80).contains("  1/2"), "{}", a.status_line(80));
 }
 
 #[test]
@@ -2141,26 +2141,27 @@ fn an_empty_transcript_shows_a_welcome_row() {
     let mut a = app();
     let frame = strip(&a.frame(120, 24));
     let status = frame.lines().last().unwrap_or("");
-    assert!(status.starts_with("/ for commands · 0 (0%)"), "{frame:?}");
-    assert_eq!(frame.matches("/ for commands").count(), 1, "the hint is in the body too: {frame:?}");
+    assert!(status.ends_with("0 (0%) · $0.00 · ctrl+p commands"), "{frame:?}");
+    assert!(!frame.contains("/ for commands"), "the slash hint is drawn: {frame:?}");
     assert_eq!(frame.matches(tilde(&a.root).as_str()).count(), 1, "{frame:?}");
     a.push(Role::User, "hello");
     assert!(!strip(&a.frame(80, 24)).contains("/ for commands"));
-    // Narrow screens keep the hint: at 30 columns it is all the line shows.
+    // Narrow screens keep the figures, and never the slash hint.
     let narrow = strip(&app().frame(30, 24));
-    assert!(narrow.lines().rev().nth(1).unwrap_or("").starts_with("/ for commands"), "{narrow:?}");
+    assert!(narrow.lines().last().unwrap_or("").starts_with("0 (0%)"), "{narrow:?}");
     let tiny = strip(&app().frame(12, 24));
-    assert!(tiny.lines().rev().nth(1).unwrap_or("").starts_with("/ for com"), "{tiny:?}");
+    assert!(!tiny.contains("/ for com"), "{tiny:?}");
 }
 
 #[test]
-fn the_status_line_ends_with_the_directory_when_it_fits() {
+fn the_status_line_starts_with_the_directory_when_it_fits() {
     let a = app();
     let root = tilde(&a.root);
     let wide = a.status_line(100);
-    assert!(wide.ends_with(&root), "{wide}");
+    assert!(wide.starts_with(&format!("{root}  ")), "{wide}");
     assert_eq!(wide.chars().count(), 100, "{wide}");
-    assert!(wide.starts_with("0 (0%) · "), "{wide}");
+    assert!(wide.ends_with("0 (0%) · $0.00 · ctrl+p commands"), "{wide}");
+    // Too narrow for the directory: the figures keep their order from the first.
     let narrow = a.status_line(30);
     assert!(narrow.starts_with("0 (0%)"), "{narrow}");
 }
@@ -2174,15 +2175,15 @@ fn the_status_line_shortens_a_long_directory() {
     let left = "0 (0%) · $0.00 · ctrl+p commands";
     let at = |a: &App, cols: usize| {
         let line = a.status_line(cols);
-        assert!(line.starts_with(left) && line.chars().count() <= cols, "{line}");
+        assert!(line.ends_with(left) && line.chars().count() <= cols, "{line}");
         line
     };
-    assert!(at(&a, 100).ends_with("~/Projects/imp/src/providers"));
-    // The directory shortens as it narrows, then drops before the left part does.
-    assert!(at(&a, 60).ends_with("~/P/i/src/providers"), "{}", a.status_line(60));
-    // Under 60 columns the directory has its own row, so the status keeps only the left part.
-    assert_eq!(at(&a, 50), left, "narrow: the directory is on its own row");
-    assert_eq!(at(&a, 40), left, "the directory is dropped before the left part");
+    // The directory is at the left and shortens as it narrows, while the figures stay whole.
+    assert!(at(&a, 100).starts_with("~/Projects/imp/src/providers  "));
+    assert!(at(&a, 60).starts_with("~/P/i/src/providers  "), "{}", a.status_line(60));
+    assert!(at(&a, 50).starts_with("…/providers  "), "{}", a.status_line(50));
+    // Too narrow for any form of the directory, it is left out and the figures stay.
+    assert_eq!(at(&a, 40).trim_start(), left, "the directory is dropped before the figures");
 }
 
 #[test]
@@ -3176,7 +3177,7 @@ fn the_status_line_has_no_spinner() {
             "status line carried {frame:?}: {line:?}"
         );
     }
-    assert!(line.starts_with("⋯ esc interrupt"), "{line:?}");
+    assert!(line.contains("⋯ esc interrupt"), "{line:?}");
 }
 
 #[test]
@@ -6799,7 +6800,7 @@ fn esc_closes_the_form_and_keeps_the_values() {
 fn the_status_line_names_auto_and_not_normal() {
     let mut a = app();
     a.cfg.set_permissions(crate::config::Permissions::Auto);
-    assert!(a.status_line(100).starts_with("0 (0%)"), "{}", a.status_line(100));
+    assert!(a.status_line(100).ends_with("0 (0%) · $0.00 · ctrl+p commands"), "{}", a.status_line(100));
     assert!(strip(&a.frame(100, 20)).contains("Default auto ·"), "the footer does not show auto");
     a.cfg.set_permissions(crate::config::Permissions::Normal);
     assert!(!strip(&a.frame(100, 20)).contains("auto ·"), "auto stayed in the footer");
