@@ -20,4 +20,4 @@
 
 ## 5. Docs
 
-- [ ] 5.1 README describes the `/goal` subcommands, the `goal` tool, and goal persistence
+- [x] 5.1 README describes the `/goal` subcommands, the `goal` tool, and goal persistence. Added a paragraph after the commands block.
