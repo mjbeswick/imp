@@ -36,3 +36,15 @@
 - [x] 7.2 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
 - [x] 7.3 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
 - [ ] 7.4 Check the composer, status bar, and menu in a real terminal against the reference, and record the result in design.md.
+
+## 8. Composer and status polish (specs of the design review)
+
+- [ ] 8.1 Test: the composer block's accent bar is drawn on every row of the block, the footer row is inside the block, and the agent name is capitalised. Confirm it fails before the change.
+- [ ] 8.2 Test: the input and the footer start in the same column; the agent name is in the accent colour, the effort in the warning colour, and the provider muted. Confirm it fails before the change.
+- [ ] 8.3 Test: the status bar is one row with the directory at the left, then the goal, tokens with share, cost, and `ctrl+p commands` at the right; no `/ for commands` hint appears in it. Confirm it fails before the change.
+- [ ] 8.4 Test: the command menu draws a muted rail at each row edge, has no blank row above the composer block, and draws the highlighted row's name and description in the accent colour. Confirm it fails before the change.
+- [ ] 8.5 Implement the block bar, footer placement, capitalised agent, column alignment, and footer colours in `composer` and `paint_composer_row` (`src/tui.rs`).
+- [ ] 8.6 Implement the one-row status bar with the directory at the left, and remove the slash hint from it (`paint_status`, `status_line`, the directory shortening).
+- [ ] 8.7 Implement the menu rails, the removed gap above the composer block, and the highlighted row colours in `command_menu`.
+- [ ] 8.8 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [ ] 8.9 Check the block, footer, status bar, and menu in a real terminal against the design, and record the result in design.md.
