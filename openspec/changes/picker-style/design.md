@@ -54,3 +54,12 @@ The picker frame is drawn in `src/tui.rs`. Citations are to `main` at `49c1b217`
 ## Expected bytes
 
 Expected change: a few hundred bytes of code, roughly flat. `./scripts/size.sh` reports the measured figure.
+
+## Panel background (added after the first apply)
+
+7. **Panel.** The picker block gets a background. The theme table has no terminal background, and adding a
+   per-theme slot would need eleven new colours. The panel is therefore derived from the theme's `Text`
+   slot: a theme whose text is dark (the same luma test the theme tests use for light themes) gets a
+   near-white panel, and a dark theme gets a near-black one. The mono theme gets no fill. Judgement call:
+   the derived colours are not tuned per theme. Cost if wrong: a theme may look too pale or too dark; a
+   per-theme slot fixes that later.

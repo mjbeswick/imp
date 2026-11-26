@@ -50,6 +50,26 @@ The system SHALL draw the filter in the picker's title row, SHALL show the picke
 - **WHEN** a row is highlighted
 - **THEN** the highlight spans the full inner width of the picker
 
+### Requirement: The picker is drawn on a panel background
+
+The system SHALL fill the picker's block with a panel background derived from the active theme's text colour, SHALL draw a near-white panel in a light theme and a near-black panel in a dark theme, SHALL keep the panel behind the title row and every item row, and SHALL draw no panel in the mono theme.
+
+#### Scenario: Light theme
+- **WHEN** the picker opens in a light theme
+- **THEN** its block is filled with a near-white panel and the dark text stays readable on it
+
+#### Scenario: Dark theme
+- **WHEN** the picker opens in a dark theme
+- **THEN** its block is filled with a near-black panel and the light text stays readable on it
+
+#### Scenario: Highlight on the panel
+- **WHEN** a row is highlighted
+- **THEN** the highlight takes its own background and the panel resumes after the row
+
+#### Scenario: Mono
+- **WHEN** the mono theme is active
+- **THEN** the picker has no fill and draws as before
+
 ## MODIFIED Requirements
 
 ### Requirement: Pickers mark the current value one way
