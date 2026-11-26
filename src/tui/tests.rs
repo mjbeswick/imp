@@ -7965,3 +7965,39 @@ fn sessions_group_under_day_headings_and_the_highlight_skips_them() {
     assert!(rows.iter().any(|r| r.contains("Today")), "no Today heading: {rows:?}");
     assert_eq!(positioned_rows(&out), open_picker(&a).window + 4, "a heading changed the box height");
 }
+
+#[test]
+fn the_highlighted_session_shows_its_directory_and_other_rows_do_not() {
+    let mut a = app();
+    let dir = scratch("dir-column");
+    a.sessions_dir = dir.clone();
+    let now = now_secs();
+    saved_session(&dir, "one", "alpha work", "/work/alpha-project", now);
+    saved_session(&dir, "two", "beta work", "/work/beta-project", now - 60);
+    a.pending = Some(Pending::Pick(a.session_picker()));
+    let (out, _, _, _) = a.overlay(100, 30).expect("picker overlay");
+    let rows = overlay_rows(&out).join("\n");
+    assert!(rows.contains("/work/alpha-project"), "the highlight shows no directory: {rows}");
+    assert!(!rows.contains("/work/beta-project"), "a row that is not highlighted shows its directory: {rows}");
+    assert!(!rows.contains(" msgs"), "the message count is still listed: {rows}");
+
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Down, &tx);
+    let (out, _, _, _) = a.overlay(100, 30).expect("picker overlay");
+    let rows = overlay_rows(&out).join("\n");
+    assert!(rows.contains("/work/beta-project") && !rows.contains("/work/alpha-project"), "{rows}");
+}
+
+#[test]
+fn a_long_directory_is_cut_from_the_left_and_keeps_its_end() {
+    let mut a = app();
+    let dir = scratch("dir-long");
+    a.sessions_dir = dir.clone();
+    let long = format!("/work/{}/deep-end", "segment".repeat(12));
+    saved_session(&dir, "deep", "deep work", &long, now_secs());
+    a.pending = Some(Pending::Pick(a.session_picker()));
+    let (out, _, _, _) = a.overlay(80, 30).expect("picker overlay");
+    let rows = overlay_rows(&out).join("\n");
+    assert!(rows.contains("…") && rows.contains("deep-end"), "not cut from the left: {rows}");
+    assert!(!rows.contains("/work/segment"), "the start of the path was kept: {rows}");
+}
