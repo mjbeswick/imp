@@ -2363,14 +2363,20 @@ fn is_text_setting(key: &str) -> bool {
 }
 
 /// Every slash command as a picker row.
-fn command_items() -> Vec<PickItem> {
+/// The slash command rows. A command with a binding shows its key or chord after
+/// its description, as typed (`ctrl+x n`).
+fn command_items(bindings: &[(String, String)]) -> Vec<PickItem> {
     COMMANDS
         .iter()
-        .map(|(name, desc)| PickItem {
-            label: name.to_string(),
-            value: name.to_string(),
-            desc: desc.to_string(),
-            actions: Vec::new(),
+        .map(|(name, desc)| {
+            let keys: Vec<String> = bindings
+                .iter()
+                .filter(|(_, command)| command == name)
+                .filter_map(|(chord, _)| crate::config::parse_chord(chord).ok())
+                .map(|keys| keys.join(" "))
+                .collect();
+            let desc = if keys.is_empty() { desc.to_string() } else { format!("{desc} · {}", keys.join(", ")) };
+            PickItem { label: name.to_string(), value: name.to_string(), desc, actions: Vec::new() }
         })
         .collect()
 }
@@ -4017,7 +4023,7 @@ impl App {
             // Ctrl+P opens the command palette: the slash picker's list, with no `/` prefix,
             // and only on an empty composer, so a draft is never covered.
             Key::Ctrl('p') if self.input.is_empty() => {
-                self.pending = Some(Pending::Pick(Picker::new("commands", command_items(), PickKind::Command)));
+                self.pending = Some(Pending::Pick(Picker::new("commands", command_items(&self.cfg.bindings), PickKind::Command)));
                 self.dirty = true;
             }
             Key::Select(m) => {
@@ -4662,7 +4668,7 @@ impl App {
 
     /// Open the command menu with `filter`. Typing `/` and Ctrl+P both open it.
     fn open_commands(&mut self, filter: String) {
-        let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+        let mut picker = Picker::new("commands", command_items(&self.cfg.bindings), PickKind::Command);
         picker.filter = filter;
         picker.prefix = Some("/".into());
         self.pending = Some(Pending::Pick(picker));

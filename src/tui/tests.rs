@@ -3833,6 +3833,15 @@ fn the_keys_card_lists_a_user_binding_after_the_built_in_keys() {
 }
 
 #[test]
+fn the_command_list_shows_a_bound_key_beside_its_command() {
+    let items = command_items(&[("ctrl-x-n".to_string(), "/model".to_string())]);
+    let model = items.iter().find(|i| i.value == "/model").expect("/model row");
+    assert!(model.desc.contains("ctrl+x n"), "{:?}", model.desc);
+    let quit = items.iter().find(|i| i.value == "/quit").expect("/quit row");
+    assert!(!quit.desc.contains("ctrl"), "an unbound command shows a key: {:?}", quit.desc);
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
@@ -4201,7 +4210,7 @@ fn a_long_label_gives_way_to_the_right_column() {
 
 #[test]
 fn command_rows_show_aligned_descriptions() {
-    let picker = Picker::new("commands", command_items(), PickKind::Command);
+    let picker = Picker::new("commands", command_items(&[]), PickKind::Command);
     let row = |label: &str| {
         let at = picker
             .items
@@ -4227,7 +4236,7 @@ fn command_rows_show_aligned_descriptions() {
 
 #[test]
 fn the_highlighted_command_description_wraps() {
-    let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+    let mut picker = Picker::new("commands", command_items(&[]), PickKind::Command);
     let at = picker
         .items
         .iter()
@@ -4258,7 +4267,7 @@ fn the_highlighted_command_description_wraps() {
 
 #[test]
 fn a_description_too_long_for_two_lines_ends_in_an_ellipsis() {
-    let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+    let mut picker = Picker::new("commands", command_items(&[]), PickKind::Command);
     let at = picker
         .items
         .iter()
@@ -4290,7 +4299,7 @@ fn the_command_picker_shows_the_whole_description() {
 #[test]
 fn a_short_screen_cuts_the_description_on_one_line() {
     let mut a = app();
-    let mut picker = Picker::new("commands", command_items(), PickKind::Command);
+    let mut picker = Picker::new("commands", command_items(&[]), PickKind::Command);
     let at = picker
         .items
         .iter()
@@ -6266,7 +6275,7 @@ fn ctrl_c_closes_a_picker_and_clears_its_draft() {
     a.cursor = 5;
     a.pending = Some(Pending::Pick(Picker::new(
         "commands",
-        command_items(),
+        command_items(&[]),
         PickKind::Command,
     )));
     let (tx, _cmds) = channel();
