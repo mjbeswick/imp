@@ -7671,6 +7671,24 @@ fn enter_on_custom_opens_the_provider_editor_and_keeps_the_provider() {
 }
 
 #[test]
+fn enter_on_custom_after_slash_provider_opens_the_editor() {
+    let (mut a, _config) = provider_app();
+    let (tx, _rx) = channel();
+    a.input = "/provider ".into();
+    a.cursor = a.input.len();
+    a.sync_menu();
+    provider_row(&mut a, "custom");
+    let before = a.cfg.active_name.clone();
+    a.handle_key(Key::Enter, &tx);
+    assert!(
+        matches!(a.pending, Some(Pending::ProviderForm { .. })),
+        "Enter on custom after /provider did not open the editor: input {:?}",
+        a.input
+    );
+    assert_eq!(a.cfg.active_name, before, "Enter switched the active provider");
+}
+
+#[test]
 fn u_still_switches_to_the_highlighted_provider() {
     let mut a = app();
     a.config_path = scratch("provider-picker-use").join("config");
