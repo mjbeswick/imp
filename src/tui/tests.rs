@@ -1663,7 +1663,7 @@ fn question_mark_opens_the_keys_card_only_from_an_empty_composer() {
     let Some(Pending::Pick(p)) = &a.pending else { panic!("no keys card") };
     assert_eq!(p.kind, PickKind::Keys);
     assert!(p.items.iter().any(|i| i.label == "Ctrl+O"));
-    assert_eq!(p.footer(), "? or Esc close");
+    assert_eq!(p.hints(), "");
     assert!(a.input.is_empty(), "the ? reached the composer");
     a.handle_key(Key::Char('?'), &tx);
     assert!(a.pending.is_none(), "? did not close the card");
@@ -2392,12 +2392,11 @@ fn interface_rows_carry_emphasis() {
     let thinking = a.palette.paint(Role::Thinking, "~ pondering");
     assert!(out.contains(&format!("\x1b[3m{thinking}")), "thinking: {out:?}");
     let colour = a.palette.paint(Role::Thinking, "").replace("\x1b[0m", "");
-    // Command picker: title bold, other rows' descriptions muted.
+    // Command picker: other rows' descriptions muted. The title is muted too.
     a.input = "/".into();
     a.cursor = 1;
     a.sync_menu();
     let out = a.frame(80, 30);
-    assert!(out.contains("\x1b[1m"), "no bold title: {out:?}");
     let Some(Pending::Pick(p)) = &a.pending else { panic!("no picker") };
     let second = &p.items[p.matches()[1]].desc;
     let head: String = second.chars().take(10).collect();
@@ -2456,9 +2455,10 @@ fn the_picker_highlight_has_a_background() {
     let [r, g, b] = a.palette.theme.rgb(crate::theme::Slot::Select);
     let bg = format!("\x1b[48;2;{r};{g};{b}m");
     let at = out.find(&bg).expect("no select background");
-    assert!(out[at..].contains("▸ profile 0"), "{out:?}");
-    let border = a.palette.paint(Role::Border, "│");
-    assert!(out.contains(&border), "the frame is not in the border colour");
+    assert!(out[at..].contains("▎  profile 0"), "{out:?}");
+    // The title row's keys are in the muted role, as the frame has no border now.
+    let muted = a.palette.paint(Role::Thinking, "esc");
+    assert!(out.contains(&muted), "the title row keys are not muted");
 }
 
 #[test]
@@ -3676,7 +3676,7 @@ fn command_rows_show_aligned_descriptions() {
         desc_col(&help, "show the commands"),
         "descriptions are not aligned:\n{compact}\n{help}"
     );
-    assert!(help.contains("▸ /help"), "no marker: {help}");
+    assert!(help.contains("▎  /help"), "no accent bar: {help}");
 }
 
 #[test]
@@ -3699,7 +3699,7 @@ fn the_highlighted_command_description_wraps() {
     assert!(row[1].contains("off to stop"), "description cut: {:?}", row[1]);
     assert_eq!(
         row[1].chars().take_while(|c| *c == ' ').count(),
-        16,
+        17,
         "no hanging indent: {:?}",
         row[1]
     );
@@ -3751,7 +3751,8 @@ fn a_short_screen_cuts_the_description_on_one_line() {
     picker.index = at;
     picker.offset = at;
     a.pending = Some(Pending::Pick(picker));
-    let frame = strip(&a.frame(60, 12));
+    // Ten rows: the box with its second line would need eleven, so the cut applies.
+    let frame = strip(&a.frame(60, 10));
     assert!(frame.contains("/goal"), "no command row: {frame:?}");
     assert!(!frame.contains("off to stop"), "the box grew: {frame:?}");
 }
@@ -4046,10 +4047,9 @@ fn browsers_name_their_directory() {
     highlight(&mut a, &tx, "src/");
     a.handle_key(Key::Tab, &tx);
     let frame = strip(&a.frame(200, 30));
-    let start = frame.find("╭─ cd ").expect("title");
-    let top = &frame[start..start + frame[start..].find('╮').unwrap()];
-    assert!(top.contains("/work/src "), "{top}");
-    assert!(top.chars().count() <= 72, "{top}");
+    let start = frame.find("cd ").expect("title");
+    let title = &frame[start..start + 40.min(frame.len() - start)];
+    assert!(frame[start..].contains("/work/src"), "{title}");
     assert_eq!(tilde(std::path::Path::new(&std::env::var("HOME").unwrap())), "~");
 }
 
@@ -4063,7 +4063,7 @@ fn the_listing_starts_with_this_folder_and_its_parent() {
     a.run_command("cd", &tx);
     let labels: Vec<String> = open_picker(&a).items.iter().map(|i| i.label.clone()).collect();
     assert_eq!(labels, vec!["./", "../", "leaf/"]);
-    assert!(open_picker(&a).footer().starts_with("Enter choose · Tab/→ open · ← up"));
+    assert!(open_picker(&a).hints().is_empty());
 
     // Tab on `../` opens the parent; Tab on `./` stays put.
     a.handle_key(Key::Down, &tx);
@@ -4221,7 +4221,7 @@ fn the_image_browser_opens_folders_with_right() {
     let mut a = app_at(root.clone());
     let (tx, _rx) = channel();
     a.run_command("image", &tx);
-    assert!(open_picker(&a).footer().starts_with("Enter attach · Tab/→ open"));
+    assert!(open_picker(&a).hints().is_empty());
     highlight(&mut a, &tx, "shots/");
     a.handle_key(Key::Right, &tx);
     let picker = open_picker(&a);
@@ -5004,8 +5004,7 @@ fn a_row_shortcut_runs_only_while_the_filter_is_empty() {
 fn the_footer_names_the_row_actions() {
     let mut a = picker();
     let frame = strip(&a.frame(80, 24));
-    assert!(frame.contains("Enter choose"), "{frame}");
-    assert!(frame.contains("Esc close"), "{frame}");
+    assert!(frame.contains("esc"), "{frame}");
     assert!(frame.contains("n new"), "{frame}");
     assert!(frame.contains("r rename"), "{frame}");
     assert!(frame.contains("d delete"), "{frame}");
@@ -5297,20 +5296,16 @@ fn open_many(a: &mut App, count: usize) {
 fn overlay_fills_a_narrow_terminal_with_a_margin() {
     let mut a = app();
     open_many(&mut a, 3);
-    let frame = a.frame(50, 24);
-    let start = frame
-        .find('╭')
-        .unwrap_or_else(|| panic!("no overlay in {frame:?}"));
-    let end = frame[start..]
-        .find('╮')
-        .map(|at| start + at)
-        .unwrap_or_else(|| panic!("no top border in {frame:?}"));
-    assert_eq!(
-        frame[start..end].chars().count() + 1,
-        46,
-        "wrong box width: {:?}",
-        &frame[start..end]
-    );
+    // 50 columns: a 46-column box, starting at column 3 with a 1-column margin.
+    // The overlay returns the cursor column: the box's left edge plus the margin and the three-column indent.
+    let (_, cursor, _, targets) = a.overlay(50, 24).expect("overlay");
+    let x = cursor - 4;
+    assert_eq!(x, 3, "the box is not centred");
+    let esc = targets
+        .iter()
+        .find(|t| t.3 == Target::Key(Key::Esc))
+        .expect("esc target");
+    assert_eq!(esc.2, x + 44, "esc does not end on the inner edge");
 }
 
 #[test]
@@ -5318,7 +5313,7 @@ fn overlay_shows_eight_rows_and_scrolls() {
     let mut a = app();
     open_many(&mut a, 40);
     let frame = a.frame(100, 30);
-    let rows = frame.matches("H│▸").count() + frame.matches("H│  ").count();
+    let rows = strip(&frame).matches("profile ").count();
     assert_eq!(rows, 8, "wrong number of item rows in {frame:?}");
     assert!(strip(&frame).contains("profile 0"), "{frame:?}");
 
@@ -5336,15 +5331,35 @@ fn the_overlay_sets_title_position_and_keys_in_its_edges() {
     let mut a = app();
     open_many(&mut a, 40);
     let frame = strip(&a.frame(200, 30));
-    let start = frame.find('╭').expect("top edge");
-    let end = start + frame[start..].find('╮').expect("top corner");
-    let top = &frame[start..end + '╮'.len_utf8()];
-    assert!(top.starts_with("╭─ agent "), "{top}");
-    assert!(top.ends_with(" 1/40 ─╮"), "{top}");
-    assert_eq!(top.chars().count(), 72, "{top}");
-    let bottom = &frame[frame.find('╰').expect("bottom edge")..];
-    assert!(bottom.starts_with("╰─ Enter choose · Esc close "), "{bottom}");
-    assert!(frame.contains("│ › "), "no filter row: {frame}");
+    assert!(frame.contains("agent"), "no title: {frame}");
+    assert!(frame.contains("1/40 · esc"), "no position before esc: {frame}");
+    assert!(!frame.contains("Enter choose"), "a key hint line is drawn: {frame}");
+}
+
+#[test]
+fn the_picker_draws_no_border_and_a_title_row() {
+    let mut a = app();
+    open_many(&mut a, 40);
+    let frame = strip(&a.frame(200, 30));
+    for edge in ['╭', '╮', '╰', '╯', '│', '├', '┤'] {
+        assert!(!frame.contains(edge), "border {edge} left in {frame:?}");
+    }
+    assert!(frame.contains("agent"), "no title: {frame:?}");
+    assert!(frame.contains("1/40"), "no position: {frame:?}");
+    assert!(frame.contains("esc"), "no esc hint: {frame:?}");
+    assert!(!frame.contains("Enter choose"), "footer still drawn: {frame:?}");
+    assert!(frame.contains('▎'), "no accent bar on the highlight: {frame:?}");
+}
+
+#[test]
+fn the_current_entry_has_a_square_marker() {
+    let mut a = app();
+    open_many(&mut a, 3);
+    if let Some(Pending::Pick(p)) = a.pending.as_mut() {
+        p.items[1].desc = "current".into();
+    }
+    let frame = strip(&a.frame(200, 30));
+    assert!(frame.contains("■"), "no current marker: {frame:?}");
 }
 
 #[test]
@@ -5366,11 +5381,11 @@ fn closing_the_picker_leaves_no_border() {
     let before = a.frame(80, 20);
     open_many(&mut a, 40);
     let open = a.frame(80, 20);
-    assert!(open.contains('╭'), "the picker did not draw");
+    assert!(open.contains("esc"), "the picker did not draw");
     let (tx, _rx) = channel();
     a.handle_key(Key::Esc, &tx);
     let after = a.frame(80, 20);
-    assert!(!after.contains('╭'), "border residue after close");
+    assert!(!after.contains("esc"), "picker residue after close");
     assert_eq!(before, after, "closing the picker changed the frame");
 }
 
@@ -6219,7 +6234,7 @@ fn provider_names_stay_whole_and_the_url_is_what_gets_cut() {
     let at = picker.items.iter().position(|i| i.label == "anthropic").unwrap();
     let row = picker_row(&picker, at, at, 68, false).remove(0);
     // Check the label column itself: the URL also contains "anthropic".
-    assert!(row.starts_with("  anthropic "), "the provider name was clipped: {row:?}");
+    assert!(row.starts_with("   anthropic "), "the provider name was clipped: {row:?}");
     assert!(row.chars().count() <= 68, "{row:?}");
 }
 

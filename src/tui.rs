@@ -746,8 +746,8 @@ fn chip_targets(row: usize, text: &str) -> Vec<(usize, usize, usize, Target)> {
     out
 }
 
-/// Click targets in a picker footer such as `Enter choose · Esc close`,
-/// which starts at column `x`: each hint replays its key.
+/// Click targets in a picker's title row such as `1/40 · esc`, which starts
+/// at column `x`: each key replays itself.
 fn footer_targets(row: usize, x: usize, text: &str) -> Vec<(usize, usize, usize, Target)> {
     let mut out = Vec::new();
     let mut col = x;
@@ -755,7 +755,7 @@ fn footer_targets(row: usize, x: usize, text: &str) -> Vec<(usize, usize, usize,
         let len = part.chars().count();
         let key = match part.split(' ').next().unwrap_or("") {
             "Enter" => Some(Key::Enter),
-            "Esc" => Some(Key::Esc),
+            "Esc" | "esc" => Some(Key::Esc),
             "Tab/→" => Some(Key::Tab),
             "←" => Some(Key::Left),
             k if k.chars().count() == 1 => k.chars().next().map(Key::Char),
@@ -2271,11 +2271,15 @@ fn mark_current(current: bool, about: &str) -> String {
 /// line under the description column; every other row is cut with `…`.
 fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool) -> Vec<String> {
     let item = &picker.items[index];
-    let marker = if at == picker.index { "▸" } else { " " };
+    // A three-column gutter: the accent bar on the highlighted row, then the
+    // `■` on the current entry, then a space before the label.
+    let accent = if at == picker.index { "▎" } else { " " };
+    let square = if item.desc.starts_with("current") { "■" } else { " " };
+    let marker = format!("{accent}{square} ");
     let Some(start) = desc_column(picker, inner) else {
-        return vec![format!("{marker} {}", item.label)];
+        return vec![format!("{marker}{}", item.label)];
     };
-    let left = start - 4;
+    let left = start - 5;
     let mut label = item.label.clone();
     let mut desc = item.desc.clone();
     if !matches!(picker.kind, PickKind::Command | PickKind::Keys) {
@@ -2301,12 +2305,12 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
             // Each line is clipped to the picker, so a long unbroken URL cannot
             // run past the border. Styling is added later, at the draw site.
             return vec![
-                fit(&format!("{marker} {label:<left$}  {first}"), inner),
+                fit(&format!("{marker}{label:<left$}  {first}"), inner),
                 fit(&format!("{}{}", " ".repeat(start), rest), inner),
             ];
         }
     }
-    vec![fit(&format!("{marker} {label:<left$}  {desc}"), inner)]
+    vec![fit(&format!("{marker}{label:<left$}  {desc}"), inner)]
 }
 
 /// A provider row's state, from its description: switched off is struck
@@ -2335,9 +2339,9 @@ fn desc_column(picker: &Picker, inner: usize) -> Option<usize> {
         // The right column stays whole, one space off the wall; the
         // label gives way.
         let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
-        left = left.min(inner.saturating_sub(2 + 2 + wide + 1)).max(4);
+        left = left.min(inner.saturating_sub(3 + 2 + wide + 1)).max(4);
     }
-    Some(2 + left + 2)
+    Some(3 + left + 2)
 }
 
 /// The visible list as drawn lines, each with its item index and highlight.
@@ -2498,27 +2502,13 @@ impl Picker {
         })
     }
 
-    /// One hint line naming the keys that work here.
-    fn footer(&self) -> String {
-        let mut parts: Vec<String> = match self.kind {
-            PickKind::Dir => vec![
-                "Enter choose".into(),
-                "Tab/→ open".into(),
-                "← up".into(),
-                "Esc close".into(),
-            ],
-            PickKind::Image => vec![
-                "Enter attach".into(),
-                "Tab/→ open".into(),
-                "← up".into(),
-                "Esc close".into(),
-            ],
-            PickKind::Keys => return "? or Esc close".into(),
-            PickKind::Settings => {
-                return "Enter step or edit · Esc close · more in the config file".into()
-            }
-            _ => vec!["Enter choose".into(), "Esc close".into()],
-        };
+    /// The row-action keys that work here. They sit in the title row before
+    /// `esc`; the picker shows no other key hints.
+    fn hints(&self) -> String {
+        if self.kind == PickKind::Settings {
+            return "more in the config file".into();
+        }
+        let mut parts: Vec<String> = Vec::new();
         // Typed `/provider` filters with letters, so the key there is Ctrl+E.
         let typed_provider = self.kind == PickKind::Provider && self.prefix.is_some();
         if typed_provider {
@@ -7084,38 +7074,21 @@ impl App {
         let visible = matches.len().min(PICK_ROWS).max(1);
         let mut lines = picker_lines(picker, &matches, visible, inner, true);
         // The second line costs height; a short screen keeps the one-line cut.
-        if lines.len() + 4 > rows.saturating_sub(1) {
+        if lines.len() + 1 > rows.saturating_sub(1) {
             lines = picker_lines(picker, &matches, visible, inner, false);
         }
-        let height = lines.len() + 4;
+        // The title row, then the item rows: no border, rule, or hint line.
+        let height = lines.len() + 1;
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
 
-        // An edge with text set into it: `╭─ title ───── 3/40 ─╮`.
-        let edge = |l: char, r: char, left: &str, right: &str, tone: Role| {
-            let label = fit(left, inner.saturating_sub(4));
-            let right = if right.is_empty() { String::new() } else { format!(" {right} ─") };
-            let used = label.chars().count() + 3 + right.chars().count();
-            let right = if used > inner { String::new() } else { right };
-            let fill = inner.saturating_sub(label.chars().count() + 3 + right.chars().count());
-            let line = |t: &str| self.palette.paint(Role::Border, t);
-            format!(
-                "{}{} {}{}",
-                line(&format!("{l}─ ")),
-                // The title is bold; the footer's hints are not.
-                self.palette.styled(if tone == Role::Assistant { "1" } else { "" }, self.palette.paint(tone, &label)),
-                line(&"─".repeat(fill)),
-                line(&format!("{right}{r}"))
-            )
-        };
         let position = if matches.len() > visible {
             format!("{}/{}", picker.index + 1, matches.len())
         } else {
             String::new()
         };
 
-        let wall = self.palette.paint(Role::Border, "│");
         let title = if matches!(picker.kind, PickKind::Dir | PickKind::Image) {
             // Browsers name where they are, keeping the deepest part.
             let room = inner.saturating_sub(picker.title.chars().count() + position.len() + 9);
@@ -7123,13 +7096,32 @@ impl App {
         } else {
             picker.title.clone()
         };
-        let mut block: Vec<String> = vec![edge('╭', '╮', &title, &position, Role::Assistant)];
-        let filter = format!(" › {}", picker.filter);
-        block.push(format!("{wall}{}{wall}", self.boxed(&filter, inner, false)));
-        block.push(
-            self.palette
-                .paint(Role::Border, &format!("├{}┤", "─".repeat(inner))),
-        );
+        // The title row: the filter, or the title as a placeholder, at the left;
+        // the row actions, the position, and `esc` at the right.
+        let mut right_parts: Vec<String> = Vec::new();
+        let hints = picker.hints();
+        if !hints.is_empty() {
+            right_parts.push(hints);
+        }
+        if !position.is_empty() {
+            right_parts.push(position);
+        }
+        right_parts.push("esc".into());
+        // A long hint is cut so the title row keeps its inner width.
+        let right = fit(&right_parts.join(" · "), inner.saturating_sub(12));
+        // The text starts three columns in, so it lines up with the row labels.
+        let indent = "   ";
+        let right_w = right.chars().count();
+        let (left, placeholder) = if picker.filter.is_empty() {
+            (fit(&format!("{indent}{title}"), inner.saturating_sub(right_w + 1)), true)
+        } else {
+            (fit(&format!("{indent}{}", picker.filter), inner.saturating_sub(right_w + 1)), false)
+        };
+        let gap = " ".repeat(inner.saturating_sub(left.chars().count() + right_w));
+        let left = if placeholder { self.palette.paint(Role::Thinking, &left) } else { left };
+        let title_row = format!("{left}{gap}{}", self.palette.paint(Role::Thinking, &right));
+        let mut block: Vec<String> = vec![format!(" {title_row} ")];
+        let wall = " ";
 
         let column = desc_column(picker, inner);
         for (text, at, selected) in &lines {
@@ -7146,25 +7138,25 @@ impl App {
             };
             block.push(format!("{wall}{row}{wall}"));
         }
-        block.push(edge('╰', '╯', &picker.footer(), "", Role::Thinking));
-
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{line}", y + i, x));
         }
-        let cursor = (x + 1 + filter.chars().count()).min(x + width - 2);
+        // The filter text follows the indent and the one-column margin.
+        let cursor = (x + 1 + indent.len() + picker.filter.chars().count()).min(x + width - 2);
         // Only an open picker takes clicks; a delete confirmation keeps to keys.
         let mut targets = Vec::new();
         if matches!(self.pending, Some(Pending::Pick(_))) {
             if !matches.is_empty() {
                 for (row, (_, at, _)) in lines.iter().enumerate() {
-                    targets.push((y + 3 + row, x + 1, x + inner, Target::Row(*at)));
+                    targets.push((y + 1 + row, x + 1, x + inner, Target::Row(*at)));
                 }
             }
-            let footer = fit(&picker.footer(), inner.saturating_sub(4));
-            targets.extend(footer_targets(y + 3 + lines.len(), x + 3, &footer));
+            // The title row's keys are clickable: `esc`, and any row action.
+            let start = (x + 1 + inner).saturating_sub(right_w);
+            targets.extend(footer_targets(y, start, &right));
         }
-        Some((out, cursor, y + 1, targets))
+        Some((out, cursor, y, targets))
     }
 
     /// Fit one row of text to the interior width and pad it with spaces.
