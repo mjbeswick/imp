@@ -3821,6 +3821,18 @@ fn a_wrong_second_key_does_the_first_keys_effect_then_types_the_second() {
 }
 
 #[test]
+fn the_keys_card_lists_a_user_binding_after_the_built_in_keys() {
+    let mut a = app();
+    a.cfg.bindings.push(("ctrl-x-n".to_string(), "/model".to_string()));
+    a.open_keys();
+    let items = &open_picker(&a).items;
+    assert_eq!(items.len(), crate::help::KEYS.len() + 1, "one row per binding");
+    let last = items.last().expect("a binding row");
+    assert_eq!(last.label, "ctrl+x n");
+    assert_eq!(last.desc, "/model");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);

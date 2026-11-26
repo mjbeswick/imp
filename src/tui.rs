@@ -4897,6 +4897,12 @@ impl App {
                 actions: Vec::new(),
             })
             .collect();
+        // The user's bindings follow the built-in keys, each chord as it is typed.
+        let mut rows: Vec<PickItem> = rows;
+        for (chord, command) in &self.cfg.bindings {
+            let label = crate::config::parse_chord(chord).map(|keys| keys.join(" ")).unwrap_or_else(|_| chord.clone());
+            rows.push(PickItem { label: label.clone(), value: label, desc: command.clone(), actions: Vec::new() });
+        }
         self.pending = Some(Pending::Pick(Picker::new("keys", rows, PickKind::Keys)));
         self.dirty = true;
     }
