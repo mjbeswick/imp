@@ -494,9 +494,14 @@ impl Session {
     pub fn resume_id(&mut self, dir: &std::path::Path, id: &str) -> Result<(), String> {
         let log = Log::open(dir, id).ok_or_else(|| format!("no session {id}"))?;
         let messages = log.load();
+        let saved = log.meta().goal;
         self.resume(messages);
         let agent = log.last_event("agent");
         self.attach_log(log);
+        // A goal restored on resume waits for `/goal resume`: resuming never runs rounds.
+        if let Some(g) = saved {
+            self.goal = Some(Goal { text: g.text, round: g.round, rounds: g.rounds, paused: true });
+        }
         if let Some(name) = agent {
             let name = crate::store::resolve_agent(&name);
             if let Some(found) = self.roster.iter().find(|a| a.name == name).cloned() {
@@ -1199,6 +1204,7 @@ impl Session {
         let rounds = self.cfg.goal_rounds.clamp(1, 20);
         self.goal = Some(Goal { text: text.to_string(), round: 1, rounds, paused: false });
         self.declined = false;
+        self.save_goal();
         format!(
             "[Goal from imp, not the user.] Work until this goal is met: {text}\n{}",
             GOAL_ENDINGS
@@ -1210,17 +1216,33 @@ impl Session {
         if let Some(goal) = &mut self.goal {
             goal.paused = true;
         }
+        self.save_goal();
+    }
+
+    /// Write the goal to the session file, so it survives a restart.
+    pub fn save_goal(&self) {
+        if let Some(log) = &self.log {
+            log.set_goal(self.goal.as_ref().map(|g| crate::store::SavedGoal {
+                text: g.text.clone(),
+                round: g.round,
+                rounds: g.rounds,
+                paused: g.paused,
+            }));
+        }
     }
 
     /// Clear the goal: it is removed.
     pub fn clear_goal(&mut self) {
         self.goal = None;
+        self.save_goal();
     }
 
     /// Resume a paused goal: the message for its saved round, without advancing it.
     pub fn resume_goal(&mut self) -> Result<String, String> {
         let Some(goal) = self.goal.as_mut() else { return Err("no goal to resume".into()) };
         goal.paused = false;
+        self.save_goal();
+        let Some(goal) = self.goal.as_ref() else { return Err("no goal to resume".into()) };
         Ok(format!(
             "[Goal check from imp, not the user.] Round {} of {}. Goal: {}\n{GOAL_ENDINGS}",
             goal.round, goal.rounds, goal.text
@@ -1235,6 +1257,7 @@ impl Session {
         }
         let Some(goal) = self.goal.as_mut() else { return Err("no goal to edit".into()) };
         goal.text = text.to_string();
+        self.save_goal();
         Ok(())
     }
 
@@ -1267,12 +1290,14 @@ impl Session {
         };
         if let Some(why) = end {
             self.goal = None;
+            self.save_goal();
             return Err(why);
         }
         let round = goal.round + 1;
         if let Some(g) = &mut self.goal {
             g.round = round;
         }
+        self.save_goal();
         Ok(format!(
             "[Goal check from imp, not the user.] Round {round} of {}. Goal: {}\n{GOAL_ENDINGS}",
             goal.rounds, goal.text
@@ -2190,6 +2215,23 @@ mod tests {
         let mut s = session(crate::config::Config::default());
         let _ = s.run_tool("goal", &json!({"operation": "set", "text": "ship"}), &mut Answer2(false));
         assert!(s.goal_next().is_err(), "a round started for a declined goal");
+    }
+
+    #[test]
+    fn a_goal_is_saved_with_the_session_and_restored_paused() {
+        let d = tmp();
+        let log = crate::store::Log::create(&d, &d, "deepseek-flash");
+        // A started session has a transcript file; `Log::open` needs one.
+        std::fs::write(d.join(format!("{}.jsonl", log.id)), "").unwrap();
+        let mut s = session(crate::config::Config::default());
+        s.attach_log(log.clone());
+        s.start_goal("ship the parser");
+        s.save_goal();
+        let mut back = session(crate::config::Config::default());
+        back.resume_id(&d, &log.id).expect("resume");
+        let goal = back.goal.as_ref().expect("the goal was not restored");
+        assert_eq!((goal.text.as_str(), goal.round), ("ship the parser", 1));
+        assert!(goal.paused, "a restored goal ran unasked");
     }
 
     fn session(cfg: crate::config::Config) -> Session {
