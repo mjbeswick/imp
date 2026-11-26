@@ -13,7 +13,7 @@
 
 ## 2. Implement
 
-- [ ] 2.1 Remove the empty-composer guard from Ctrl+D and handle Ctrl+D before the open picker's keys (`src/tui.rs`).
+- [x] 2.1 Remove the empty-composer guard from Ctrl+D and handle Ctrl+D before the open picker's keys (`src/tui.rs`).
 - [ ] 2.2 Move every row action that used Ctrl+D to Ctrl+X in the row-action table.
 
 ## 3. Existing tests and validation
