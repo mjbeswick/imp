@@ -2,14 +2,14 @@
 
 ### Requirement: Model favourites
 
-The system SHALL let the user mark model rows in the `/model` picker as favourites with the `f` key while the filter is empty, SHALL store favourites in a file next to the recent-models file, one `provider::model` value per line, SHALL list favourites first in the model picker, each marked with a star, and SHALL keep the highlight on the same row when a favourite is toggled.
+The system SHALL let the user mark model rows in the `/model` picker as favourites with Ctrl+F, SHALL store favourites in a file next to the recent-models file, one `provider::model` value per line, SHALL list favourites first in the model picker, each marked with a star, and SHALL keep the highlight on the same row when a favourite is toggled.
 
 #### Scenario: Mark a model as favourite
-- **WHEN** the user opens `/model`, highlights a model row, and presses `f` with an empty filter
+- **WHEN** the user opens `/model`, highlights a model row, and presses Ctrl+F
 - **THEN** the row is marked with a star, the favourite is written to the favourites file, and a toast reads `favourite: <model>`
 
 #### Scenario: Unmark a favourite
-- **WHEN** the user presses `f` on a row that is already a favourite
+- **WHEN** the user presses Ctrl+F on a row that is already a favourite
 - **THEN** the star is removed, the row is removed from the favourites file, and a toast reads `unfavourite: <model>`
 
 #### Scenario: Favourites stay at the top
@@ -21,11 +21,11 @@ The system SHALL let the user mark model rows in the `/model` picker as favourit
 - **THEN** the model is still marked and listed first
 
 #### Scenario: Highlight stays on the toggled row
-- **WHEN** the user presses `f` on a row that moves to the top of the list
+- **WHEN** the user presses Ctrl+F on a row that moves to the top of the list
 - **THEN** the highlight stays on that same row
 
-#### Scenario: The f key types into a filter
-- **WHEN** the filter already holds text and the user presses `f`
+#### Scenario: The f letter types into a filter
+- **WHEN** the filter already holds text and the user types `f`
 - **THEN** the `f` is added to the filter and no favourite changes
 
 #### Scenario: A favourite whose provider is not usable
