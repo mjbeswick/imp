@@ -7,8 +7,8 @@
 
 ## 2. Agent tool
 
-- [ ] 2.1 A `goal` tool with `set` stores a pending goal and asks the user to confirm it; yes starts round 1, no drops it and tells the agent; tests
-- [ ] 2.2 The agent cannot start rounds without the confirmation; tests
+- [x] 2.1 A `goal` tool with `set` stores a pending goal and asks the user to confirm it; yes starts round 1, no drops it and tells the agent; tests. Judgement call: the tool asks through `Hooks::confirm` in the same call and does not keep a separate pending state, so yes starts round 1 at once and no keeps nothing.
+- [x] 2.2 The agent cannot start rounds without the confirmation; tests
 
 ## 3. Persistence
 
