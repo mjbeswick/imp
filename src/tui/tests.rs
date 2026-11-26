@@ -8479,7 +8479,7 @@ fn the_command_menu_has_no_title_or_footer_and_keeps_its_keys() {
     a.handle_key(Key::Char('/'), &tx);
     let frame = strip(&a.frame(80, 20));
     assert!(frame.contains("/help"), "{frame:?}");
-    assert!(!frame.contains("╭") && !frame.contains("╰") && !frame.contains("│"), "a border: {frame:?}");
+    assert!(!frame.contains("╭") && !frame.contains("╰") && !frame.contains("╮") && !frame.contains("╯"), "a top or bottom edge: {frame:?}");
     assert!(!frame.contains("─ commands"), "a title row: {frame:?}");
     assert!(!frame.contains("choose") && !frame.contains("close"), "a footer: {frame:?}");
     a.handle_key(Key::Esc, &tx);
@@ -8569,15 +8569,39 @@ fn the_command_menu_draws_rails_no_gap_and_an_accent_highlight() {
     let menu_last = targets.iter().map(|t| t.0).max().expect("menu rows");
     assert_eq!(menu_last + 1, block_top, "a blank row sits between the menu and the composer block");
     let rows = overlay_rows(&out);
-    let rails = rows.iter().filter(|r| r.starts_with('▏') && r.trim_end().ends_with('▏')).count();
-    assert_eq!(rails, rows.len(), "every menu row needs a rail at each edge: {rows:?}");
-    assert!(rails >= 2, "{rows:?}");
-    assert!(out.contains(&a.palette.paint(Role::Thinking, "▏")), "the rail is not muted");
+    let boxed = rows.iter().filter(|r| r.starts_with('│') && r.trim_end().ends_with('│')).count();
+    assert_eq!(boxed, rows.len(), "every menu row needs a box line at each edge: {rows:?}");
+    assert!(boxed >= 2, "{rows:?}");
+    assert!(out.contains(&a.palette.paint(Role::Border, "│")), "the box line is not in the border colour");
+    assert!(!out.contains('╭') && !out.contains('╰') && !out.contains('─'), "the menu has a top or bottom edge");
     // The highlighted row's name is in the accent colour.
     let lit = rows.iter().find(|r| r.contains('▎')).expect("no highlighted row");
     let name: String = lit.split_once('▎').expect("marker").1.chars().skip(2).take_while(|c| !c.is_whitespace()).collect();
     assert!(name.starts_with('/'), "{lit:?}");
     assert!(out.contains(&a.palette.paint(Role::Info, &name)), "the highlighted name is not in the accent colour: {name:?}");
+}
+
+#[test]
+fn the_command_menu_scroll_indicator_sits_on_the_left_box_line() {
+    let (tx, _rx) = channel();
+    let mut a = colour_app();
+    a.handle_key(Key::Char('/'), &tx);
+    for _ in 0..20 {
+        a.handle_key(Key::Down, &tx);
+    }
+    a.frame(80, 20);
+    let (out, _, _, _) = a.overlay(80, 20).expect("command menu");
+    let rows = overlay_rows(&out);
+    let thumb: Vec<usize> = rows.iter().enumerate().filter(|(_, r)| r.starts_with('┃')).map(|(i, _)| i).collect();
+    assert!(!thumb.is_empty() && thumb.len() < rows.len(), "no thumb on a scrolled list: {rows:?}");
+    // The thumb is on the left edge only: every row keeps its right box line.
+    for r in &rows {
+        assert!(r.trim_end().ends_with('│'), "the right box line changed: {r:?}");
+    }
+    assert!(!rows.iter().any(|r| r.trim_end().ends_with('┃')), "an indicator on the right edge: {rows:?}");
+    assert!(out.contains(&a.palette.paint(Role::Border, "│")), "the box line is not in the border colour");
+    // The thumb sits on rows in the lower part of the menu, where the highlight is.
+    assert!(thumb.iter().any(|&i| i >= rows.len() / 2), "the thumb is not in the lower part: {thumb:?} of {}", rows.len());
 }
 
 /// The rows a picker overlay draws: each positioned row starts with a cursor move.
