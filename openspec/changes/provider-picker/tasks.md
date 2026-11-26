@@ -18,7 +18,7 @@
 
 ## 4. Validation
 
-- [ ] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
+- [x] 4.1 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
 - [ ] 4.2 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
 
 ## 5. Model list rows name their provider
