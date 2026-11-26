@@ -11,7 +11,7 @@
 
 ## 2. Composer block
 
-- [ ] 2.1 Implement the block: panel fill, accent bar, blank rows, and the footer row in `composer` (`src/tui.rs`).
+- [x] 2.1 Implement the block: panel fill, accent bar, blank rows, and the footer row in `composer` (`src/tui.rs`).
 - [ ] 2.2 Implement the glyph removal in `composer`, `paint_composer_row`, `prompt_agent`, and `prompt_width`, keeping the shell `!` draft and the caret.
 
 ## 3. Status bar
