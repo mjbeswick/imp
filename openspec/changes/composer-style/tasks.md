@@ -7,7 +7,7 @@
 - [x] 1.3 Test: the status bar shows `262.2K (26%)`-style tokens and the cost, with no cache share, and the model name is absent from it.
 - [x] 1.4 Test: a row above the composer reads `1 command` while one background job runs, and no row is drawn when none runs.
 - [x] 1.5 Test: Ctrl+P opens the command menu with an empty filter; with text in the composer it keeps the text and opens nothing.
-- [ ] 1.6 Test: the command menu has no title row and no footer; Tab, Enter, and Esc behave as before.
+- [x] 1.6 Test: the command menu has no title row and no footer; Tab, Enter, and Esc behave as before.
 
 ## 2. Composer block
 
