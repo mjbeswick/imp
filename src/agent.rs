@@ -888,8 +888,11 @@ impl Session {
         dropped
     }
 
-    /// Summarise everything except the last four exchanges.
-    pub fn compact(&mut self, hooks: &mut dyn Hooks) -> Result<(), String> {
+    /// Summarise everything except the last four exchanges. `focus` is the text
+    /// after the user's `/compact`, added to the request as one `Focus:` line;
+    /// automatic compaction passes `None`.
+    pub fn compact(&mut self, hooks: &mut dyn Hooks, focus: Option<&str>) -> Result<(), String> {
+        const FOCUS_CHARS: usize = 500;
         let before = crate::api::estimate_tokens(&self.history);
         let Some(keep_from) = keep_index(&self.history) else {
             return Ok(());
@@ -914,11 +917,21 @@ impl Session {
             }
         }
 
+        // Focus is trimmed, kept to one line, and cut at FOCUS_CHARS characters.
+        let mut focus_line = String::new();
+        if let Some(text) = focus.map(str::trim).filter(|t| !t.is_empty()) {
+            if text.chars().count() > FOCUS_CHARS {
+                hooks.ui(Ui::Info(format!("focus cut to {FOCUS_CHARS} characters")));
+            }
+            let cut: String = text.chars().take(FOCUS_CHARS).collect();
+            focus_line = format!("Focus: {}\n", cut.replace('\n', " "));
+        }
+
         let prompt = format!(
             "Summarise this conversation for another model that must continue the work.\n\
              Cover: decisions made, files touched, open threads, user preferences, unresolved errors.\n\
              Then add up to three lines starting with MEMORY: for durable facts worth saving.\n\
-             Be terse. 400 tokens maximum.\n\n{transcript}"
+             Be terse. 400 tokens maximum.\n\n{focus_line}{transcript}"
         );
         let (summary, _) = self.complete_once(
             &[
@@ -1057,7 +1070,7 @@ impl Session {
             }
             self.prune(hooks);
             if crate::api::estimate_tokens(&self.history) >= self.cfg.compact_at as u64 {
-                if let Err(e) = self.compact(hooks) {
+                if let Err(e) = self.compact(hooks, None) {
                     hooks.ui(Ui::Error(format!("compaction failed: {e}")));
                 }
             }
@@ -3768,7 +3781,7 @@ mod tests {
             s.history.push(Message::user(format!("q{i}")));
             s.history.push(Message::assistant(format!("a{i}")));
         }
-        s.compact(&mut Null).unwrap();
+        s.compact(&mut Null, None).unwrap();
         assert_eq!(fake.attempts(), 1);
         assert!(s
             .history
@@ -3824,6 +3837,124 @@ mod tests {
             .count();
         assert_eq!(kept_users, 4);
         assert!(keep_index(&history[..5]).is_none());
+    }
+
+    /// Collects the info lines the compaction reports.
+    #[derive(Default)]
+    struct Notes(Vec<String>);
+    impl Hooks for Notes {
+        fn ui(&mut self, event: Ui) {
+            if let Ui::Info(text) = event {
+                self.0.push(text);
+            }
+        }
+        fn confirm(&mut self, _: &str) -> bool {
+            false
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    fn six_exchanges(s: &mut Session) {
+        s.history.push(Message::system("base"));
+        for i in 0..6 {
+            s.history.push(Message::user(format!("q{i}")));
+            s.history.push(Message::assistant(format!("a{i}")));
+        }
+    }
+
+    #[test]
+    fn focus_line_goes_before_the_transcript() {
+        let (mut s, fake) = scripted(vec![Script::Ok(text_reply("[compacted]\nok"))]);
+        six_exchanges(&mut s);
+        s.compact(&mut Null, Some("keep the auth decisions")).unwrap();
+        let body = fake.sent.lock().unwrap()[0].clone();
+        let focus = body.find("Focus: keep the auth decisions").expect(&body);
+        let transcript = body.find("user: q0").expect(&body);
+        assert!(focus < transcript, "focus is after the transcript:\n{body}");
+    }
+
+    #[test]
+    fn no_focus_sends_no_focus_line() {
+        let (mut s, fake) = scripted(vec![Script::Ok(text_reply("[compacted]\nok"))]);
+        six_exchanges(&mut s);
+        s.compact(&mut Null, None).unwrap();
+        let body = fake.sent.lock().unwrap()[0].clone();
+        assert!(body.contains("Summarise this conversation"), "{body}");
+        assert!(!body.contains("Focus:"), "{body}");
+    }
+
+    #[test]
+    fn blank_focus_counts_as_no_focus() {
+        let (mut s, fake) = scripted(vec![Script::Ok(text_reply("[compacted]\nok"))]);
+        six_exchanges(&mut s);
+        s.compact(&mut Null, Some("   ")).unwrap();
+        let body = fake.sent.lock().unwrap()[0].clone();
+        assert!(!body.contains("Focus:"), "{body}");
+    }
+
+    #[test]
+    fn long_focus_is_trimmed_cut_and_reported() {
+        let (mut s, fake) = scripted(vec![Script::Ok(text_reply("[compacted]\nok"))]);
+        six_exchanges(&mut s);
+        let long = format!("  {}  ", "x".repeat(600));
+        let mut notes = Notes::default();
+        s.compact(&mut notes, Some(&long)).unwrap();
+        let body = fake.sent.lock().unwrap()[0].clone();
+        assert!(body.contains(&format!("Focus: {}", "x".repeat(500))), "{body}");
+        assert!(!body.contains(&"x".repeat(501)), "focus was not cut");
+        assert!(
+            notes.0.iter().any(|t| t.contains("focus cut to 500 characters")),
+            "{:?}",
+            notes.0
+        );
+    }
+
+    #[test]
+    fn focus_with_a_newline_stays_one_line() {
+        let (mut s, fake) = scripted(vec![Script::Ok(text_reply("[compacted]\nok"))]);
+        six_exchanges(&mut s);
+        s.compact(&mut Null, Some("keep the auth\nand the tests")).unwrap();
+        let body = fake.sent.lock().unwrap()[0].clone();
+        assert!(body.contains("Focus: keep the auth and the tests"), "{body}");
+    }
+
+    #[test]
+    fn short_focus_is_not_reported_as_cut() {
+        let (mut s, _fake) = scripted(vec![Script::Ok(text_reply("[compacted]\nok"))]);
+        six_exchanges(&mut s);
+        let mut notes = Notes::default();
+        s.compact(&mut notes, Some("keep the auth decisions")).unwrap();
+        assert!(!notes.0.iter().any(|t| t.contains("focus cut")), "{:?}", notes.0);
+    }
+
+    #[test]
+    fn focused_compaction_keeps_the_last_four_exchanges() {
+        let (mut s, _fake) = scripted(vec![Script::Ok(text_reply("[compacted]\nok"))]);
+        six_exchanges(&mut s);
+        s.compact(&mut Null, Some("keep the auth decisions")).unwrap();
+        let users: Vec<&str> = s
+            .history
+            .iter()
+            .filter(|m| m.role == crate::api::Role::User)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(users, ["q2", "q3", "q4", "q5"]);
+    }
+
+    #[test]
+    fn automatic_compaction_sends_no_focus() {
+        let (mut s, fake) = scripted(vec![
+            Script::Ok(text_reply("[compacted]\nok")),
+            Script::Ok(text_reply("done")),
+        ]);
+        six_exchanges(&mut s);
+        s.cfg.compact_at = 1;
+        s.turn("go", &mut Null).unwrap();
+        let first = fake.sent.lock().unwrap()[0].clone();
+        assert!(first.contains("Summarise this conversation"), "{first}");
+        assert!(!first.contains("Focus:"), "{first}");
     }
 
     #[test]

@@ -2426,7 +2426,7 @@ fn help_titles_are_bold_and_commands_accent() {
     a.run_command("help", &tx);
     let out = a.frame(80, 60);
     assert!(out.contains("\x1b[1mConversation\x1b[0m"), "{out:?}");
-    assert!(out.contains(&a.palette.paint(Role::Info, "/compact")), "{out:?}");
+    assert!(out.contains(&a.palette.paint(Role::Info, "/compact [focus]")), "{out:?}");
     assert!(!out.contains("\x1b[36m"), "terminal cyan left in: {out:?}");
     // Without colour, /help has no escapes.
     let mut b = app();
@@ -5039,8 +5039,35 @@ fn slash_autocomplete_uses_the_picker() {
 
     let (tx, rx) = channel();
     a.handle_key(Key::Enter, &tx);
-    assert!(matches!(rx.try_recv(), Ok(Cmd::Compact)));
+    assert!(matches!(rx.try_recv(), Ok(Cmd::Compact(None))));
     assert!(a.input.is_empty(), "the input did not clear");
+}
+
+#[test]
+fn compact_with_focus_sends_the_text_and_clears() {
+    let mut a = app();
+    let (tx, rx) = channel();
+    for c in "/compact keep the migration plan".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    a.handle_key(Key::Enter, &tx);
+    match rx.try_recv() {
+        Ok(Cmd::Compact(Some(focus))) => assert_eq!(focus, "keep the migration plan"),
+        _ => panic!("/compact with text did not send its focus"),
+    }
+    assert!(a.input.is_empty(), "the composer did not clear");
+    assert!(a.pending.is_none(), "a picker stayed open");
+}
+
+#[test]
+fn compact_focus_text_opens_no_picker() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    for c in "/compact keep".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    assert_eq!(a.input, "/compact keep", "the focus text left the composer");
+    assert!(a.pending.is_none(), "a picker opened for focus text");
 }
 
 #[test]

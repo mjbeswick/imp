@@ -1075,7 +1075,8 @@ pub enum Cmd {
     RevokeAllow { shape: String, always: bool },
     AllowAlways(String),
     SetRoot(std::path::PathBuf),
-    Compact,
+    /// Summarise now, with the optional focus text the user typed after `/compact`.
+    Compact(Option<String>),
     /// Work across turns until the goal is met.
     Goal(String),
     GoalOff,
@@ -5503,8 +5504,11 @@ impl App {
                     None => self.push(Role::Info, "nothing to copy"),
                 }
             }
-            "compact" => {
-                let _ = tx.send(Cmd::Compact);
+            other if other == "compact" || other.starts_with("compact ") => {
+                // Text after the word is the focus; no text means no focus.
+                let focus = other["compact".len()..].trim();
+                let focus = (!focus.is_empty()).then(|| focus.to_string());
+                let _ = tx.send(Cmd::Compact(focus));
                 self.push(Role::Info, "compacting…");
             }
             "retry" => self.retry(tx),
@@ -8850,12 +8854,12 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
                     }
                     let _ = ev_tx.send(Ev::Done(None));
                 }
-                Ok(Cmd::Compact) => {
+                Ok(Cmd::Compact(focus)) => {
                     let mut hooks = WorkerHooks {
                         tx: ev_tx.clone(),
                         waited: Duration::ZERO,
                     };
-                    if let Err(e) = worker_session.compact(&mut hooks) {
+                    if let Err(e) = worker_session.compact(&mut hooks, focus.as_deref()) {
                         let _ = ev_tx.send(Ev::Error(e));
                     }
                     let _ = ev_tx.send(Ev::Done(None));

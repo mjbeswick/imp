@@ -434,7 +434,7 @@ fn repl(session: &mut Session, cli: &mut Cli, sessions_dir: &std::path::Path) ->
                     println!("new conversation");
                 }
                 "compact" => {
-                    if let Err(e) = session.compact(cli) {
+                    if let Err(e) = session.compact(cli, None) {
                         eprintln!("imp: {e}");
                     }
                 }

@@ -258,6 +258,16 @@ pub fn usage(width: usize, color: bool) -> String {
     out
 }
 
+/// The name a command shows in `/help`. `/compact` takes optional focus text,
+/// so its row shows the argument form; the name itself stays the lookup key.
+fn shown(name: &str) -> &str {
+    if name == "/compact" {
+        "/compact [focus]"
+    } else {
+        name
+    }
+}
+
 /// `/help`, wrapped to `width`, with the keys of the chat or of line mode.
 /// `color` gives bold titles and cells in SGR 36, which the chat swaps for its accent.
 pub fn commands(width: usize, chat: bool, color: bool) -> String {
@@ -270,7 +280,7 @@ pub fn commands(width: usize, chat: bool, color: bool) -> String {
     // The chat's keys have their own card, `?` or `/keys`; line mode has two.
     let mut sections = if chat { Vec::new() } else { vec![("Keys", LINE_KEYS.to_vec())] };
     for (title, names) in GROUPS {
-        sections.push((title, names.iter().map(|n| (*n, desc(n))).collect()));
+        sections.push((title, names.iter().map(|n| (shown(n), desc(n))).collect()));
     }
     let mut out = String::new();
     table(&mut out, &sections, width, color);
@@ -452,6 +462,16 @@ mod tests {
         }
         assert!(text.contains("Ctrl+D"), "{text}");
         assert!(text.contains("/compact"), "{text}");
+    }
+
+    #[test]
+    fn compact_help_line_shows_the_focus_argument() {
+        let text = commands(80, true, false);
+        let line = text
+            .lines()
+            .find(|l| l.contains("compact the conversation now"))
+            .unwrap_or_else(|| panic!("no /compact line:\n{text}"));
+        assert!(line.contains("/compact [focus]"), "{line}");
     }
 
     #[test]
