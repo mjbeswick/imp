@@ -53,6 +53,6 @@
 
 ## 10. Gap under the input and no right padding
 
-- [ ] 10.1 Test: one blank row sits between the title row and the first item row; the item rows and the title row end at the box's right edge with no right margin; the height test expects twenty-one rows and the bottom and top tests move with the gap. Confirm the gap test fails before the change.
-- [ ] 10.2 Implement: add the gap row, drop the right margin, and move the item targets and the window fit to match (`src/tui.rs`). The window leaves room for the gap.
-- [ ] 10.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 10.1 Test: one blank row sits between the title row and the first item row; the item rows and the title row end at the box's right edge with no right margin; the height test expects twenty-one rows and the bottom and top tests move with the gap. Confirm the gap test fails before the change.
+- [x] 10.2 Implement: add the gap row, drop the right margin, and move the item targets and the window fit to match (`src/tui.rs`). The window leaves room for the gap.
+- [x] 10.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
