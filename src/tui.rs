@@ -455,6 +455,8 @@ pub enum Role {
     Success,
     Code,
     Link,
+    /// Caution, such as the reasoning effort in the composer footer.
+    Warning,
 }
 
 pub(crate) struct Palette {
@@ -646,6 +648,8 @@ impl Palette {
             Role::Border => Slot::Border,
             Role::Code => Slot::Code,
             Role::Link => Slot::Link,
+            // Scaffold: the warning slot is wired in the green step.
+            Role::Warning => Slot::Accent,
         };
         let [r, g, b] = self.theme.rgb(slot);
         let fallback = crate::theme::to_256([r, g, b]);

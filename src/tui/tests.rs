@@ -8486,6 +8486,97 @@ fn the_command_menu_has_no_title_or_footer_and_keeps_its_keys() {
     assert_eq!(a.input, "/", "Esc changed the typed text");
 }
 
+#[test]
+fn the_composer_block_bars_every_row_and_capitalises_the_agent() {
+    let mut a = colour_app();
+    a.agent = "build".into();
+    a.input = "hello".into();
+    a.cursor = 5;
+    let frame = a.frame(60, 14);
+    let plain: Vec<String> = strip(&frame).split("\r\n").map(str::to_string).collect();
+    let raw: Vec<&str> = frame.split("\r\n").collect();
+    let at = plain.iter().position(|r| r.starts_with("▌ hello")).expect("no input row");
+    // The block is blank, input, blank, footer: the accent bar sits on every row.
+    for row in [at - 1, at, at + 1, at + 2] {
+        assert!(plain[row].starts_with("▌ "), "row {row} has no accent bar: {plain:?}");
+    }
+    assert_eq!(plain[at + 1].trim_end(), "▌", "the blank row below the input: {plain:?}");
+    assert!(raw[at + 1].contains(&a.palette.paint(Role::Info, "▌ ")), "the bar is not accent: {:?}", raw[at + 1]);
+    assert!(plain[at + 2].starts_with("▌ Build normal · "), "the agent is not capitalised: {plain:?}");
+}
+
+#[test]
+fn the_input_and_footer_start_in_one_column_with_the_footer_colours() {
+    let mut a = colour_app();
+    a.agent = "build".into();
+    a.input = "hello".into();
+    a.cursor = 5;
+    let frame = a.frame(90, 14);
+    let plain: Vec<String> = strip(&frame).split("\r\n").map(str::to_string).collect();
+    let input = plain.iter().find(|r| r.starts_with("▌ hello")).expect("no input row");
+    let footer = plain.iter().find(|r| r.contains("Build normal")).expect("no footer row");
+    let column = |row: &str, ch: char| row.chars().position(|c| c == ch);
+    assert_eq!(column(input, 'h'), Some(2), "{input:?}");
+    assert_eq!(column(footer, 'B'), Some(2), "the footer is not aligned with the input: {footer:?}");
+    assert!(frame.contains(&a.palette.paint(Role::Info, "Build")), "the agent is not in the accent colour");
+    assert!(frame.contains(&a.palette.paint(Role::Warning, "default")), "the effort is not in the warning colour");
+    assert!(frame.contains(&a.palette.paint(Role::Thinking, "deepseek")), "the provider is not muted");
+}
+
+#[test]
+fn the_status_bar_is_one_row_with_the_directory_at_the_left() {
+    let mut a = app();
+    a.agents.clear();
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+    a.root = home.join("Projects/imp");
+    a.cfg.context_window = Some(1_000_000);
+    a.status.tokens = 674_600;
+    a.status.hit = 900;
+    a.status.miss = 100;
+    a.status.output = 50;
+    a.status.goal = Some(("fix the parser".into(), 2, 5));
+    a.status.goal_paused = true;
+    let line = a.status_line(120);
+    assert!(!line.contains('\n'), "more than one row: {line:?}");
+    assert!(line.starts_with("~/Projects/imp  "), "the directory is not at the left: {line}");
+    assert!(line.ends_with("ctrl+p commands"), "the hint is not at the right: {line}");
+    let at = |s: &str| line.find(s).unwrap_or_else(|| panic!("no {s:?} in {line}"));
+    assert!(at("goal 2/5 · paused") < at("674.6K (67%)"), "the goal is not before the tokens: {line}");
+    assert!(at("674.6K (67%)") < at("$"), "the cost is not after the tokens: {line}");
+    assert!(at("$") < at("ctrl+p commands"), "the hint is not last: {line}");
+    assert!(!line.contains("for commands"), "the slash hint is in the bar: {line}");
+    // Before the first message the bar keeps no slash hint either, at any width.
+    for cols in [120, 30] {
+        let bar = strip(&app().frame(cols, 24));
+        let last = bar.lines().last().unwrap_or("");
+        assert!(!last.contains("/ for commands"), "{cols} columns: {last:?}");
+    }
+}
+
+#[test]
+fn the_command_menu_draws_rails_no_gap_and_an_accent_highlight() {
+    let (tx, _rx) = channel();
+    let mut a = app();
+    a.handle_key(Key::Char('/'), &tx);
+    let frame = a.frame(80, 20);
+    let plain: Vec<String> = strip(&frame).split("\r\n").map(str::to_string).collect();
+    let rails: Vec<usize> = plain
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.starts_with('▏') && r.trim_end().ends_with('▏'))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(rails.len() >= 2, "no rails on the menu rows: {plain:?}");
+    let raw: Vec<&str> = frame.split("\r\n").collect();
+    assert!(raw.iter().any(|r| r.contains(&a.palette.paint(Role::Thinking, "▏"))), "the rail is not muted");
+    let last = *rails.last().expect("rails");
+    assert!(plain[last + 1].starts_with('▌'), "a blank row sits between the menu and the composer: {plain:?}");
+    let lit = plain.iter().find(|r| r.contains('▎')).expect("no highlighted row");
+    let name: String = lit.split_once('▎').expect("marker").1.chars().skip(2).take_while(|c| !c.is_whitespace()).collect();
+    assert!(name.starts_with('/'), "{lit:?}");
+    assert!(frame.contains(&a.palette.paint(Role::Info, &name)), "the highlighted name is not in the accent colour: {name:?}");
+}
+
 /// The rows a picker overlay draws: each positioned row starts with a cursor move.
 fn positioned_rows(out: &str) -> usize {
     out.split("\x1b[")
