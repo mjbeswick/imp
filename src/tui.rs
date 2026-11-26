@@ -7650,7 +7650,9 @@ impl App {
         // The modal grows to its widest row: label, gap, description, and the frame and marker.
         let longest_label = picker.items.iter().map(|i| i.label.chars().count()).max().unwrap_or(0);
         let longest_desc = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
-        let width = modal_width(cols, 6 + longest_label + longest_desc);
+        // A row is marker (2), label column (label + 2), gap (2), description, and the
+        // two frame columns: 8 more than the label and description together.
+        let width = modal_width(cols, 8 + longest_label + longest_desc);
         if width < 4 || rows < 5 {
             return None;
         }

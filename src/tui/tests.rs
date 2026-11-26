@@ -3866,6 +3866,16 @@ fn esc_cancels_a_capture_and_saves_nothing() {
 }
 
 #[test]
+fn the_keys_card_shows_its_longest_description_at_160_columns() {
+    let mut a = app();
+    a.open_keys();
+    let longest = crate::help::KEYS.iter().map(|(_, w)| *w).max_by_key(|w| w.chars().count()).expect("keys");
+    let shown = strip(&a.frame(160, 60));
+    assert!(shown.contains(longest), "{longest:?} is cut: {shown:?}");
+    assert!(!shown.contains('…'), "a description is cut with an ellipsis: {shown:?}");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
