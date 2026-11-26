@@ -275,6 +275,23 @@ impl Jobs {
     pub fn running(&self) -> usize {
         self.map.values().filter(|j| j.running()).count()
     }
+
+    /// Jobs running at this moment. Each child is checked with `try_wait`,
+    /// which keeps its exit status for the next `poll`, so no end is lost.
+    pub fn running_now(&mut self) -> usize {
+        let mut live = 0;
+        for job in self.map.values_mut() {
+            if job.code.is_some() {
+                continue;
+            }
+            let running = match job.child.as_mut() {
+                Some(child) => matches!(child.try_wait(), Ok(None)),
+                None => true,
+            };
+            live += usize::from(running);
+        }
+        live
+    }
 }
 
 /// Jobs end with their session: SIGTERM to every running process group. No
@@ -416,5 +433,17 @@ mod tests {
         assert!(text.contains(&format!("job {b}")));
         assert!(text.contains("running"), "{text}");
         let _ = jobs.kill(b);
+    }
+
+    #[test]
+    fn running_now_counts_live_jobs_without_taking_their_ends() {
+        let d = dir();
+        let mut jobs = Jobs::default();
+        let id = jobs.start("sleep 0.3", &d).unwrap();
+        assert_eq!(jobs.running_now(), 1);
+        std::thread::sleep(Duration::from_millis(900));
+        assert_eq!(jobs.running_now(), 0, "a finished job still counts");
+        let ended = jobs.poll();
+        assert!(ended.iter().any(|(job, code, _)| *job == id && *code == 0), "the end was taken: {ended:?}");
     }
 }

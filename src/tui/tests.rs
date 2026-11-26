@@ -188,8 +188,8 @@ fn a_selection_is_drawn_reversed() {
     b.cursor = 5;
     b.handle_key(Key::Select(Move::Up), &tx);
     let out = b.frame(54, 10);
-    assert!(out.contains("> ab\x1b[7m \x1b[0m"), "{out:?}");
-    assert!(out.contains("  \x1b[7mcd\x1b[27m"), "{out:?}");
+    assert!(out.contains("▌ ab\x1b[7m \x1b[0m"), "{out:?}");
+    assert!(out.contains("▌ \x1b[7mcd\x1b[27m"), "{out:?}");
     // A long selected draft still fits the width.
     let mut c = app();
     c.input = "x".repeat(120);
@@ -197,7 +197,7 @@ fn a_selection_is_drawn_reversed() {
     for _ in 0..80 {
         c.handle_key(Key::Select(Move::Left), &tx);
     }
-    let row = strip(&c.frame(54, 10)).lines().find(|l| l.starts_with("> ")).unwrap().trim_end_matches('\r').to_string();
+    let row = strip(&c.frame(54, 10)).lines().find(|l| l.starts_with("▌ ")).unwrap().trim_end_matches('\r').to_string();
     assert!(row.chars().count() <= 54, "{row:?}");
 }
 
@@ -247,7 +247,8 @@ fn enter_queues_during_a_turn_and_ctrl_q_does_nothing() {
     assert_eq!(a.queued, vec!["also add tests"], "Enter did not queue");
     assert!(a.input.is_empty());
     let shown = strip(&a.frame(60, 10));
-    assert!(shown.contains("\r\n» "), "the glyph is not » during a turn: {shown:?}");
+    assert!(shown.contains("\r\n▌ "), "no accent bar during a turn: {shown:?}");
+    assert!(!shown.contains('»'), "a queue glyph is drawn: {shown:?}");
     a.input = "draft".into();
     a.cursor = a.input.len();
     a.handle_key(Key::Ctrl('q'), &tx);
@@ -513,6 +514,8 @@ fn the_edit_rule_fits_and_names_every_key() {
     let (mut a, _cmds, _ev) = worker_app();
     let tx = a.worker.as_ref().unwrap().0.clone();
     a.status.streaming = true;
+    // An entry takes the welcome hint off the status line, which would cut the label.
+    a.push(Role::User, "hi");
     a.queued = vec!["only".into()];
     a.handle_key(Key::Up, &tx);
     let running = strip(&a.frame(54, 14));
@@ -633,18 +636,19 @@ fn the_prompt_names_the_agent_and_the_status_line_the_mode() {
     let mut a = app();
     a.agents = vec![("build".into(), String::new())];
     a.agent = "build".into();
-    assert!(strip(&a.frame(60, 10)).contains("\r\n> "), "one agent should give a bare prompt");
+    assert!(strip(&a.frame(60, 10)).contains("▌ "), "the block has no accent bar");
     a.agents.push(("plan".into(), String::new()));
     a.input = "x".repeat(70);
     a.cursor = a.input.len();
     let rows: Vec<String> = strip(&a.frame(60, 12)).split("\r\n").map(String::from).collect();
-    let first = rows.iter().position(|r| r.starts_with("build> ")).expect("no agent before the prompt");
-    assert!(rows[first + 1].starts_with("       x"), "the next row is not aligned: {rows:?}");
+    let first = rows.iter().position(|r| r.starts_with("▌ xxx")).expect("no input row");
+    assert!(rows[first + 1].starts_with("▌ x"), "the next row is not aligned: {rows:?}");
+    assert!(rows.iter().any(|r| r.starts_with("build normal ·")), "the footer names no agent: {rows:?}");
     a.agent_next = Some("plan".into());
-    assert!(strip(&a.frame(60, 12)).contains("\r\nplan> "));
-    assert!(a.status_line(80).starts_with("deepseek-flash · 0 tok"), "{}", a.status_line(80));
+    assert!(strip(&a.frame(60, 12)).contains("plan normal ·"), "the footer names no next agent");
+    assert!(a.status_line(80).starts_with("0 (0%)"), "{}", a.status_line(80));
     a.cfg.set_permissions(crate::config::Permissions::Strict);
-    assert!(a.status_line(80).starts_with("deepseek-flash · strict · 0 tok"), "{}", a.status_line(80));
+    assert!(strip(&a.frame(60, 12)).contains("plan strict ·"), "the footer does not show the mode");
     assert!(a.status_line(54).chars().count() <= 54);
 }
 
@@ -1501,7 +1505,7 @@ fn ctrl_n_switches_sessions_and_keeps_drafts() {
     let (tx, _rx) = channel();
     a.handle_key(Key::Ctrl('n'), &tx);
     assert_eq!(a.panes.len(), 1, "one session must not switch");
-    assert!(a.status_line(80).starts_with(&a.cfg.model), "{}", a.status_line(80));
+    assert!(a.status_line(80).starts_with("0 (0%)"), "{}", a.status_line(80));
     a.push(Role::User, "fix the parser");
     a.input = "draft one".into();
     a.cursor = a.input.len();
@@ -2115,12 +2119,13 @@ fn a_quiet_screen_has_no_rule() {
 }
 
 #[test]
-fn yolo_draws_the_rule_without_a_label() {
+fn yolo_draws_no_rule_and_names_the_mode_in_the_footer() {
     let mut a = app();
     a.cfg.set_permissions(crate::config::Permissions::Yolo);
     a.push(Role::User, "first");
     let frame = strip(&a.frame(80, 24));
-    assert!(frame.contains("────"), "no rule in yolo: {frame:?}");
+    assert!(!frame.contains("────"), "a rule in yolo: {frame:?}");
+    assert!(frame.contains("default yolo ·"), "the footer does not show yolo: {frame:?}");
 }
 
 #[test]
@@ -2128,7 +2133,7 @@ fn an_empty_transcript_shows_a_welcome_row() {
     let mut a = app();
     let frame = strip(&a.frame(120, 24));
     let status = frame.lines().last().unwrap_or("");
-    assert!(status.starts_with("/ for commands · deepseek-flash"), "{frame:?}");
+    assert!(status.starts_with("/ for commands · 0 (0%)"), "{frame:?}");
     assert_eq!(frame.matches("/ for commands").count(), 1, "the hint is in the body too: {frame:?}");
     assert_eq!(frame.matches(tilde(&a.root).as_str()).count(), 1, "{frame:?}");
     a.push(Role::User, "hello");
@@ -2147,9 +2152,9 @@ fn the_status_line_ends_with_the_directory_when_it_fits() {
     let wide = a.status_line(100);
     assert!(wide.ends_with(&root), "{wide}");
     assert_eq!(wide.chars().count(), 100, "{wide}");
-    assert!(wide.starts_with("deepseek-flash · "), "{wide}");
+    assert!(wide.starts_with("0 (0%) · "), "{wide}");
     let narrow = a.status_line(30);
-    assert!(narrow.starts_with("deepseek-flash"), "{narrow}");
+    assert!(narrow.starts_with("0 (0%)"), "{narrow}");
 }
 
 #[test]
@@ -2158,7 +2163,7 @@ fn the_status_line_shortens_a_long_directory() {
     a.agents.clear();
     let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
     a.root = home.join("Projects/imp/src/providers");
-    let left = "deepseek-flash · 0 tok 0% · $0.00";
+    let left = "0 (0%) · $0.00 · ctrl+p commands";
     let at = |a: &App, cols: usize| {
         let line = a.status_line(cols);
         assert!(line.starts_with(left) && line.chars().count() <= cols, "{line}");
@@ -2173,16 +2178,14 @@ fn the_status_line_shortens_a_long_directory() {
 }
 
 #[test]
-fn a_waiting_prompt_has_an_accent_bar_and_rule() {
+fn a_waiting_prompt_draws_no_rule() {
     let mut a = colour_app();
     let (tx, _rx) = channel();
     let idle = a.frame(80, 20);
     a.run_command("rename", &tx);
     let asking = a.frame(80, 20);
-    let accent = a.palette.paint(Role::Info, "─");
-    let accent = &accent[..accent.find('─').unwrap()];
-    assert!(asking.contains(&format!("{accent}{}", "─".repeat(80))), "{asking:?}");
-    assert!(!idle.contains(&format!("{accent}{}", "─".repeat(80))), "{idle:?}");
+    assert!(!strip(&asking).contains("────"), "a rule above the prompt: {asking:?}");
+    assert!(!strip(&idle).contains("────"), "{idle:?}");
     assert!(strip(&asking).contains("▌ new title: "), "{asking:?}");
 
     let mut plain = app();
@@ -2193,33 +2196,25 @@ fn a_waiting_prompt_has_an_accent_bar_and_rule() {
 }
 
 #[test]
-fn yolo_paints_the_prompt_and_rule_in_the_error_colour() {
+fn yolo_paints_the_bar_in_the_error_colour() {
     let mut a = colour_app();
     let (tx, _rx) = channel();
-    let error = a.palette.paint(Role::Error, "> ");
-    let rule = a.palette.paint(Role::Error, &"─".repeat(80));
+    let error = a.palette.paint(Role::Error, "▌ ");
     let normal = a.frame(80, 20);
-    assert!(!normal.contains(&error) && !normal.contains(&rule), "{normal:?}");
+    assert!(!normal.contains(&error), "{normal:?}");
     a.run_command("mode yolo", &tx);
     let yolo = a.frame(80, 20);
-    assert!(yolo.contains(&error), "glyph: {yolo:?}");
-    assert!(yolo.contains(&rule), "rule: {yolo:?}");
+    assert!(yolo.contains(&error), "bar: {yolo:?}");
     a.run_command("mode normal", &tx);
     assert!(!a.frame(80, 20).contains(&error), "yolo colour stayed");
 
     let mut plain = app();
     plain.agents.clear();
-    let before = plain.frame(80, 20);
     plain.cfg.set_permissions(crate::config::Permissions::Yolo);
-    // Only the status line names it; no colour appears.
+    // Only the footer names it; no colour appears.
     let after = plain.frame(80, 20);
     assert!(!after.contains("38;"), "colour with colour off");
-    let rows = |f: &str| f.split("\r\n").map(str::to_string).collect::<Vec<_>>();
-    let quiet: Vec<_> = rows(&before).into_iter().filter(|r| !r.starts_with('─')).collect();
-    let loud: Vec<_> = rows(&after).into_iter().filter(|r| !r.starts_with('─')).collect();
-    assert_eq!(quiet[quiet.len() - 2], loud[loud.len() - 2], "the composer moved or changed");
-    assert!(rows(&after).iter().any(|r| r.starts_with('─')), "no rule in yolo: {after:?}");
-    assert!(loud.last().unwrap().contains("deepseek-flash · yolo · "), "{after:?}");
+    assert!(strip(&after).contains("default yolo ·"), "{after:?}");
 }
 
 #[test]
@@ -2305,7 +2300,7 @@ fn frame_shows_status_and_prompt() {
     let mut a = app();
     let out = a.frame(100, 20);
     assert!(out.contains("deepseek-flash"));
-    assert!(out.contains("> "));
+    assert!(out.contains("▌ "));
 }
 
 #[test]
@@ -2589,8 +2584,8 @@ fn composer_draws_one_row_per_line() {
     a.input = "line one\nline two".into();
     a.cursor = a.input.len();
     let out = a.frame(60, 12).replace("\x1b[K", "");
-    assert!(out.contains("> line one\r\n"), "{out:?}");
-    assert!(out.contains("  line two"), "{out:?}");
+    assert!(out.contains("▌ line one\r\n"), "{out:?}");
+    assert!(out.contains("▌ line two"), "{out:?}");
     assert!(!out.contains('\u{0}'), "caret marker leaked into the frame");
 }
 
@@ -2603,7 +2598,7 @@ fn composer_keeps_the_caret_row_visible() {
         .join("\n");
     a.cursor = a.input.len();
     let out = a.frame(60, 12);
-    assert!(out.contains("  row 12"), "last row missing: {out:?}");
+    assert!(out.contains("▌ row 12"), "last row missing: {out:?}");
     assert!(
         !out.contains("row 1\r\n"),
         "composer ignored its row budget"
@@ -2626,7 +2621,7 @@ fn composer_rows_fit_the_terminal() {
     );
     let draft_x = out.lines().filter(|line| {
         let line = strip(line);
-        line.starts_with("> x") || line.starts_with("  x")
+        line.starts_with("▌ x")
     }).map(|line| line.matches('x').count()).sum::<usize>();
     assert_eq!(draft_x, 90, "the draft lost characters");
 }
@@ -2667,9 +2662,9 @@ fn a_wide_draft_is_drawn_across_rows() {
         lines.iter().all(|l| l.chars().count() <= 54),
         "a row is wider than the terminal: {out:?}"
     );
-    assert!(out.contains("> word word"), "the first row lost its glyph: {out:?}");
+    assert!(out.contains("▌ word word"), "the first row lost its bar: {out:?}");
     assert!(
-        lines.iter().any(|l| l.starts_with("  word")),
+        lines.iter().any(|l| l.starts_with("▌ word")),
         "no continuation row: {out:?}"
     );
     assert!(out.matches("word").count() >= 20, "the draft lost words: {out:?}");
@@ -2836,7 +2831,7 @@ fn a_task_reports_its_meter_and_finish_line() {
     a.apply(Ev::ToolStart { name: "bash".into(), summary: "ls".into(), args: String::new() });
     a.apply(Ev::Usage { tokens: None, hit: 900, miss: 100, output: 2100, model: None });
     let status = strip(&a.status_line(80));
-    assert!(status.ends_with("0s · 1 step · ↓2.1K"), "{status}");
+    assert!(status.contains("0s · 1 step · ↓2.1K"), "{status}");
     a.apply(Ev::Done(None));
     let last = a.entries.last().unwrap();
     assert!(last.text.starts_with("0s · 1 step · 1K in (90% cached) · 2.1K out"), "{}", last.text);
@@ -2859,7 +2854,7 @@ fn a_usage_event_moves_the_context_mid_turn() {
     a.handle_key(Key::Enter, &tx);
     a.apply(Ev::Usage { tokens: Some(7700), hit: 10, miss: 90, output: 20, model: None });
     let status = strip(&a.status_line(80));
-    assert!(status.contains("7.7K tok"), "{status}");
+    assert!(status.contains("7.7K ("), "{status}");
     assert!(a.status.streaming, "the event ended the turn");
 }
 
@@ -2877,7 +2872,7 @@ fn a_suggestion_is_taken_with_right_and_dropped_by_typing() {
     let (tx, _rx) = channel();
     a.apply(Ev::Suggest("run the tests".into()));
     let shown = strip(&a.frame(60, 10));
-    assert!(shown.contains(">  run the tests"), "not drawn");
+    assert!(shown.contains("▌  run the tests"), "not drawn");
     assert!(!shown.contains("run the tests  Tab"), "the key hint is back: {shown:?}");
     a.handle_key(Key::Right, &tx);
     assert_eq!(a.input, "run the tests");
@@ -3037,7 +3032,7 @@ fn status_reports_tokens_and_cost() {
     a.status.miss = 100;
     a.status.output = 50;
     let line = a.status_line(120);
-    assert!(line.contains("3.4K tok"), "{line}");
+    assert!(line.contains("3.4K ("), "{line}");
     let cost =
         crate::pricing::cost("deepseek-flash", crate::pricing::now(), 900, 100, 50).unwrap();
     let shown = if cost < 0.1 { format!("${cost:.3}") } else { format!("${cost:.2}") };
@@ -3050,9 +3045,9 @@ fn status_reports_tokens_and_cost() {
 fn status_abbreviates_large_token_counts() {
     let mut a = app();
     a.status.tokens = 940;
-    assert!(a.status_line(120).contains("940 tok"));
+    assert!(a.status_line(120).contains("940 ("));
     a.status.tokens = 1_200_000;
-    assert!(a.status_line(120).contains("1.2M tok"));
+    assert!(a.status_line(120).contains("1.2M ("));
     assert_eq!(compact_tokens(12_345), "12.3K");
     assert_eq!(compact_tokens(1_000), "1K");
 }
@@ -3092,7 +3087,7 @@ fn an_unknown_model_shows_tokens_but_no_cost() {
     a.status.miss = 10;
     a.status.output = 5;
     let line = a.status_line(120);
-    assert!(line.contains("100 tok"), "{line}");
+    assert!(line.contains("100 · ctrl+p"), "{line}");
     assert!(!line.contains('$'), "{line}");
 }
 
@@ -3100,14 +3095,10 @@ fn an_unknown_model_shows_tokens_but_no_cost() {
 fn status_shows_the_served_model_when_it_differs() {
     let mut a = app();
     a.status.served = "deepseek-flash-2026-11".into();
-    assert!(
-        a.status_line(120)
-            .contains("deepseek-flash (deepseek-flash-2026-11)"),
-        "{}",
-        a.status_line(120)
-    );
+    let frame = strip(&a.frame(120, 20));
+    assert!(frame.contains("deepseek-flash (deepseek-flash-2026-11) deepseek"), "{frame}");
     a.status.served = "deepseek-flash".into();
-    assert!(!a.status_line(120).contains("deepseek-flash ("), "{}", a.status_line(120));
+    assert!(!strip(&a.frame(120, 20)).contains("deepseek-flash ("), "{frame}");
 }
 
 #[test]
@@ -3177,7 +3168,7 @@ fn the_status_line_has_no_spinner() {
             "status line carried {frame:?}: {line:?}"
         );
     }
-    assert!(line.starts_with("deepseek-flash"), "{line:?}");
+    assert!(line.starts_with("⋯ esc interrupt"), "{line:?}");
 }
 
 #[test]
@@ -3737,7 +3728,8 @@ fn the_command_picker_shows_the_whole_description() {
     }
     let frame = strip(&a.frame(60, 20));
     assert!(frame.contains("/goal"), "no command row: {frame:?}");
-    assert!(frame.contains("off to stop"), "description cut: {frame:?}");
+    // The highlighted row wraps its description; every word is drawn.
+    assert!(frame.contains("off to") && frame.contains("stop"), "description cut: {frame:?}");
 }
 
 #[test]
@@ -4019,7 +4011,7 @@ fn the_picker_shows_its_filter_cursor() {
     let (tx, _rx) = channel();
     let idle = a.frame(80, 20);
     assert!(!idle.contains("\x1b[?25h"), "idle frame showed a cursor");
-    a.handle_key(Key::Char('/'), &tx);
+    a.run_command("mode", &tx);
     let open = a.frame(80, 20);
     assert!(open.contains("\x1b[?25h"), "the filter has no cursor");
     a.handle_key(Key::Esc, &tx);
@@ -5637,22 +5629,23 @@ fn a_typed_command_on_the_deny_list_is_refused() {
 }
 
 #[test]
-fn a_shell_draft_shows_a_dollar_prompt() {
+fn a_shell_draft_names_the_shell_in_the_footer() {
     let mut a = app();
     a.input = "!ls".into();
     a.cursor = 3;
     let out = a.frame(60, 12);
-    assert!(out.contains("$ ls"), "no shell prompt: {out:?}");
+    assert!(out.contains("▌ ls"), "the input lost its left edge: {out:?}");
+    assert!(out.contains("shell normal ·"), "the footer names no shell: {out:?}");
     assert!(out.contains("shell · local"), "no shell status: {out:?}");
 }
 
 #[test]
-fn a_normal_draft_keeps_the_arrow() {
+fn a_normal_draft_keeps_the_bar() {
     let mut a = app();
     a.input = "hello".into();
     a.cursor = 5;
     let out = a.frame(60, 12);
-    assert!(out.contains("> hello"), "{out:?}");
+    assert!(out.contains("▌ hello"), "{out:?}");
     assert!(out.contains("deepseek-flash"), "{out:?}");
 }
 
@@ -6058,9 +6051,9 @@ fn the_status_line_shows_the_context_percent_when_the_window_is_known() {
     let mut a = app();
     a.cfg.context_window = Some(200_000);
     a.status.tokens = 12_300;
-    assert!(a.status_line(120).contains("12.3K tok 6%"), "{}", a.status_line(120));
+    assert!(a.status_line(120).contains("12.3K (6%)"), "{}", a.status_line(120));
     a.status.tokens = 1_200_000;
-    assert!(a.status_line(120).contains("1.2M tok 100%"), "{}", a.status_line(120));
+    assert!(a.status_line(120).contains("1.2M (100%)"), "{}", a.status_line(120));
 }
 
 #[test]
@@ -6069,7 +6062,7 @@ fn the_status_line_omits_the_percent_when_the_window_is_unknown() {
     a.cfg.model = "some-other-model".into();
     a.status.tokens = 7_700;
     let line = a.status_line(120);
-    assert!(line.contains("7.7K tok") && !line.contains('%'), "{line}");
+    assert!(line.contains("7.7K") && !line.contains('%'), "{line}");
 }
 
 #[test]
@@ -6078,7 +6071,7 @@ fn the_status_line_uses_the_configured_window() {
     a.cfg.model = "some-other-model".into();
     a.cfg.context_window = Some(32_000);
     a.status.tokens = 8_000;
-    assert!(a.status_line(120).contains("8K tok 25%"), "{}", a.status_line(120));
+    assert!(a.status_line(120).contains("8K (25%)"), "{}", a.status_line(120));
 }
 
 #[test]
@@ -6181,9 +6174,10 @@ fn esc_closes_the_form_and_keeps_the_values() {
 fn the_status_line_names_auto_and_not_normal() {
     let mut a = app();
     a.cfg.set_permissions(crate::config::Permissions::Auto);
-    assert!(a.status_line(100).starts_with("deepseek-flash · auto · 0 tok"), "{}", a.status_line(100));
+    assert!(a.status_line(100).starts_with("0 (0%)"), "{}", a.status_line(100));
+    assert!(strip(&a.frame(100, 20)).contains("default auto ·"), "the footer does not show auto");
     a.cfg.set_permissions(crate::config::Permissions::Normal);
-    assert!(!a.status_line(100).contains("auto"), "{}", a.status_line(100));
+    assert!(!strip(&a.frame(100, 20)).contains("auto ·"), "auto stayed in the footer");
 }
 
 fn open_question_with_queue(a: &mut App, queued: &[&str]) -> Receiver<Option<Vec<String>>> {
@@ -7561,10 +7555,10 @@ fn the_status_line_names_a_configured_provider() {
     a.run_command("model", &tx);
     provider_row(&mut a, "work::m2");
     a.handle_key(Key::Enter, &tx);
-    // The "model: m2" toast takes the status line for three seconds; the provider shows after it.
+    // The "model: m2" toast takes the status line for three seconds; the footer shows the provider after it.
     a.status.toast = None;
-    let line = a.status_line(120);
-    assert!(line.contains("m2 (work)"), "the status line does not name the provider: {line}");
+    let frame = strip(&a.frame(120, 20));
+    assert!(frame.contains("m2 (work)"), "the footer does not name the provider: {frame}");
 }
 
 fn goal_app() -> (App, Sender<Cmd>, Receiver<Cmd>) {
@@ -7715,4 +7709,108 @@ fn a_title_filter_with_no_hits_offers_a_text_search() {
     }
     let frame = strip(&a.frame(80, 16));
     assert!(frame.contains("no titles match · Enter searches text"), "{frame}");
+}
+
+// Composer style: the block, its footer, the status bar, the running row,
+// Ctrl+P, and the command menu.
+
+#[test]
+fn the_composer_is_a_filled_block_with_an_accent_bar_and_no_glyph() {
+    let mut a = colour_app();
+    a.input = "hello".into();
+    a.cursor = 5;
+    let frame = a.frame(60, 14);
+    let rows: Vec<&str> = frame.split("\r\n").collect();
+    let at = rows.iter().position(|r| strip(r).starts_with("▌ hello")).expect("no accent bar row");
+    assert!(rows[at].contains(&a.palette.paint(Role::Info, "▌ ")), "{:?}", rows[at]);
+    assert!(rows[at].contains(&a.palette.panel_bg()), "no panel fill: {:?}", rows[at]);
+    assert!(strip(rows[at - 1]).trim().is_empty(), "no blank row above: {frame:?}");
+    assert!(strip(rows[at + 1]).trim().is_empty(), "no blank row below: {frame:?}");
+    assert!(!strip(&frame).contains("> "), "a prompt glyph is drawn: {frame:?}");
+}
+
+#[test]
+fn the_footer_names_the_agent_mode_model_provider_and_effort() {
+    let mut a = colour_app();
+    a.agent = "build".into();
+    let frame = a.frame(90, 14);
+    assert!(strip(&frame).contains("build normal · deepseek-flash deepseek · default"), "{frame:?}");
+    assert!(frame.contains(&a.palette.paint(Role::Info, "build")), "agent not accent: {frame:?}");
+    assert!(frame.contains(&a.palette.paint(Role::Thinking, "deepseek")), "provider not muted: {frame:?}");
+    assert!(frame.contains(&a.palette.paint(Role::Info, "default")), "effort not accent: {frame:?}");
+    a.cfg.effort = Some("high".into());
+    a.cfg.set_permissions(crate::config::Permissions::Strict);
+    assert!(strip(&a.frame(90, 14)).contains("build strict · deepseek-flash deepseek · high"));
+    a.status.served = "deepseek-flash-2026-11".into();
+    assert!(strip(&a.frame(90, 14)).contains("deepseek-flash (deepseek-flash-2026-11) deepseek"));
+    // A shell draft names the shell in the footer and keeps the input at the edge.
+    a.status.served.clear();
+    a.input = "!ls".into();
+    a.cursor = a.input.len();
+    let shell = strip(&a.frame(90, 14));
+    assert!(shell.contains("▌ ls"), "the input does not keep its left edge: {shell:?}");
+    assert!(shell.contains("shell strict · deepseek-flash"), "{shell:?}");
+}
+
+#[test]
+fn the_status_bar_shows_tokens_with_share_and_cost_without_the_cache_or_model() {
+    let mut a = app();
+    a.cfg.context_window = Some(1_000_000);
+    a.status.tokens = 262_200;
+    let line = a.status_line(120);
+    assert!(line.contains("262.2K (26%)"), "{line}");
+    assert!(line.contains("$0.00"), "no cost: {line}");
+    assert!(line.contains("ctrl+p commands"), "no hint: {line}");
+    assert!(!line.contains("deepseek-flash"), "the model is still in the status bar: {line}");
+    assert!(!line.contains("hit") && !line.contains("cached"), "cache share: {line}");
+    a.cfg.set_permissions(crate::config::Permissions::Normal);
+    assert!(!a.status_line(120).contains("normal"), "the mode is in the status bar");
+}
+
+#[test]
+fn a_running_command_shows_a_row_above_the_composer_only_while_it_runs() {
+    let mut a = app();
+    a.status.jobs = 1;
+    let frame = strip(&a.frame(60, 14));
+    let rows: Vec<&str> = frame.split("\r\n").collect();
+    let at = rows.iter().position(|r| r.trim() == "1 command").expect("no running row");
+    assert!(rows[at + 2].starts_with('▌'), "the row is not above the composer: {rows:?}");
+    a.status.jobs = 2;
+    assert!(strip(&a.frame(60, 14)).contains("2 commands"));
+    // The worker's count reaches the row through its event.
+    a.apply(Ev::Jobs(1));
+    assert!(strip(&a.frame(60, 14)).split("\r\n").any(|r| r.trim() == "1 command"), "Ev::Jobs did not draw the row");
+    a.status.jobs = 0;
+    let idle = strip(&a.frame(60, 14));
+    assert!(!idle.split("\r\n").any(|r| r.trim().ends_with("command") || r.trim().ends_with("commands") && r.trim().starts_with(char::is_numeric)), "{idle:?}");
+}
+
+#[test]
+fn ctrl_p_opens_the_command_menu_only_on_an_empty_composer() {
+    let (tx, _rx) = channel();
+    let mut a = app();
+    a.handle_key(Key::Ctrl('p'), &tx);
+    assert!(matches!(&a.pending, Some(Pending::Pick(p)) if matches!(p.kind, PickKind::Command) && p.filter.is_empty()), "no empty command menu");
+    assert!(a.input.is_empty());
+    let mut b = app();
+    b.input = "draft".into();
+    b.cursor = 5;
+    b.handle_key(Key::Ctrl('p'), &tx);
+    assert_eq!(b.input, "draft", "the text changed");
+    assert!(b.pending.is_none(), "a menu opened over text");
+}
+
+#[test]
+fn the_command_menu_has_no_title_or_footer_and_keeps_its_keys() {
+    let (tx, _rx) = channel();
+    let mut a = app();
+    a.handle_key(Key::Char('/'), &tx);
+    let frame = strip(&a.frame(80, 20));
+    assert!(frame.contains("/compact"), "{frame:?}");
+    assert!(!frame.contains("╭") && !frame.contains("╰") && !frame.contains("│"), "a border: {frame:?}");
+    assert!(!frame.contains("─ commands"), "a title row: {frame:?}");
+    assert!(!frame.contains("choose") && !frame.contains("close"), "a footer: {frame:?}");
+    a.handle_key(Key::Esc, &tx);
+    assert!(a.pending.is_none(), "Esc did not close the menu");
+    assert_eq!(a.input, "/", "Esc changed the typed text");
 }

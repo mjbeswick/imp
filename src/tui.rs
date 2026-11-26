@@ -527,13 +527,18 @@ impl Palette {
         if !self.on {
             return line.to_string();
         }
+        let bg = self.background(self.panel_rgb());
+        format!("{bg}{}\x1b[0m", line.replace("\x1b[0m", &format!("\x1b[0m{bg}")))
+    }
+
+    /// The panel colour: derived from the theme's text colour, so the picker
+    /// and the composer share one fill.
+    fn panel_rgb(&self) -> [u8; 3] {
         let text = self.theme.rgb(crate::theme::Slot::Text);
         // The same luma split the theme tests use: dark text means a light theme.
         let luma = text[0] as u32 * 3 + text[1] as u32 * 6 + text[2] as u32;
         let (target, keep) = if luma < 1280 { (255.0, 0.94) } else { (0.0, 0.88) };
-        let rgb = text.map(|c| (c as f32 + (target - c as f32) * keep).round() as u8);
-        let bg = self.background(rgb);
-        format!("{bg}{}\x1b[0m", line.replace("\x1b[0m", &format!("\x1b[0m{bg}")))
+        text.map(|c| (c as f32 + (target - c as f32) * keep).round() as u8)
     }
 
     /// A run of a diff row: text colour on the row's tint, or on a tint
@@ -610,6 +615,15 @@ impl Palette {
             let (bg, fg) = tint_256(c, fg);
             format!("\x1b[48;5;{bg}m\x1b[38;5;{fg}m{text}\x1b[0m")
         }
+    }
+
+    /// The composer block's fill: the same panel as the picker. Empty with
+    /// colour off, so the block draws no fill.
+    pub(crate) fn panel_bg(&self) -> String {
+        if !self.on {
+            return String::new();
+        }
+        self.background(self.panel_rgb())
     }
 
     pub(crate) fn theme_name(&self) -> &'static str {
@@ -1102,6 +1116,8 @@ pub enum Ev {
         ms: u128,
     },
     Info(String),
+    /// Background commands running, as the worker last counted them.
+    Jobs(usize),
     Error(String),
     Models(Vec<String>),
     /// A command shape the user allowed, for this session or for good.
@@ -2671,6 +2687,8 @@ fn is_image_name(name: &str) -> bool {
 
 #[derive(Default)]
 struct Status {
+    /// Background commands running, as the worker last counted them.
+    jobs: usize,
     /// A confirmation shown in place of the status line, and when.
     toast: Option<(String, Instant)>,
     /// A retry's countdown: seconds left, attempt, and how many.
@@ -3408,6 +3426,10 @@ impl App {
                 }
                 self.follow_tail();
             }
+            Ev::Jobs(running) => {
+                self.status.jobs = running;
+                self.dirty = true;
+            }
             Ev::Usage {
                 tokens,
                 hit,
@@ -3786,6 +3808,8 @@ impl App {
                 let n = self.panes.len();
                 self.show((self.at + 1) % n);
             }
+            // The status bar's `ctrl+p commands` opens the menu the way `/` does, but only on an empty composer.
+            Key::Ctrl('p') if self.input.is_empty() => self.open_commands(String::new()),
             Key::Ctrl('t') => self.run_command("think", tx),
             Key::Ctrl('r') => self.retry(tx),
             Key::Ctrl('e') => {
@@ -4359,8 +4383,13 @@ impl App {
             self.dirty = true;
             return;
         }
+        self.open_commands(sans);
+    }
+
+    /// Open the command menu with `filter`. Typing `/` and Ctrl+P both open it.
+    fn open_commands(&mut self, filter: String) {
         let mut picker = Picker::new("commands", command_items(), PickKind::Command);
-        picker.filter = sans;
+        picker.filter = filter;
         picker.prefix = Some("/".into());
         self.pending = Some(Pending::Pick(picker));
         self.dirty = true;
@@ -6635,14 +6664,15 @@ impl App {
             both.append(&mut composer);
             composer = both;
         }
-        // The rule sets the composer apart, unless it says nothing or the
-        // screen is too short.
-        let note = self.rule_note();
-        let rule = usize::from(rows >= 8 && note.is_some());
+        // A muted row above the composer counts the background commands while any runs.
+        let running = self.running_row();
+        if let Some(row) = running {
+            composer.insert(0, row);
+        }
         // Narrow screens give the directory a row of its own under the status.
         let narrow = cols < NARROW_COLS;
         let status_rows = 1 + usize::from(narrow);
-        let body_rows = rows.saturating_sub(status_rows + rule + composer.len()).max(1);
+        let body_rows = rows.saturating_sub(status_rows + composer.len()).max(1);
 
         let markdown = self.cfg.links.supported();
         // Only entries whose text, role, width, or turn gap changed render again.
@@ -6784,15 +6814,8 @@ impl App {
             screen.push(row);
         }
 
-        if let Some((label, tone)) = note {
-            let rule = if label.is_empty() || cols < label.chars().count() + 6 {
-                "─".repeat(cols)
-            } else {
-                format!("── {label} {}", "─".repeat(cols - label.chars().count() - 4))
-            };
-            screen.push(self.palette.paint(tone, &rule));
-        }
-        let first = body_rows + rule + 1;
+        // The composer's rows, the running row included, sit under the body.
+        let first = body_rows + 1;
         for (i, row) in composer.iter().enumerate() {
             screen.push(row.clone());
             if matches!(self.pending, Some(Pending::Confirm { .. } | Pending::Question { .. })) {
@@ -6811,8 +6834,8 @@ impl App {
             self.targets.extend(targets);
             tail.push_str("\x1b[?7l");
             tail.push_str(&overlay);
-            if matches!(self.pending, Some(Pending::Pick(_))) {
-                // Only an open filter takes the cursor.
+            if cursor_y > 0 && matches!(self.pending, Some(Pending::Pick(_))) {
+                // Only an open filter takes the cursor; the command menu has none.
                 tail.push_str(&format!("\x1b[{cursor_y};{cursor_x}H\x1b[?25h"));
             }
             tail.push_str("\x1b[?7h");
@@ -7127,6 +7150,7 @@ impl App {
             return self.provider_form_overlay(name, fields, *at, self.form_caret, cols, rows);
         }
         let picker = match &self.pending {
+            Some(Pending::Pick(picker)) if picker.kind == PickKind::Command => return self.command_menu(picker, cols, rows),
             Some(Pending::Pick(picker)) => picker,
             Some(Pending::ConfirmDelete { picker, .. }) => &**picker,
             _ => return None,
@@ -7230,6 +7254,47 @@ impl App {
             targets.extend(footer_targets(y + 1, start, &right));
         }
         Some((out, cursor, y + 1, targets))
+    }
+
+    /// The command menu: the list alone, at full width, on the rows just
+    /// above the composer. It has no title row, no footer and no border. Its
+    /// filter is the composer's own text, so it takes no row here, and it
+    /// leaves the cursor where the composer has it.
+    fn command_menu(&self, picker: &Picker, cols: usize, rows: usize) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
+        if rows < 5 || cols < 4 {
+            return None;
+        }
+        let matches = picker.matches();
+        if matches.is_empty() {
+            return None;
+        }
+        // The highlighted row wraps its description, as the picker's rows do.
+        // `picker_lines` takes a line budget: the menu may show up to PICK_ROWS lines.
+        let lines = picker_lines(picker, &matches, PICK_ROWS, cols, true);
+        // The last menu row sits on the transcript's last row, above the composer.
+        let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
+        let height = lines.len().min(body);
+        let y = body + 1 - height;
+        let column = desc_column(picker, cols);
+        let mut out = String::new();
+        let mut targets = Vec::new();
+        for (row, (text, at, selected)) in lines.iter().take(height).enumerate() {
+            // The description is muted, except on the highlighted row.
+            let line = match column.filter(|_| !*selected) {
+                Some(column) => {
+                    let plain = self.boxed(text, cols, false);
+                    let cut = plain.char_indices().nth(column).map_or(plain.len(), |(i, _)| i);
+                    format!("{}{}", &plain[..cut], self.palette.paint(Role::Thinking, &plain[cut..]))
+                }
+                None => self.boxed(text, cols, *selected),
+            };
+            let state = matches.get(*at).map_or("", |&i| picker.items[i].desc.as_str());
+            let line = styled_state(state, line);
+            let line = if *selected { line } else { self.fill(&line, cols) };
+            out.push_str(&format!("\x1b[{};1H{line}", y + row));
+            targets.push((y + row, 1, cols, Target::Row(*at)));
+        }
+        Some((out, 0, 0, targets))
     }
 
     /// Fit one row of text to the interior width and pad it with spaces.
@@ -7361,14 +7426,9 @@ impl App {
             return rows;
         }
         if let (Some(s), true, None) = (&self.status.suggestion, self.input.is_empty(), &self.pending) {
-            let tone = if self.yolo() { Role::Error } else { Role::User };
             let hint = fit(s, cols.saturating_sub(self.prompt_width() + 1));
-            let agent = self.prompt_agent().map_or(String::new(), |a| a.to_string());
-            return vec![format!(
-                "{}\x1b[7m \x1b[0m{}",
-                self.palette.paint(tone, &format!("{agent}> ")),
-                self.palette.paint(Role::Thinking, &hint)
-            )];
+            let row = format!("{} \x1b[7m \x1b[0m{}", self.bar(), self.palette.paint(Role::Thinking, &hint));
+            return self.block(vec![row], cols);
         }
         if let Some(rows) = self.labelled_command(cols, space) {
             return rows;
@@ -7376,8 +7436,10 @@ impl App {
         if let Some(row) = self.pending_row(cols) {
             return vec![row];
         }
-        let budget = (space / 2).clamp(1, 8);
-        // A shell draft hides the `!` behind the prompt glyph.
+        // The block's blank rows and footer sit outside the input budget; the
+        // transcript keeps at least one row.
+        let budget = (space / 2).clamp(1, 8).min(space.saturating_sub(4).max(1));
+        // A shell draft hides the `!`; the footer names the shell instead.
         let shell = self.input.starts_with('!');
         let (text, cursor) = if shell {
             (&self.input[1..], self.cursor.saturating_sub(1))
@@ -7429,34 +7491,88 @@ impl App {
                 body.push(ch);
             }
             marks(&mut body, line.len());
-            let glyph = if shell {
-                "$ "
-            } else if self.status.streaming {
-                "» "
-            } else {
-                "> "
-            };
-            let prefix = match (i, self.prompt_agent()) {
-                (0, Some(agent)) => format!("{agent}{glyph}"),
-                (0, None) => glyph.to_string(),
-                _ => " ".repeat(lead),
-            };
-            plain.push(format!("{prefix}{body}"));
+            // Every row of the block starts with the accent bar and its gap.
+            plain.push(format!("▌ {body}"));
         }
         let mut start = plain.len().saturating_sub(budget);
         if caret_row < start {
             start = caret_row;
         }
         let end = (start + budget).min(plain.len());
-        plain[start..end]
-            .iter()
-            .map(|row| self.paint_composer_row(row, cols))
-            .collect()
+        let input: Vec<String> = plain[start..end].iter().map(|row| self.paint_composer_row(row, cols)).collect();
+        self.block(input, cols)
     }
 
-    /// Paint one composer row. Rows are already cut to the width.
-    fn paint_composer_row(&self, row: &str, _cols: usize) -> String {
-        // The prompt, agent and glyph with their spaces; `»` is two bytes.
+    /// The composer block: a blank row, the input rows, a blank row, then the footer.
+    fn block(&self, input: Vec<String>, cols: usize) -> Vec<String> {
+        let mut rows = vec![self.fill("", cols)];
+        rows.extend(input);
+        rows.push(self.fill("", cols));
+        rows.push(self.fill(&self.footer(cols), cols));
+        rows
+    }
+
+    /// The accent bar at the input's left edge: red in yolo, where the mode
+    /// shows by colour alone.
+    fn bar(&self) -> String {
+        self.palette.paint(if self.yolo() { Role::Error } else { Role::Info }, "▌")
+    }
+
+    /// A painted row across the full width on the panel fill. Plain with
+    /// colour off, where there is no fill.
+    fn fill(&self, painted: &str, cols: usize) -> String {
+        let bg = self.palette.panel_bg();
+        if bg.is_empty() {
+            return painted.to_string();
+        }
+        let used = unpaint(painted).chars().count();
+        // Every reset in the row also clears the fill, so the fill comes back after it.
+        let kept = painted.replace("\x1b[0m", &format!("\x1b[0m{bg}"));
+        format!("{bg}{kept}{}\x1b[0m", " ".repeat(cols.saturating_sub(used)))
+    }
+
+    /// The footer under the input: the agent, the mode, the model and its
+    /// provider, and the effort. A shell draft names the shell in place of the agent.
+    fn footer(&self, cols: usize) -> String {
+        let agent = if self.input.starts_with('!') { "shell".to_string() } else { self.next_agent().to_string() };
+        let mode = self.cfg.live_permissions().as_str();
+        let model = self.model_label();
+        let provider = format!("{:?}", self.cfg.provider).to_lowercase();
+        let effort = self.cfg.effort.clone().unwrap_or_else(|| "default".into());
+        let plain = format!("{agent} {mode} · {model} {provider} · {effort}");
+        if plain.chars().count() > cols {
+            return self.palette.paint(Role::Thinking, &fit(&plain, cols));
+        }
+        let sep = self.palette.paint(Role::Thinking, " · ");
+        format!(
+            "{} {}{sep}{} {}{sep}{}",
+            self.palette.paint(Role::Info, &agent),
+            self.palette.paint(Role::Assistant, mode),
+            self.palette.paint(Role::Assistant, &model),
+            self.palette.paint(Role::Thinking, &provider),
+            self.palette.paint(Role::Info, &effort),
+        )
+    }
+
+    /// The model the footer names: the served name when it differs, and the
+    /// named provider it came from.
+    fn model_label(&self) -> String {
+        let model = if self.status.served.is_empty() || self.status.served == self.cfg.model {
+            self.cfg.model.clone()
+        } else {
+            format!("{} ({})", self.cfg.model, self.status.served)
+        };
+        if self.cfg.named.iter().any(|n| n.name == self.cfg.active_name) {
+            format!("{model} ({})", self.cfg.active_name)
+        } else {
+            model
+        }
+    }
+
+    /// Paint one composer row: the accent bar, then the text with its marks,
+    /// on the panel fill. Rows are already cut to the width.
+    fn paint_composer_row(&self, row: &str, cols: usize) -> String {
+        // The bar and its gap; the bar is one column and three bytes.
         let cut = row.char_indices().nth(self.prompt_width()).map_or(row.len(), |(i, _)| i);
         let (prefix, fitted) = row.split_at(cut);
         let fitted = fitted.to_string();
@@ -7473,29 +7589,20 @@ impl App {
         } else {
             fitted
         };
-        let tone = if self.yolo() {
-            Role::Error
-        } else if prefix.contains('»') {
-            // Queue mode: the glyph is muted.
-            Role::Thinking
-        } else {
-            Role::User
-        };
-        self.palette.paint(tone, prefix) + &fitted
+        self.fill(&(self.palette.paint(if self.yolo() { Role::Error } else { Role::Info }, prefix) + &fitted), cols)
     }
 
-    /// The agent the next message goes to, shown before the prompt glyph
-    /// while there is a choice of agents.
-    fn prompt_agent(&self) -> Option<&str> {
-        (self.agents.len() > 1).then(|| self.agent_next.as_deref().unwrap_or(&self.agent))
+    /// The agent the next message goes to; the footer names it.
+    fn next_agent(&self) -> &str {
+        self.agent_next.as_deref().unwrap_or(&self.agent)
     }
 
-    /// Columns the prompt takes: the agent, then the glyph and a space.
+    /// Columns the accent bar and its gap take at the input's left edge.
     fn prompt_width(&self) -> usize {
-        2 + self.prompt_agent().map_or(0, |a| a.chars().count())
+        2
     }
 
-    /// Yolo is shown by colour alone: the prompt glyph and the rule.
+    /// Yolo is shown by colour alone: the accent bar and the mode in the footer.
     fn yolo(&self) -> bool {
         self.cfg.live_permissions() == crate::config::Permissions::Yolo
     }
@@ -7604,41 +7711,30 @@ impl App {
         at + usize::from(self.input.starts_with('!'))
     }
 
-    /// The status line, muted, with the unseen and waiting counts in accent.
-    /// The rule above the composer: its label and tone, or nothing when it
-    /// would be a bare divider.
-    fn rule_note(&self) -> Option<(String, Role)> {
-        // The rule takes the accent while a question waits below it.
+    /// What the status bar says about the draft: the queue edit, or the
+    /// accept key for a suggestion. Empty when there is nothing to say.
+    fn note_label(&self) -> String {
+        // ↑ does nothing while a question or confirmation is open.
         let asking = self.pending.is_some() && !matches!(self.pending, Some(Pending::Pick(_)));
-        // While a turn runs the rule says what Enter will do.
-        let label = match (self.queue_at, asking || !self.status.streaming) {
+        // While a turn runs the status says what Enter will do.
+        match (self.queue_at, asking || !self.status.streaming) {
             (Some(i), _) => {
                 let verb = if self.status.streaming { "steer" } else { "send" };
-                format!(
-                    "editing {}/{} · Enter save · ^S {verb} · ^X del",
-                    i + 1,
-                    self.queued.len()
-                )
+                format!("editing {}/{} · Enter save · ^S {verb} · ^X del", i + 1, self.queued.len())
             }
             (None, true) if self.status.suggestion.is_some() => "→ accept".into(),
-            // ↑ does nothing while a question or confirmation is open.
             (None, true) if !asking && !self.queued.is_empty() => "↑ edit queue".into(),
-            (None, true) => String::new(),
-            // The prompt glyph shows steer or queue; the rule stays quiet.
-            (None, false) => String::new(),
-        };
-        let tinted = asking || self.yolo();
-        if label.is_empty() && !tinted {
-            return None;
+            _ => String::new(),
         }
-        let tone = if asking {
-            Role::Info
-        } else if self.yolo() {
-            Role::Error
-        } else {
-            Role::Border
-        };
-        Some((label, tone))
+    }
+
+    /// The muted row above the composer while background commands run.
+    fn running_row(&self) -> Option<String> {
+        match self.status.jobs {
+            0 => None,
+            1 => Some(self.palette.paint(Role::Thinking, "1 command")),
+            n => Some(self.palette.paint(Role::Thinking, &format!("{n} commands"))),
+        }
     }
 
     fn paint_status(&self, cols: usize) -> String {
@@ -7660,16 +7756,23 @@ impl App {
                 painted = painted.replacen(&count, &format!("{}{muted}", self.palette.paint(Role::Info, &count)), 1);
             }
         }
-        // The context percentage turns red as the window fills.
+        // The context share turns red as the window fills.
         let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
         if let (true, Some(p)) = (self.palette.on, crate::context::percent(self.status.tokens, window)) {
-            let pct = format!(" {p}%");
+            let pct = format!(" ({p}%)");
             let role = if p >= 80 { Role::Error } else { Role::Info };
             painted = painted.replacen(&pct, &format!("{}{muted}", self.palette.paint(role, &pct)), 1);
+        }
+        // The activity marker is accent while a turn streams.
+        if self.palette.on && self.status.streaming {
+            painted = painted.replacen("⋯", &format!("{}{muted}", self.palette.paint(Role::Info, "⋯")), 1);
         }
         painted
     }
 
+    /// The status bar: what it waits on and what the turn is doing on the
+    /// left; the context tokens with their share, the cost, and the command
+    /// hint on the right; the directory at the far right when it fits.
     fn status_line(&self, cols: usize) -> String {
         if self.released {
             return fit(" mouse released · any key to take it back", cols);
@@ -7683,91 +7786,75 @@ impl App {
         if self.input.starts_with('!') && !self.status.streaming {
             return fit(" shell · local · not sent to the model", cols);
         }
-        let thinking = if self.cfg.thinking { " · think" } else { "" };
-        let unseen = if self.unseen > 0 {
-            format!(" · ↑ {}", self.unseen)
-        } else {
-            String::new()
+        let mut left: Vec<String> = Vec::new();
+        if self.panes.len() > 1 {
+            left.push(format!("{}/{}", self.at + 1, self.panes.len()));
+        }
+        let note = self.note_label();
+        if !note.is_empty() {
+            left.push(note);
+        }
+        if self.status.streaming {
+            left.push("⋯ esc interrupt".into());
+        }
+        if let Some(start) = self.status.task_start.filter(|_| self.status.streaming) {
+            let s = &self.status;
+            let out = s.task_usage.2.max(s.chars as u64 / 4);
+            left.push(format!("{} · {} · ↓{}", span(start.elapsed()), steps(s.steps), compact_tokens(out)));
+        }
+        if self.cfg.thinking {
+            left.push("think".into());
+        }
+        match &self.status.goal {
+            Some((_, round, rounds)) if self.status.goal_paused => left.push(format!("goal {round}/{rounds} · paused")),
+            Some((_, round, rounds)) => left.push(format!("goal {round}/{rounds}")),
+            None => {}
+        }
+        if self.queue_at.is_some() && self.status.streaming {
+            left.push("paused · editing queue".into());
+        }
+        if self.unseen > 0 {
+            left.push(format!("↑ {}", self.unseen));
+        }
+        if self.waiting() > 0 {
+            left.push(format!("{} waiting", self.waiting()));
+        }
+        // The tokens with their share of the window, shown only when the window is known.
+        let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
+        let tokens = match crate::context::percent(self.status.tokens, window) {
+            Some(p) => format!("{} ({p}%)", compact_tokens(self.status.tokens)),
+            None => compact_tokens(self.status.tokens),
         };
-        let money = if self.cfg.provider == crate::providers::Provider::DeepSeek {
-            crate::pricing::cost(
+        let mut right = vec![tokens];
+        if self.cfg.provider == crate::providers::Provider::DeepSeek {
+            let cost = crate::pricing::cost(
                 &self.cfg.model,
                 crate::pricing::now(),
                 self.status.hit,
                 self.status.miss,
                 self.status.output,
-            )
-            .map(|c| if c > 0.0 && c < 0.1 { format!(" · ${c:.3}") } else { format!(" · ${c:.2}") })
-            .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        let model = if self.status.served.is_empty() || self.status.served == self.cfg.model {
-            self.cfg.model.clone()
-        } else {
-            format!("{} ({})", self.cfg.model, self.status.served)
-        };
-        // A configured provider is named after its model, so the session's source shows.
-        let model = if self.cfg.named.iter().any(|n| n.name == self.cfg.active_name) {
-            format!("{model} ({})", self.cfg.active_name)
-        } else {
-            model
-        };
-        let waiting = match self.waiting() {
-            0 => String::new(),
-            n => format!(" · {n} waiting"),
-        };
-        let paused = if self.queue_at.is_some() && self.status.streaming { " · paused · editing queue" } else { "" };
-        let goal = match &self.status.goal {
-            Some((_, round, rounds)) if self.status.goal_paused => format!(" · goal {round}/{rounds} · paused"),
-            Some((_, round, rounds)) => format!(" · goal {round}/{rounds}"),
-            None => String::new(),
-        };
-        let mode = match self.cfg.live_permissions() {
-            crate::config::Permissions::Normal => String::new(),
-            other => format!("{} · ", other.as_str()),
-        };
-        // The share of the window in use, shown only when the window is known.
-        let window = crate::context::window(&self.cfg.model, self.cfg.context_window);
-        let pct = crate::context::percent(self.status.tokens, window)
-            .map(|p| format!(" {p}%"))
-            .unwrap_or_default();
-        let tok = compact_tokens(self.status.tokens);
-        // The session's place in the pool leads the line while there is one.
-        let pos = if self.panes.len() > 1 { format!("{}/{} · ", self.at + 1, self.panes.len()) } else { String::new() };
-        let build = |meter: &str, money: &str, thinking: &str| {
-            format!("{pos}{model} · {mode}{tok} tok{meter}{money}{goal}{paused}{unseen}{thinking}{waiting}")
-        };
-        // As the line narrows, the least useful parts go first: thinking, then
-        // cost, then the percentage. The model and tokens always stay.
-        let fits = |s: &String| s.chars().count() <= cols;
-        let left = [
-            build(&pct, &money, thinking),
-            build(&pct, &money, ""),
-            build(&pct, "", ""),
-            build("", "", ""),
-        ]
-        .into_iter()
-        .find(fits)
-        .unwrap_or_else(|| build("", "", ""));
-        // The directory sits at the right edge, and goes first when narrow.
-        // A running task's meter takes its place.
-        let right = match self.status.task_start.filter(|_| self.status.streaming) {
-            Some(start) => {
-                let s = &self.status;
-                let out = s.task_usage.2.max(s.chars as u64 / 4);
-                format!("{} · {} · ↓{}", span(start.elapsed()), steps(s.steps), compact_tokens(out))
+            );
+            if let Some(c) = cost {
+                right.push(if c > 0.0 && c < 0.1 { format!("${c:.3}") } else { format!("${c:.2}") });
             }
-            // The directory shortens to what is left after two spaces.
-            // Narrow screens show the directory on its own row instead.
-            None if cols < NARROW_COLS => String::new(),
-            None => fit_path(&tilde(&self.root), cols.saturating_sub(left.chars().count() + 2)).unwrap_or_default(),
-        };
-        let gap = cols.saturating_sub(left.chars().count() + right.chars().count());
-        if gap >= 2 && !right.is_empty() {
-            format!("{left}{}{right}", " ".repeat(gap))
+        }
+        right.push("ctrl+p commands".into());
+        let body = [left.join(" · "), right.join(" · ")]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        // Narrow screens give the directory its own row, so the bar keeps only the body.
+        if cols < NARROW_COLS {
+            return fit(&body, cols);
+        }
+        let width = body.chars().count();
+        let dir = fit_path(&tilde(&self.root), cols.saturating_sub(width + 2)).unwrap_or_default();
+        let gap = cols.saturating_sub(width + dir.chars().count());
+        if dir.is_empty() || gap < 2 {
+            fit(&body, cols)
         } else {
-            fit(&left, cols)
+            format!("{body}{}{dir}", " ".repeat(gap))
         }
     }
 }
@@ -8308,7 +8395,14 @@ fn spawn_worker(session: Session, sessions_dir: std::path::PathBuf) -> Worker {
         move || {
         // Commands that arrived during a goal round, run after it.
         let mut queued: std::collections::VecDeque<Cmd> = Default::default();
+        // The running count last sent, so the row follows only changes.
+        let mut jobs_sent = 0;
         loop {
+            let running = worker_session.jobs.running_now();
+            if running != jobs_sent {
+                jobs_sent = running;
+                let _ = ev_tx.send(Ev::Jobs(running));
+            }
             // A second's wait, so a due check-in can start a turn while idle.
             let next = if let Some(cmd) = queued.pop_front() { Ok(cmd) } else { match cmd_rx.recv_timeout(Duration::from_secs(1)) {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
