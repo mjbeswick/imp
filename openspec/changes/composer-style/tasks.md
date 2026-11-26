@@ -16,7 +16,7 @@
 
 ## 3. Status bar
 
-- [ ] 3.1 Move the model, provider, mode, and effort into the footer row, and draw the status bar below the composer with the tokens and share, the cost, and the hint (`paint_status`, `status_line`).
+- [x] 3.1 Move the model, provider, mode, and effort into the footer row, and draw the status bar below the composer with the tokens and share, the cost, and the hint (`paint_status`, `status_line`).
 
 ## 4. Running commands row
 
