@@ -2,7 +2,7 @@
 
 ## 1. Tests first
 
-- [ ] 1.1 Test: the composer block has the panel background, a left accent bar in the accent colour, a blank row above and below the input, and no `> ` glyph. Confirm it fails before the change.
+- [x] 1.1 Test: the composer block has the panel background, a left accent bar in the accent colour, a blank row above and below the input, and no `> ` glyph. Confirm it fails before the change.
 - [ ] 1.2 Test: the footer row reads the agent, mode, model, provider, and effort, with the agent and effort in the accent colour and the provider muted; the mode shows even when `normal`.
 - [ ] 1.3 Test: the status bar shows `262.2K (26%)`-style tokens and the cost, with no cache share, and the model name is absent from it.
 - [ ] 1.4 Test: a row above the composer reads `1 command` while one background job runs, and no row is drawn when none runs.
