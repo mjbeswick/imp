@@ -17,6 +17,24 @@ Evidence from `src/tui.rs` (line numbers at the time of writing):
   that reaches `use_provider` is not yet identified. The first task is a failing test
   that reproduces it.
 
+## Reproduction (task 1.2)
+
+Every call to `use_provider` on the base commit (`main`) in `src/tui.rs`:
+
+- Picker keys `u` and Ctrl+U on a provider row (around 5974 and 5983). Both are switches.
+- The picker action key `use` (around 6087), reached by pressing `u` on a row.
+- `run_command` for `/provider use <name>` calls `set_provider` directly (around 5007),
+  not `use_provider`. It is a typed switch, not Enter.
+- No Enter path reaches `use_provider` on `main`. The provider Enter branch (around
+  6336) calls `configure_provider` for every non-onboarding row, with the comment
+  "Enter opens the form; switching is `u`".
+
+Test 1.1 covers Enter on `custom` from both openings, `/provider` and the typed
+`/provider ` composer picker. On `main` both pass. Under a temporary mutation that routes
+the provider Enter branch to `use_provider`, both fail, along with the existing Enter
+tests. The fault that the proposal describes is therefore already fixed on `main`, and
+the change guards it.
+
 ## Decisions
 
 1. **Stable row layout.** `picker_lines` wraps a provider row whenever `wrap` is true,

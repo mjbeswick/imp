@@ -2,8 +2,8 @@
 
 ## 1. Reproduce
 
-- [ ] 1.1 Test: in the provider picker, select `custom` and press Enter. Expected: the pending state is `ProviderForm` and the active provider is unchanged. Confirm the test fails before the fix.
-- [ ] 1.2 Find the path that reaches `use_provider` on Enter, and record it in the design.
+- [x] 1.1 Test: in the provider picker, select `custom` and press Enter. Expected: the pending state is `ProviderForm` and the active provider is unchanged. Confirm the test fails before the fix.
+- [x] 1.2 Find the path that reaches `use_provider` on Enter, and record it in the design.
 
 ## 2. Stable rows
 
