@@ -63,3 +63,13 @@ Expected change: a few hundred bytes of code, roughly flat. `./scripts/size.sh` 
    near-white panel, and a dark theme gets a near-black one. The mono theme gets no fill. Judgement call:
    the derived colours are not tuned per theme. Cost if wrong: a theme may look too pale or too dark; a
    per-theme slot fixes that later.
+
+## Fixed height (added after the panel)
+
+8. **Height.** The picker's height is a fixed number of item rows, set by the terminal height:
+   `clamp(rows * 3 / 5 - 1, 5, 20)`, and never more than `rows - 4`. The window is no longer eight rows.
+   The picker keeps this value on itself, set on each frame (the frame already takes `&mut self`), so the
+   paging keys and the scroll follow use the same window the screen shows. Short lists pad with blank rows.
+   A wrapped description takes a row from the bottom of the window, so the box never grows. Judgement call:
+   the three-fifths figure and the bounds of five and twenty are chosen to match the reference image.
+   Cost if wrong: the box may be taller or shorter than the user expects; the formula is one function.

@@ -8,7 +8,7 @@
 
 ### Requirement: The picker is one borderless overlay
 
-The system SHALL draw the picker as a centred block over the transcript with no border, corner, side wall, or bottom edge, SHALL size it to at least 40 columns and at most the smaller of 72 columns and 80% of the terminal width, SHALL show at most eight rows, SHALL erase the region when it closes, and SHALL draw no border characters anywhere.
+The system SHALL draw the picker as a centred block over the transcript with no border, corner, side wall, or bottom edge, SHALL size it to at least 40 columns and at most the smaller of 72 columns and 80% of the terminal width, SHALL erase the region when it closes, and SHALL draw no border characters anywhere.
 
 #### Scenario: Narrow terminal
 - **WHEN** the terminal is 50 columns
@@ -22,10 +22,6 @@ The system SHALL draw the picker as a centred block over the transcript with no 
 - **WHEN** the command picker opens
 - **THEN** no border characters appear and the title row reads `commands` at its left with `esc` at its right
 
-#### Scenario: Long list
-- **WHEN** forty profiles are available
-- **THEN** eight rows are visible, the title row shows `1/40` before `esc`, and the highlight scrolls the window
-
 #### Scenario: Close
 - **WHEN** the picker closes
 - **THEN** no picker characters remain on screen
@@ -33,6 +29,22 @@ The system SHALL draw the picker as a centred block over the transcript with no 
 #### Scenario: Transcript untouched
 - **WHEN** the picker opens
 - **THEN** the rows outside the overlay are unchanged
+
+### Requirement: The picker height follows the terminal
+
+The system SHALL give the picker a fixed height of one title row and item rows, the item rows being three fifths of the terminal rows less one, at least five, at most twenty, and at most the terminal rows less four, SHALL keep that height for any number of items by leaving spare rows blank, and SHALL keep the highlighted row in the window as the height changes.
+
+#### Scenario: Long list
+- **WHEN** forty profiles are available in a 30-row terminal
+- **THEN** seventeen item rows are visible, the title row shows `1/40` before `esc`, and the highlight scrolls the window
+
+#### Scenario: Short list keeps the height
+- **WHEN** the picker has three items in a 30-row terminal
+- **THEN** the box is as tall as with forty items and the spare rows are blank
+
+#### Scenario: Resize
+- **WHEN** the terminal grows from 30 rows to 40 rows
+- **THEN** the box grows to twenty-three item rows
 
 ### Requirement: The picker title row carries its labels
 
@@ -71,6 +83,26 @@ The system SHALL fill the picker's block with a panel background derived from th
 - **THEN** the picker has no fill and draws as before
 
 ## MODIFIED Requirements
+
+### Requirement: A cut description continues on the highlighted row
+
+The system SHALL continue the highlighted row's description on one further line indented to the description column when it does not fit, SHALL wrap that line at spaces, SHALL cut it with `…` when two lines are still not enough, and SHALL show that line only when the fixed box has a row for it, taking the row from the item at the bottom of the window.
+
+#### Scenario: Description continues
+- **WHEN** the command picker highlights `/goal` at 60 columns in a terminal tall enough for the box
+- **THEN** its description continues on a second line under the description column and is not cut
+
+#### Scenario: Other rows stay tight
+- **WHEN** a command picker row is not highlighted and its description does not fit
+- **THEN** that row keeps one line and its description ends in `…`
+
+#### Scenario: Too long for two lines
+- **WHEN** the highlighted description does not fit in two lines at 40 columns
+- **THEN** the second line ends in `…`
+
+#### Scenario: Short screen
+- **WHEN** the fixed box has no row left for the second line
+- **THEN** the highlighted description is cut on one line and every listed item keeps its row
 
 ### Requirement: Pickers mark the current value one way
 

@@ -32,3 +32,9 @@
 - [x] 6.1 Test: the picker's title row and item rows start with the panel background in a coloured theme, and the picker draws no fill in the mono theme. Confirm it fails before the change.
 - [x] 6.2 Implement: derive the panel from the theme's text colour (near-white for light, near-black for dark) and wrap each picker line with it, re-applying it after each reset.
 - [x] 6.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+
+## 7. Fixed height
+
+- [ ] 7.1 Test: the box height is the same for three items and for forty in a 30-row terminal; the window is seventeen rows at 30 rows and twenty-three at 40 rows; a short screen cuts the highlighted description. Confirm the height test fails before the change.
+- [ ] 7.2 Implement: the item rows follow the terminal height, the list fills them and pads the rest with blank rows, and the window scrolls to keep the highlight visible (`src/tui.rs`).
+- [ ] 7.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
