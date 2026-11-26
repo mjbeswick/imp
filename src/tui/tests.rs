@@ -7703,6 +7703,27 @@ fn u_still_switches_to_the_highlighted_provider() {
 }
 
 #[test]
+fn an_unselected_provider_row_wraps_like_the_selected_one() {
+    let a = app();
+    let mut picker = a.value_picker("provider", a.provider_items(), PickKind::Provider);
+    let matches = picker.matches();
+    let visible = matches.len();
+    let at = picker.items.iter().position(|i| i.value == "deepseek").expect("deepseek row");
+    let rows = |p: &Picker| {
+        picker_lines(p, &matches, visible, 46, true)
+            .iter()
+            .filter(|(_, i, _)| *i == at)
+            .count()
+    };
+    picker.index = visible - 1;
+    let unselected = rows(&picker);
+    picker.index = at;
+    let selected = rows(&picker);
+    assert_eq!(selected, 2, "the selected row did not wrap");
+    assert_eq!(unselected, selected, "the unselected row did not wrap like the selected one");
+}
+
+#[test]
 fn provider_rows_keep_their_height_as_the_selection_moves() {
     let a = app();
     let mut picker = a.value_picker("provider", a.provider_items(), PickKind::Provider);
