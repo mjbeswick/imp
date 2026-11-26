@@ -238,6 +238,13 @@ skills that teach `bash`.
 to the model with that message only, and the transcript still shows only what you
 typed. Bare `/skill` lists the enabled skills.
 
+`/bind <chord> <command>` binds a key or a two-key chord to a slash command, for
+example `/bind ctrl+x n /model`. The chord is saved as `bind.ctrl-x-n = /model` in the
+config. Ctrl+C, Esc and Enter cannot be bound. A Ctrl key that starts a chord waits up
+to 1.5 seconds for its second key; if none comes, it does what it did before.
+`/unbind <chord>` removes one binding, and `/keys reset` removes them all. The
+`/keys` card lists your bindings after the built-in keys.
+
 - Memory notes are listed in the prompt by title, up to 40, so the model knows
   what to search for. Bodies load only on a search; `/reload` picks up new notes.
 - Results over 4 KB spill to a file; you get a head, a tail, and the path.

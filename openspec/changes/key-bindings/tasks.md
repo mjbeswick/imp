@@ -24,9 +24,9 @@
 
 ## 4. Display and docs
 
-- [ ] 4.1 Test: the `/keys` card lists a user binding after the built-in keys.
-- [ ] 4.2 Implement: the list in `src/help.rs`, and the `/bind`, `/unbind` and `/keys reset` lines in `src/help.rs`.
-- [ ] 4.3 Update `README.md` with the commands and the chord syntax.
+- [x] 4.1 Test: the `/keys` card lists a user binding after the built-in keys.
+- [x] 4.2 Implement: the list in `src/help.rs`, and the `/bind`, `/unbind` and `/keys reset` lines in `src/help.rs`.
+- [x] 4.3 Update `README.md` with the commands and the chord syntax.
 
 ## 5. Command lists
 
