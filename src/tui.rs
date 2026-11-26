@@ -1626,12 +1626,30 @@ fn strip_mark(desc: &str) -> &str {
     }
 }
 
-/// Write each session row's mark in front of its description. A session
-/// without a mark gets two spaces, so the columns line up.
+/// One session as a picker row: its title with two columns before it for the
+/// state mark, and its directory as the description the highlight shows.
+fn session_item(meta: &crate::store::Meta, now: u64) -> PickItem {
+    let (title, _) = crate::store::session_row(meta, now);
+    PickItem {
+        label: format!("  {title}"),
+        value: meta.id.clone(),
+        actions: Vec::new(),
+        desc: tilde(std::path::Path::new(&meta.cwd)),
+    }
+}
+
+/// The current time in whole seconds since the Unix epoch.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Write each session row's state mark in front of its title. A session
+/// without a mark keeps two spaces, so the titles line up. Headings take none.
+/// A row's label always starts with those two columns.
 fn mark_rows(items: &mut [PickItem], marks: &[(String, char)]) {
-    for item in items {
-        let plain = strip_mark(&item.desc).to_string();
-        item.desc = match marks.iter().find(|(id, _)| *id == item.value) {
+    for item in items.iter_mut().filter(|item| !is_heading(item)) {
+        let plain: String = item.label.chars().skip(2).collect();
+        item.label = match marks.iter().find(|(id, _)| *id == item.value) {
             Some((_, mark)) => format!("{mark} {plain}"),
             None => format!("  {plain}"),
         };
@@ -2126,6 +2144,15 @@ struct PickItem {
     actions: Vec<(char, &'static str)>,
 }
 
+/// The value prefix of a day heading row in the session picker. Headings are
+/// drawn in the window but the highlight never rests on them.
+const HEADING: &str = "::day";
+
+/// Whether an item is a day heading rather than a row that can be chosen.
+fn is_heading(item: &PickItem) -> bool {
+    item.value.starts_with(HEADING)
+}
+
 /// The session picker's row actions, in footer order: the first sits at the left.
 const SESSION_ACTIONS: &[(char, &'static str)] = &[('a', "current directory"), ('n', "new"), ('d', "delete"), ('r', "rename")];
 
@@ -2316,6 +2343,10 @@ fn mark_current(current: bool, about: &str) -> String {
 /// line under the description column; every other row is cut with `…`.
 fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool) -> Vec<String> {
     let item = &picker.items[index];
+    if is_heading(item) {
+        // A day heading is one plain row; the highlight never reaches it.
+        return vec![fit(&format!(" {}", item.label), inner)];
+    }
     // A three-column gutter: the accent bar on the highlighted row, then the
     // `■` on the current entry, then a space before the label.
     let accent = if at == picker.index { "▎" } else { " " };
@@ -2327,13 +2358,12 @@ fn picker_row(picker: &Picker, at: usize, index: usize, inner: usize, more: bool
     let left = start - 5;
     let mut label = item.label.clone();
     let mut desc = item.desc.clone();
+    if picker.kind == PickKind::Session {
+        // Only the highlighted session shows its directory, cut from the left.
+        desc = if at == picker.index { tail(&desc, inner.saturating_sub(start)) } else { String::new() };
+    }
     if !matches!(picker.kind, PickKind::Command | PickKind::Keys) {
         label = fit(&label, left);
-        if picker.kind == PickKind::Session {
-            // Counts line up on their last digit.
-            let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
-            desc = format!("{desc:>wide$}");
-        }
     }
     let room = inner.saturating_sub(start);
     if more && room >= 8 && picker.kind != PickKind::Session && desc.chars().count() > room {
@@ -2383,7 +2413,11 @@ fn desc_column(picker: &Picker, inner: usize) -> Option<usize> {
     if !names && !matches!(picker.kind, PickKind::Command | PickKind::Keys) {
         // The right column stays whole, one space off the wall; the
         // label gives way.
-        let wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+        let mut wide = picker.items.iter().map(|i| i.desc.chars().count()).max().unwrap_or(0);
+        if picker.kind == PickKind::Session {
+            // A session's directory is cut from the left past half the box.
+            wide = wide.min(inner / 2);
+        }
         left = left.min(inner.saturating_sub(3 + 2 + wide + 1)).max(4);
     }
     Some(3 + left + 2)
@@ -2462,7 +2496,7 @@ impl Picker {
     fn new(title: impl Into<String>, items: Vec<PickItem>, kind: PickKind) -> Self {
         // Every session row offers the same list actions.
         let shared = if kind == PickKind::Session { SESSION_ACTIONS.to_vec() } else { Vec::new() };
-        Self {
+        let mut picker = Self {
             shared,
             form: None,
             title: title.into(),
@@ -2475,7 +2509,10 @@ impl Picker {
             prefix: None,
             current: std::path::PathBuf::new(),
             root: std::path::PathBuf::new(),
-        }
+        };
+        // The highlight starts on the first row that can be chosen.
+        picker.reset();
+        picker
     }
 
     /// A browser start at the session root, never above it.
@@ -2533,24 +2570,35 @@ impl Picker {
         true
     }
 
-    /// Indices of the items matching the filter, prefix matches first.
+    /// Indices of the items matching the filter, prefix matches first. A day
+    /// heading is kept only when a session under it matches, and grouped lists
+    /// keep their day order.
     fn matches(&self) -> Vec<usize> {
         let needle = self.filter.to_lowercase();
-        let mut out: Vec<usize> = self
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| needle.is_empty() || item.label.to_lowercase().contains(&needle))
-            .map(|(i, _)| i)
-            .collect();
+        let mut out: Vec<usize> = Vec::new();
+        let mut heading: Option<usize> = None;
+        for (i, item) in self.items.iter().enumerate() {
+            if is_heading(item) {
+                heading = Some(i);
+            } else if needle.is_empty() || item.label.to_lowercase().contains(&needle) {
+                out.extend(heading.take());
+                out.push(i);
+            }
+        }
+        if self.items.iter().any(is_heading) {
+            return out;
+        }
+        let session = self.kind == PickKind::Session;
         out.sort_by_key(|&i| {
-            !self.items[i]
-                .label
-                .trim_start_matches('/')
-                .to_lowercase()
-                .starts_with(&needle)
+            let label = if session { strip_mark(&self.items[i].label) } else { self.items[i].label.as_str() };
+            !label.trim_start_matches('/').to_lowercase().starts_with(&needle)
         });
         out
+    }
+
+    /// The first row the highlight may rest on: the first one that is not a heading.
+    fn first_selectable(&self, matches: &[usize]) -> usize {
+        matches.iter().position(|&i| !is_heading(&self.items[i])).unwrap_or(0)
     }
 
     /// The row actions this picker offers now, as Ctrl letters and labels, in
@@ -2588,18 +2636,35 @@ impl Picker {
     }
 
     fn reset(&mut self) {
-        self.index = 0;
+        self.index = self.first_selectable(&self.matches());
         self.offset = 0;
     }
 
     fn move_by(&mut self, delta: isize) {
-        let count = self.matches().len();
+        let matches = self.matches();
+        let count = matches.len();
         if count == 0 {
             self.reset();
             return;
         }
         let target = (self.index as isize + delta).clamp(0, count as isize - 1);
-        self.index = target as usize;
+        // The highlight steps past headings in the direction of the move, and
+        // back the other way at the end of the list.
+        let step = if delta < 0 { -1 } else { 1 };
+        let find = |from: isize, step: isize| {
+            let mut at = from;
+            while at >= 0 && (at as usize) < count {
+                if !is_heading(&self.items[matches[at as usize]]) {
+                    return Some(at as usize);
+                }
+                at += step;
+            }
+            None
+        };
+        let Some(at) = find(target, step).or_else(|| find(target, -step)) else {
+            return;
+        };
+        self.index = at;
         if self.index < self.offset {
             self.offset = self.index;
         }
@@ -4245,50 +4310,60 @@ impl App {
 
     /// The picker for a command argument, the composer prefix it mirrors, and
     /// the text that starts as its filter.
-    /// The newest twenty sessions, with their row actions.
+    /// The newest twenty sessions, grouped by day, with their row actions.
     fn session_picker(&self) -> Picker {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let listing = crate::store::Log::listing(&self.sessions_dir);
+        let (title, items) = self.session_items(false);
+        Picker::new(title, items, PickKind::Session)
+    }
+
+    /// The session rows: the newest twenty, each under a heading for the local
+    /// day of its last activity. With `here`, only the sessions in this
+    /// directory. Returns the title and the rows.
+    fn session_items(&self, here: bool) -> (String, Vec<PickItem>) {
+        let now = now_secs();
+        let mut listing = crate::store::Log::listing(&self.sessions_dir);
+        if here {
+            let root = self.root.display().to_string();
+            listing.retain(|m| m.cwd == root);
+        }
         let total = listing.len();
-        let mut options: Vec<PickItem> = listing
-            .into_iter()
-            .map(|m| {
-                let (label, desc) = crate::store::session_row(&m, now);
-                PickItem {
-                    label,
-                    value: m.id,
+        listing.truncate(20);
+        let mut items: Vec<PickItem> = Vec::new();
+        let mut day = None;
+        for m in &listing {
+            let key = crate::store::local_day(m.updated);
+            if day != Some(key) {
+                day = Some(key);
+                items.push(PickItem {
+                    label: crate::store::day_heading(m.updated, now),
+                    value: format!("{HEADING}{}:{}", key.0, key.1),
                     actions: Vec::new(),
-                    desc,
-                }
-            })
-            .collect();
-        options.truncate(20);
-        mark_rows(&mut options, &self.session_marks());
+                    desc: String::new(),
+                });
+            }
+            items.push(session_item(m, now));
+        }
+        mark_rows(&mut items, &self.session_marks());
         // Say so when the list is cut short; the rest are one search away.
-        let title = if total > options.len() { format!("sessions · {} of {total}", options.len()) } else { "sessions".into() };
-        Picker::new(title, options, PickKind::Session)
+        let title = if total > listing.len() { format!("sessions · {} of {total}", listing.len()) } else { "sessions".into() };
+        (title, items)
     }
 
     /// Sessions whose text mentions `query`, each row ending in a snippet.
     fn search_picker(&self, query: &str) -> Picker {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let items = crate::store::search(&self.sessions_dir, query, 20)
+        let now = now_secs();
+        let mut items = crate::store::search(&self.sessions_dir, query, 20)
             .into_iter()
             .map(|(mut m, snippet)| {
                 m.title = snippet;
-                let (label, desc) = crate::store::session_row(&m, now);
-                PickItem { label, value: m.id, actions: Vec::new(), desc }
+                session_item(&m, now)
             })
             .collect::<Vec<_>>();
-        let mut items = items;
         mark_rows(&mut items, &self.session_marks());
-        Picker::new(format!("search \"{}\"", query.trim()), items, PickKind::Session)
+        let mut picker = Picker::new(format!("search \"{}\"", query.trim()), items, PickKind::Session);
+        // A search lists what it found, so the directory filter does not apply.
+        picker.shared.retain(|(key, _)| *key != 'a');
+        picker
     }
 
     /// The value a picker of this kind should open on.
@@ -6558,9 +6633,9 @@ impl App {
         }
         let marks = self.session_marks();
         let Some(Pending::Pick(p)) = &mut self.pending else { return false };
-        let before: Vec<String> = p.items.iter().map(|i| i.desc.clone()).collect();
+        let before: Vec<String> = p.items.iter().map(|i| i.label.clone()).collect();
         mark_rows(&mut p.items, &marks);
-        p.items.iter().zip(&before).any(|(i, b)| &i.desc != b)
+        p.items.iter().zip(&before).any(|(i, b)| &i.label != b)
     }
 
     /// How long the loop may wait for a key: short while anything moves,
@@ -7201,7 +7276,9 @@ impl App {
         for (text, at, selected) in &lines {
             // The row's state, from its item, styles the whole row after it is clipped.
             let state = matches.get(*at).map_or("", |&i| picker.items[i].desc.as_str());
+            let heading = matches.get(*at).is_some_and(|&i| is_heading(&picker.items[i]));
             let row = match column.filter(|_| !*selected) {
+                _ if heading => self.palette.paint(Role::Thinking, &self.boxed(text, inner, false)),
                 // Descriptions are muted, except on the highlighted row.
                 Some(column) => {
                     let row = self.boxed(text, inner, false);
@@ -7231,7 +7308,7 @@ impl App {
         if matches!(self.pending, Some(Pending::Pick(_))) {
             if !matches.is_empty() {
                 for (row, (_, at, _)) in lines.iter().enumerate() {
-                    if *at == usize::MAX {
+                    if *at == usize::MAX || matches.get(*at).is_some_and(|&i| is_heading(&picker.items[i])) {
                         continue;
                     }
                     targets.push((y + 3 + row, x, x + inner - 1, Target::Row(*at)));

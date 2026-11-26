@@ -1144,9 +1144,10 @@ fn working_sessions_spin_in_the_session_picker() {
     std::fs::write(a.sessions_dir.join(format!("{id}.jsonl")), "").unwrap();
     a.status.streaming = true;
     a.run_command("sessions", &tx);
+    // The state mark leads the title, so the label carries it.
     let desc = |a: &App| {
         let Some(Pending::Pick(p)) = &a.pending else { panic!("no picker") };
-        p.items.iter().find(|i| i.value == id).expect("row").desc.clone()
+        p.items.iter().find(|i| i.value == id).expect("row").label.clone()
     };
     let first = desc(&a);
     assert!(spinner_frames().contains(first.chars().next().unwrap()), "{first}");
@@ -1156,7 +1157,7 @@ fn working_sessions_spin_in_the_session_picker() {
     a.status.streaming = false;
     a.last_redraw = Instant::now() - Duration::from_millis(200);
     assert!(a.spin_sessions());
-    assert!(desc(&a).ends_with(id.as_str()) && desc(&a).starts_with("  "), "{}", desc(&a));
+    assert!(desc(&a).starts_with("  "), "{}", desc(&a));
     assert_eq!(desc(&a).chars().count(), first.chars().count(), "the cell changed width");
     a.last_redraw = Instant::now() - Duration::from_millis(200);
     assert!(!a.spin_sessions(), "an idle picker repainted");
@@ -3636,7 +3637,9 @@ fn a_long_label_gives_way_to_the_right_column() {
             desc: format!("{} msgs", 10 + i * 50),
         })
         .collect();
-    let picker = Picker::new("sessions", items, PickKind::Session);
+    // A list of free-text labels keeps its right column whole; the session list
+    // shows only the highlight's directory, tested with the session picker.
+    let picker = Picker::new("skills", items, PickKind::Skill);
     let short = picker_row(&picker, 0, 0, 50, false).remove(0);
     let long = picker_row(&picker, 1, 1, 50, false).remove(0);
     assert!(long.contains('…') && long.ends_with("60 msgs"), "{long}");
@@ -6379,26 +6382,26 @@ fn the_sessions_modal_lists_a_blank_session() {
     let _blank = crate::store::Log::create(&dir, &dir, "deepseek-flash");
     let (tx, _rx) = channel();
     a.run_command("sessions", &tx);
-    let items = open_picker(&a).items.clone();
+    let items: Vec<PickItem> = open_picker(&a).items.iter().filter(|i| !is_heading(i)).cloned().collect();
     assert_eq!(items.len(), 1, "the blank session is missing from the modal");
     assert!(items[0].label.contains("new"), "{:?}", items[0].label);
 }
 
 #[test]
 fn marks_are_written_once_and_repainting_does_not_stack_them() {
-    let row = |id: &str| PickItem { label: id.into(), value: id.into(), actions: Vec::new(), desc: "3 msgs".into() };
+    let row = |id: &str| PickItem { label: format!("  title {id}"), value: id.into(), actions: Vec::new(), desc: String::new() };
     let mut items = vec![row("abc"), row("def")];
     let marks = vec![("abc".to_string(), '?')];
     mark_rows(&mut items, &marks);
-    assert_eq!(items[0].desc, "? 3 msgs");
-    assert_eq!(items[1].desc, "  3 msgs", "an idle row lost its column");
+    assert_eq!(items[0].label, "? title abc");
+    assert_eq!(items[1].label, "  title def", "an idle row lost its column");
     mark_rows(&mut items, &marks);
     mark_rows(&mut items, &marks);
-    assert_eq!(items[0].desc, "? 3 msgs", "repaints stacked marks");
-    assert_eq!(items[1].desc, "  3 msgs");
+    assert_eq!(items[0].label, "? title abc", "repaints stacked marks");
+    assert_eq!(items[1].label, "  title def");
     mark_rows(&mut items, &[("def".to_string(), '•')]);
-    assert_eq!(items[0].desc, "  3 msgs", "a cleared mark stayed");
-    assert_eq!(items[1].desc, "• 3 msgs");
+    assert_eq!(items[0].label, "  title abc", "a cleared mark stayed");
+    assert_eq!(items[1].label, "• title def");
 }
 
 fn toast_text(a: &App) -> Option<String> {
@@ -7922,4 +7925,43 @@ fn ctrl_r_in_an_open_picker_without_a_rename_does_not_retry() {
     let (tx, _rx) = channel();
     a.handle_key(Key::Ctrl('r'), &tx);
     assert!(matches!(a.pending, Some(Pending::Pick(_))), "ctrl+r closed the picker or reached the turn");
+}
+
+/// Write a saved session with its directory and last-activity time, for picker tests.
+fn saved_session(dir: &std::path::Path, id: &str, title: &str, cwd: &str, updated: u64) {
+    std::fs::create_dir_all(dir).unwrap();
+    let meta = serde_json::json!({"id": id, "title": title, "cwd": cwd, "model": "m", "messages": 1, "updated": updated});
+    std::fs::write(dir.join(format!("{id}.json")), meta.to_string()).unwrap();
+    std::fs::write(dir.join(format!("{id}.jsonl")), "").unwrap();
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}
+
+#[test]
+fn sessions_group_under_day_headings_and_the_highlight_skips_them() {
+    let mut a = app();
+    let dir = scratch("day-groups");
+    a.sessions_dir = dir.clone();
+    let now = now_secs();
+    saved_session(&dir, "today1", "first today", "/work/one", now);
+    saved_session(&dir, "today2", "second today", "/work/one", now - 60);
+    saved_session(&dir, "older", "from before", "/work/one", now - 3 * 86_400);
+    a.pending = Some(Pending::Pick(a.session_picker()));
+    let older = crate::store::day_heading(now - 3 * 86_400, now);
+    let picker = open_picker(&a);
+    let shown: Vec<String> = picker.matches().iter().map(|&i| picker.items[i].label.trim().to_string()).collect();
+    assert_eq!(shown, ["Today", "first today", "second today", older.as_str(), "from before"]);
+    assert_eq!(picker.selected().map(|i| i.value.as_str()), Some("today1"), "the highlight did not start on a session");
+
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Down, &tx);
+    a.handle_key(Key::Down, &tx);
+    assert_eq!(open_picker(&a).selected().map(|i| i.value.as_str()), Some("older"), "the highlight rested on a heading");
+
+    let (out, _, _, _) = a.overlay(100, 30).expect("picker overlay");
+    let rows = overlay_rows(&out);
+    assert!(rows.iter().any(|r| r.contains("Today")), "no Today heading: {rows:?}");
+    assert_eq!(positioned_rows(&out), open_picker(&a).window + 4, "a heading changed the box height");
 }

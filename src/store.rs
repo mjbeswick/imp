@@ -889,6 +889,64 @@ pub fn session_row(meta: &Meta, now_secs: u64) -> (String, String) {
     (title, format!("{age:>3}  {}", meta.id))
 }
 
+/// A broken-down local time, laid out as the C library's `struct tm` on
+/// macOS and Linux: the fields after `tm_isdst` are only read by the library.
+#[repr(C)]
+struct Tm {
+    tm_sec: i32,
+    tm_min: i32,
+    tm_hour: i32,
+    tm_mday: i32,
+    tm_mon: i32,
+    tm_year: i32,
+    tm_wday: i32,
+    tm_yday: i32,
+    tm_isdst: i32,
+    tm_gmtoff: i64,
+    tm_zone: *const std::ffi::c_char,
+}
+
+unsafe extern "C" {
+    fn localtime_r(timer: *const i64, result: *mut Tm) -> *mut Tm;
+}
+
+/// The local calendar fields of a Unix time, or `None` if the clock cannot say.
+fn local_tm(secs: u64) -> Option<Tm> {
+    let timer = i64::try_from(secs).ok()?;
+    // SAFETY: `Tm` is plain data apart from a pointer the library sets; a zeroed
+    // value is a valid starting point for `localtime_r` to fill.
+    let mut tm: Tm = unsafe { std::mem::zeroed() };
+    // SAFETY: both pointers are valid for the duration of the call.
+    let out = unsafe { localtime_r(&timer, &mut tm) };
+    (!out.is_null()).then_some(tm)
+}
+
+/// The local calendar day of a Unix time, as (year, day of year). Two times
+/// share a day when their keys match.
+pub fn local_day(secs: u64) -> (i32, i32) {
+    local_tm(secs).map_or((0, 0), |tm| (tm.tm_year, tm.tm_yday))
+}
+
+/// The heading a session's day gets in the picker: `Today` when it falls on the
+/// same local day as `now_secs`, otherwise the full date, such as `Wed Nov 25 2026`.
+pub fn day_heading(secs: u64, now_secs: u64) -> String {
+    if local_day(secs) == local_day(now_secs) {
+        return "Today".into();
+    }
+    const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    match local_tm(secs) {
+        Some(tm) => format!(
+            "{} {} {} {}",
+            WEEKDAYS[tm.tm_wday.rem_euclid(7) as usize],
+            MONTHS[tm.tm_mon.rem_euclid(12) as usize],
+            tm.tm_mday,
+            tm.tm_year + 1900
+        ),
+        None => "Unknown day".into(),
+    }
+}
+
 /// Sessions whose user or assistant text contains `query`, newest first, each
 /// with a one-line snippet around the first hit.
 // ponytail: ASCII case folding keeps byte offsets valid; full Unicode folding if asked.
@@ -1276,6 +1334,16 @@ mod session_tests {
             updated: 1_000,
             goal: None,
         }
+    }
+
+    #[test]
+    fn day_headings_say_today_then_the_full_local_date() {
+        // Noon UTC on Wednesday 25 November 2026 is the same day in any zone from -11 to +11.
+        let noon = 1_795_608_031;
+        assert_eq!(day_heading(noon, noon), "Today");
+        assert_eq!(day_heading(noon, noon + 86_400), "Wed Nov 25 2026");
+        assert_ne!(local_day(noon), local_day(noon + 86_400));
+        assert_eq!(local_day(noon), local_day(noon + 60));
     }
 
     #[test]
