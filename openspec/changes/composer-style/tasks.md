@@ -20,7 +20,7 @@
 
 ## 4. Running commands row
 
-- [ ] 4.1 Count `Job::running` entries and draw the muted row above the composer while any runs (`src/jobs.rs`, `src/tui.rs`).
+- [x] 4.1 Count `Job::running` entries and draw the muted row above the composer while any runs (`src/jobs.rs`, `src/tui.rs`).
 
 ## 5. Ctrl+P
 
