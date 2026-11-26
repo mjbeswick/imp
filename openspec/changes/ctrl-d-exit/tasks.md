@@ -18,7 +18,7 @@
 
 ## 3. Existing tests and validation
 
-- [ ] 3.1 Update `ctrl_d_keeps_a_draft` and the picker tests that used Ctrl+D for delete.
+- [x] 3.1 Update `ctrl_d_keeps_a_draft` and the picker tests that used Ctrl+D for delete.
 - [ ] 3.2 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
 - [ ] 3.3 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
 - [ ] 3.4 Check in a real terminal that Ctrl+D exits from an empty composer, a draft, and a picker, and record the result in design.md.
