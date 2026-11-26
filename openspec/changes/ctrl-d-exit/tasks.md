@@ -2,7 +2,7 @@
 
 ## 0. Sequencing
 
-- [ ] 0.1 After `modal-shortcuts` is archived, add the picker delta: MODIFIED "Picker rows can carry shortcut actions" and "The modal footer shows shortcut keys", with `ctrl+x` for delete and the Ctrl+D scenarios replaced.
+- [x] 0.1 After `modal-shortcuts` is archived, add the picker delta: MODIFIED "Picker rows can carry shortcut actions" and "The modal footer shows shortcut keys", with `ctrl+x` for delete and the Ctrl+D scenarios replaced.
 
 ## 1. Tests first
 
