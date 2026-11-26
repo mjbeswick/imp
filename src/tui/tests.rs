@@ -7880,3 +7880,46 @@ fn a_picker_without_row_actions_draws_no_footer_and_keeps_its_height() {
     let (with, _, _, _) = b.overlay(100, 30).expect("picker overlay");
     assert_eq!(positioned_rows(&with), window_b + 4, "footer changed the height");
 }
+
+#[test]
+fn with_a_filter_every_letter_types_and_ctrl_r_still_renames() {
+    let mut a = picker();
+    let (tx, rx) = channel();
+    a.handle_key(Key::Char('o'), &tx);
+    for c in "rdneu".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    assert_eq!(open_picker(&a).filter, "ordneu", "a letter ran an action instead of typing");
+    assert!(rx.try_recv().is_err(), "a letter sent a command");
+    for _ in 0..6 {
+        a.handle_key(Key::Backspace, &tx);
+    }
+    a.handle_key(Key::Char('o'), &tx);
+    a.handle_key(Key::Ctrl('r'), &tx);
+    match &a.pending {
+        Some(Pending::Prompt { rename_id, .. }) => assert_eq!(rename_id, "abc123"),
+        _ => panic!("ctrl+r did not rename the highlighted session"),
+    }
+}
+
+#[test]
+fn ctrl_d_deletes_in_an_open_picker_and_quits_without_one() {
+    let mut a = picker();
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('d'), &tx);
+    assert!(!a.quit, "an open picker quit the application");
+    assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })), "ctrl+d did not delete");
+
+    let mut b = app();
+    b.handle_key(Key::Ctrl('d'), &tx);
+    assert!(b.quit, "ctrl+d with no picker and an empty composer did not quit");
+}
+
+#[test]
+fn ctrl_r_in_an_open_picker_without_a_rename_does_not_retry() {
+    let mut a = app();
+    open_many(&mut a, 3);
+    let (tx, _rx) = channel();
+    a.handle_key(Key::Ctrl('r'), &tx);
+    assert!(matches!(a.pending, Some(Pending::Pick(_))), "ctrl+r closed the picker or reached the turn");
+}
