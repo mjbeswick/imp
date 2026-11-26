@@ -3351,18 +3351,18 @@ fn a_favourite_whose_provider_is_not_usable_is_hidden_but_kept() {
 }
 
 #[test]
-fn f_on_a_model_row_toggles_the_favourite_and_keeps_the_highlight() {
+fn ctrl_f_on_a_model_row_toggles_the_favourite_and_keeps_the_highlight() {
     let (mut a, path) = fav_app("fav-key");
     let (tx, _rx) = channel();
     a.run_command("model", &tx);
     a.handle_key(Key::Down, &tx);
     a.handle_key(Key::Down, &tx);
     let target = open_picker(&a).selected().unwrap().value.clone();
-    a.handle_key(Key::Char('f'), &tx);
+    a.handle_key(Key::Ctrl('f'), &tx);
     assert_eq!(load_favourites(&path), vec![target.clone()]);
     assert_eq!(open_picker(&a).selected().unwrap().value, target, "highlight moved");
     assert!(a.status.toast.as_ref().is_some_and(|(t, _)| t.starts_with("favourite: ")), "{:?}", a.status.toast);
-    a.handle_key(Key::Char('f'), &tx);
+    a.handle_key(Key::Ctrl('f'), &tx);
     assert!(load_favourites(&path).is_empty());
     assert!(a.status.toast.as_ref().is_some_and(|(t, _)| t.starts_with("unfavourite: ")), "{:?}", a.status.toast);
 }
