@@ -33,5 +33,5 @@
 
 - [x] 5.1 Update picker tests that assert single-letter actions, the footer hint text, and the message count in the session list.
 - [x] 5.2 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`.
-- [ ] 5.3 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 5.3 Reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
 - [ ] 5.4 Check the footer bar and the day groups in a real terminal against the reference, and record the result in design.md.
