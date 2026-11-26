@@ -46,6 +46,26 @@ The system SHALL filter the session picker to sessions whose directory is the cu
 
 ## MODIFIED Requirements
 
+### Requirement: The picker title row carries its labels
+
+The system SHALL draw the filter in the picker's title row, SHALL show the picker title in muted text as a placeholder while the filter is empty, SHALL show `esc` at the right of the title row with the scroll position before it when the list scrolls, SHALL draw no rule in the picker and keep key hints in the modal footer bar rather than the title row, SHALL leave one blank column to the right of `esc` in the title row, and SHALL paint the selected row across the full inner width.
+
+#### Scenario: Esc margin
+- **WHEN** the picker title row is drawn
+- **THEN** `esc` ends one column before the box's right edge, and the item rows still reach that edge
+
+#### Scenario: Placeholder
+- **WHEN** the theme picker opens with an empty filter
+- **THEN** the title row shows `theme` in muted text with `esc` at its right and no rule below it
+
+#### Scenario: Typed filter
+- **WHEN** the user types `dark`
+- **THEN** the title row shows `dark` in place of the placeholder and `esc` stays at its right
+
+#### Scenario: Selected row
+- **WHEN** a row is highlighted
+- **THEN** the highlight spans the full inner width of the picker
+
 ### Requirement: Picker rows can carry shortcut actions
 
 The system SHALL allow a picker row to declare Ctrl-key actions, SHALL show each key and its action in the footer bar of the picker, SHALL run the action against the highlighted row without closing the picker, and SHALL keep every letter typing into the filter when the filter is not empty.
