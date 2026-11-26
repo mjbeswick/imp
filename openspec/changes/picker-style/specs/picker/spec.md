@@ -44,7 +44,7 @@ The system SHALL give the picker a fixed height of one title row and item rows, 
 
 #### Scenario: Resize
 - **WHEN** the terminal grows from 30 rows to 40 rows
-- **THEN** the box grows to twenty-three item rows
+- **THEN** the box grows to twenty item rows, the upper bound
 
 ### Requirement: The picker title row carries its labels
 
