@@ -8479,3 +8479,13 @@ fn ctrl_a_filters_to_the_current_directory_and_a_second_press_clears_it() {
     assert_eq!(open_picker(&a).filter, "note", "the typed filter changed");
     assert_eq!(sessions(&a), ["mine", "theirs"], "a second ctrl+a did not clear the filter");
 }
+
+#[test]
+fn a_typed_quit_still_quits_with_the_palette_present() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.input = "/quit".into();
+    a.cursor = a.input.len();
+    a.handle_key(Key::Enter, &tx);
+    assert!(a.quit, "typed /quit did not quit");
+}
