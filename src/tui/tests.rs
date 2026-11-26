@@ -3842,6 +3842,30 @@ fn the_command_list_shows_a_bound_key_beside_its_command() {
 }
 
 #[test]
+fn bare_bind_captures_a_chord_and_enter_fills_the_command() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("bind", &tx);
+    a.handle_key(Key::Ctrl('x'), &tx);
+    a.handle_key(Key::Char('n'), &tx);
+    assert!(a.capturing.is_some(), "the capture ended before Enter");
+    a.handle_key(Key::Enter, &tx);
+    assert!(a.capturing.is_none());
+    assert_eq!(a.input, "/bind ctrl+x n ", "Enter did not fill the command");
+}
+
+#[test]
+fn esc_cancels_a_capture_and_saves_nothing() {
+    let mut a = app();
+    let (tx, _rx) = channel();
+    a.run_command("bind", &tx);
+    a.handle_key(Key::Ctrl('x'), &tx);
+    a.handle_key(Key::Esc, &tx);
+    assert!(a.capturing.is_none(), "Esc did not cancel the capture");
+    assert!(a.cfg.bindings.is_empty());
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);

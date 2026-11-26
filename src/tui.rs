@@ -1673,6 +1673,16 @@ fn key_chord(key: &Key) -> Option<String> {
     }
 }
 
+/// One captured key in display form: `ctrl+x` for Ctrl+X, or a letter or digit
+/// for a second key. A first key must be Ctrl.
+fn capture_token(key: &Key, first: bool) -> Option<String> {
+    match key {
+        Key::Ctrl(c) if c.is_ascii_lowercase() => Some(format!("ctrl+{c}")),
+        Key::Char(c) if !first && c.is_ascii_alphanumeric() => Some(c.to_ascii_lowercase().to_string()),
+        _ => None,
+    }
+}
+
 /// A chord as the user types it (`ctrl+x n`) in config form (`ctrl-x-n`): lower
 /// case, with `+` and spaces between keys written as `-`.
 fn normalize_chord(text: &str) -> String {
@@ -1944,6 +1954,8 @@ pub struct App {
     models_path: std::path::PathBuf,
     /// The first key of a chord, held until a second key arrives or the wait ends.
     chord_first: Option<(String, Key, Instant)>,
+    /// Keys captured by a bare `/bind`, in display form (`ctrl+x`, `n`), until Enter or Esc.
+    capturing: Option<Vec<String>>,
     /// An `/edit` or `/open` waiting on the user's yes: GUI or not, the argument
     /// list, and a file to create first when the target is missing.
     confirm_open: Option<(bool, Vec<String>, Option<std::path::PathBuf>)>,
@@ -2963,6 +2975,7 @@ impl App {
             pending: None,
             preview_from: None,
             chord_first: None,
+            capturing: None,
             config_path: Config::config_path(),
             models_path: crate::config::dirs_state().join("imp").join("models"),
             confirm_open: None,
@@ -3722,6 +3735,9 @@ impl App {
     /// a chord is held for a second key; if none follows in time, or the second key
     /// completes nothing, the held key does its own effect.
     fn handle_key(&mut self, key: Key, tx: &Sender<Cmd>) {
+        if self.capturing.is_some() {
+            return self.capture_key(key);
+        }
         if let Some((first, held, _)) = self.chord_first.take() {
             // A prompt or picker opened while the key was held: the held key goes to it first.
             if self.pending.is_some() {
@@ -3749,6 +3765,33 @@ impl App {
             }
         }
         self.handle_key_plain(key, tx);
+    }
+
+    /// One key during a `/bind` capture. A chord is one or two keys, the first a Ctrl
+    /// key. Enter fills the composer with `/bind <chord> ` for the command; Esc cancels.
+    fn capture_key(&mut self, key: Key) {
+        let Some(keys) = self.capturing.as_mut() else { return };
+        match key {
+            Key::Esc => {
+                self.capturing = None;
+                self.toast("binding cancelled");
+            }
+            Key::Enter => {
+                let keys = self.capturing.take().unwrap_or_default();
+                if keys.is_empty() {
+                    self.toast("binding cancelled: no keys were pressed");
+                } else {
+                    self.input = format!("/bind {} ", keys.join(" "));
+                    self.cursor = self.input.len();
+                }
+            }
+            _ if keys.len() == 2 => self.toast("a chord has two keys; Enter binds it, Esc cancels"),
+            _ => match capture_token(&key, keys.is_empty()) {
+                Some(token) => keys.push(token),
+                None => self.toast("a chord starts with a Ctrl key; a letter can only follow one"),
+            },
+        }
+        self.dirty = true;
     }
 
     /// Run the command bound to `chord`. The composer draft is left as it is.
@@ -6921,7 +6964,11 @@ impl App {
     fn bind_command(&mut self, rest: &str) {
         let words: Vec<&str> = rest.split_whitespace().collect();
         let Some((command, chord_words)) = words.split_last() else {
-            self.push(Role::Info, "usage: /bind <chord> <command>, such as /bind ctrl+x n /model");
+            // A bare `/bind` captures the keys: Enter fills the command, Esc cancels.
+            self.capturing = Some(Vec::new());
+            self.input.clear();
+            self.cursor = 0;
+            self.toast("press the keys, Enter to bind, Esc to cancel");
             return;
         };
         if chord_words.is_empty() || !command.starts_with('/') {
