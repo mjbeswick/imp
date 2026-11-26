@@ -3095,7 +3095,7 @@ fn an_unknown_model_shows_tokens_but_no_cost() {
     a.status.miss = 10;
     a.status.output = 5;
     let line = a.status_line(120);
-    assert!(line.contains("100 · ctrl+p"), "{line}");
+    assert!(line.contains("100 (0%) · ctrl+p"), "{line}");
     assert!(!line.contains('$'), "{line}");
 }
 
@@ -8477,7 +8477,7 @@ fn the_command_menu_has_no_title_or_footer_and_keeps_its_keys() {
     let mut a = app();
     a.handle_key(Key::Char('/'), &tx);
     let frame = strip(&a.frame(80, 20));
-    assert!(frame.contains("/compact"), "{frame:?}");
+    assert!(frame.contains("/help"), "{frame:?}");
     assert!(!frame.contains("╭") && !frame.contains("╰") && !frame.contains("│"), "a border: {frame:?}");
     assert!(!frame.contains("─ commands"), "a title row: {frame:?}");
     assert!(!frame.contains("choose") && !frame.contains("close"), "a footer: {frame:?}");
