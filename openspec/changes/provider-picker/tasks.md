@@ -13,7 +13,7 @@
 
 ## 3. Enter opens the editor
 
-- [ ] 3.1 Implement: the provider Enter branch opens the editor for every row. Onboarding keeps its own branch.
+- [x] 3.1 Implement: the provider Enter branch opens the editor for every row. Onboarding keeps its own branch.
 - [x] 3.2 Test: `u` on a provider row still switches the active provider.
 
 ## 4. Validation
