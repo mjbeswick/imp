@@ -56,7 +56,11 @@ The system SHALL draw one blank padding row above the title row, one blank row b
 
 ### Requirement: The picker title row carries its labels
 
-The system SHALL draw the filter in the picker's title row, SHALL show the picker title in muted text as a placeholder while the filter is empty, SHALL show `esc` at the right of the title row with the scroll position before it when the list scrolls, SHALL draw no rule and no key-hint line in the picker, and SHALL paint the selected row across the full inner width.
+The system SHALL draw the filter in the picker's title row, SHALL show the picker title in muted text as a placeholder while the filter is empty, SHALL show `esc` at the right of the title row with the scroll position before it when the list scrolls, SHALL draw no rule and no key-hint line in the picker, SHALL leave one blank column to the right of `esc` in the title row, and SHALL paint the selected row across the full inner width.
+
+#### Scenario: Esc margin
+- **WHEN** the picker title row is drawn
+- **THEN** `esc` ends one column before the box's right edge, and the item rows still reach that edge
 
 #### Scenario: Placeholder
 - **WHEN** the theme picker opens with an empty filter

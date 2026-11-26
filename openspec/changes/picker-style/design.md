@@ -96,3 +96,11 @@ Expected change: a few hundred bytes of code, roughly flat. `./scripts/size.sh` 
     and the window is capped at the rows less five so the box still fits. Judgement call: the reading of
     "under input" as the title-row gap rather than a gap below the box, which would sit above the composer.
     Cost if wrong: one row moves.
+
+## Esc margin (added after the bottom gap)
+
+12. **Esc margin.** The `esc` label in the title row keeps one blank column to its right. Only the title row
+    changes: the item rows and the padding keep their full width, as the padding requirement says. The
+    exception is written into the title-row requirement, so the two requirements agree. Judgement call: the
+    margin applies to `esc` only, not to a position count or row action that sits before it. Cost if wrong:
+    one column moves on the title row.
