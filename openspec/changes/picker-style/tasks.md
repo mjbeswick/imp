@@ -59,6 +59,6 @@
 
 ## 11. Esc margin
 
-- [ ] 11.1 Test: in the title row, `esc` ends one column before the box's right edge, and the item rows still reach that edge. Confirm it fails before the change.
-- [ ] 11.2 Implement: leave one blank column to the right of `esc` in the title row only, moving the `esc` click target with it (`src/tui.rs`).
-- [ ] 11.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 11.1 Test: in the title row, `esc` ends one column before the box's right edge, and the item rows still reach that edge. Confirm it fails before the change.
+- [x] 11.2 Implement: leave one blank column to the right of `esc` in the title row only, moving the `esc` click target with it (`src/tui.rs`).
+- [x] 11.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
