@@ -2433,7 +2433,7 @@ const PICK_ROWS: usize = 8;
 /// of the rows less one, between five and twenty, and never more than the rows
 /// less four, so the box always fits.
 fn picker_window(rows: usize) -> usize {
-    (rows * 3 / 5).saturating_sub(1).clamp(5, 20).min(rows.saturating_sub(4).max(1))
+    (rows * 3 / 5).saturating_sub(1).clamp(5, 20).min(rows.saturating_sub(5).max(1))
 }
 
 impl Picker {
@@ -7114,7 +7114,7 @@ impl App {
 
     /// Give the open picker the window for this terminal, before it is drawn.
     fn fit_picker(&mut self, cols: usize, rows: usize) {
-        let inner = modal_width(cols).saturating_sub(1);
+        let inner = modal_width(cols);
         match self.pending.as_mut() {
             Some(Pending::Pick(picker)) => picker.fit(inner, rows),
             Some(Pending::ConfirmDelete { picker, .. }) => picker.fit(inner, rows),
@@ -7135,8 +7135,8 @@ impl App {
         if width < 4 || rows < 5 {
             return None;
         }
-        // No left margin: the content fills the box less its one right column.
-        let inner = width.saturating_sub(1);
+        // No margins: the content fills the box to its right edge.
+        let inner = width;
         let matches = picker.matches();
         // The box has a fixed height: one padding row, the title row, and the
         // window's item rows. Short lists pad with blank rows, which take no click.
@@ -7145,7 +7145,7 @@ impl App {
         while lines.len() < window {
             lines.push((String::new(), usize::MAX, false));
         }
-        let height = window + 3;
+        let height = window + 4;
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
@@ -7187,8 +7187,8 @@ impl App {
         let gap = " ".repeat(inner.saturating_sub(left.chars().count() + right_w));
         let left = if placeholder { self.palette.paint(Role::Thinking, &left) } else { left };
         let title_row = format!("{left}{gap}{}", self.palette.paint(Role::Thinking, &right));
-        // A blank padding row above the title row, painted with the panel.
-        let mut block: Vec<String> = vec![" ".repeat(width), format!("{title_row} ")];
+        // Padding above the title row, a blank gap under it, painted with the panel.
+        let mut block: Vec<String> = vec![" ".repeat(width), title_row, " ".repeat(width)];
 
         let column = desc_column(picker, inner);
         for (text, at, selected) in &lines {
@@ -7203,7 +7203,7 @@ impl App {
                 }
                 None => styled_state(state, self.boxed(text, inner, *selected)),
             };
-            block.push(format!("{row} "));
+            block.push(row);
         }
         // A blank padding row below the item rows, painted with the panel.
         block.push(" ".repeat(width));
@@ -7221,7 +7221,7 @@ impl App {
                     if *at == usize::MAX {
                         continue;
                     }
-                    targets.push((y + 2 + row, x, x + inner - 1, Target::Row(*at)));
+                    targets.push((y + 3 + row, x, x + inner - 1, Target::Row(*at)));
                 }
             }
             // The title row's keys are clickable: `esc`, and any row action.

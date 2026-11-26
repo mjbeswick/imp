@@ -5307,7 +5307,7 @@ fn overlay_fills_a_narrow_terminal_with_a_margin() {
         .iter()
         .find(|t| t.3 == Target::Key(Key::Esc))
         .expect("esc target");
-    assert_eq!(esc.2, x + 44, "esc does not end on the inner edge");
+    assert_eq!(esc.2, x + 45, "esc does not end on the inner edge");
 }
 
 #[test]
@@ -5353,7 +5353,7 @@ fn the_box_height_is_fixed_for_any_item_count() {
     let short = drawn_rows(&mut few, 100, 30);
     let long = drawn_rows(&mut many, 100, 30);
     assert_eq!(short, long, "the box changed height with the item count");
-    assert_eq!(long, 20, "padding, title row, seventeen item rows and padding");
+    assert_eq!(long, 21, "padding, title row, gap, seventeen item rows and padding");
 }
 
 #[test]
@@ -5441,7 +5441,7 @@ fn the_box_has_top_padding_and_no_left_margin() {
             _ => None,
         })
         .expect("row target");
-    assert_eq!(row, title_row + 1, "the first item row is not under the title row");
+    assert_eq!(row, title_row + 2, "the first item row is not under the blank gap");
     assert_eq!(col, 15, "the item rows keep a left margin");
     // The row above the title is blank padding.
     let pad = format!("\x1b[{};15H", title_row - 1);
@@ -5460,7 +5460,8 @@ fn the_box_has_bottom_padding() {
     a.frame(100, 30);
     // A 72-column box on 100 columns starts at column 15; the window is 17 rows.
     let (out, _, title_row, _) = a.overlay(100, 30).expect("overlay");
-    let last_item = title_row + 17;
+    // The title row, a blank gap, then seventeen item rows.
+    let last_item = title_row + 18;
     let pad = format!("\x1b[{};15H", last_item + 1);
     let start = out.find(&pad).expect("no padding row below the items");
     let end = match out[start + pad.len()..].find("\x1b[") {
