@@ -8,9 +8,9 @@
 
 ## 2. Picker
 
-- [ ] 2.1 Test: the `/keys` card at 160 columns shows its longest description without an ellipsis. Not yet written; the width rule is tested directly.
+- [x] 2.1 Test: the `/keys` card at 160 columns shows its longest description without an ellipsis. Covered by `the_keys_card_shows_its_longest_description_at_160_columns`, which found an off-by-two in the row width; fixed in the same commit.
 - [x] 2.2 Implement: the picker overlay computes `wanted` from its rows and passes it to `modal_width`.
 
 ## 3. Validation
 
-- [x] 3.1 Run `cargo test` and `openspec validate --all --strict`, and record the outcome. Result: 852 unit tests pass; the two tests/tty.rs failures predate this change.
+- [x] 3.1 Run `cargo test` and `openspec validate --all --strict`, and record the outcome. Result: 853 unit tests pass; the two tests/tty.rs failures predate this change.
