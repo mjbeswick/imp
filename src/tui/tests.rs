@@ -5301,7 +5301,7 @@ fn overlay_fills_a_narrow_terminal_with_a_margin() {
     // 50 columns: a 46-column box, starting at column 3 with a 1-column margin.
     // The overlay returns the cursor column: the box's left edge plus the margin and the three-column indent.
     let (_, cursor, _, targets) = a.overlay(50, 24).expect("overlay");
-    let x = cursor - 4;
+    let x = cursor - 3;
     assert_eq!(x, 3, "the box is not centred");
     let esc = targets
         .iter()
@@ -5343,7 +5343,7 @@ fn the_box_height_is_fixed_for_any_item_count() {
     fn drawn_rows(a: &mut App, cols: usize, rows: usize) -> usize {
         a.frame(cols, rows);
         let (out, cursor, _, _) = a.overlay(cols, rows).expect("overlay");
-        let x = cursor - 4;
+        let x = cursor - 3;
         out.matches(&format!(";{x}H")).count()
     }
     let mut few = app();
@@ -5353,7 +5353,7 @@ fn the_box_height_is_fixed_for_any_item_count() {
     let short = drawn_rows(&mut few, 100, 30);
     let long = drawn_rows(&mut many, 100, 30);
     assert_eq!(short, long, "the box changed height with the item count");
-    assert_eq!(long, 18, "one title row and seventeen item rows");
+    assert_eq!(long, 19, "one padding row, one title row and seventeen item rows");
 }
 
 #[test]
@@ -5421,10 +5421,36 @@ fn the_filter_cursor_follows_the_typed_text() {
     open_many(&mut a, 3);
     let (tx, _rx) = channel();
     a.handle_key(Key::Char('r'), &tx);
-    let (_, x, y, _) = a.overlay(100, 30).expect("overlay");
-    // Box at column 15 (72 wide in 100): wall, " › ", then `r`.
-    assert_eq!(x, 15 + 1 + 3 + 1);
+    let (_, cursor, y, _) = a.overlay(100, 30).expect("overlay");
+    // Box at column 15 (72 wide in 100, no left margin): three columns of indent, then `r`.
+    assert_eq!(cursor, 15 + 3 + 1);
     assert!(y >= 1);
+}
+
+#[test]
+fn the_box_has_top_padding_and_no_left_margin() {
+    let mut a = app();
+    open_many(&mut a, 3);
+    a.frame(100, 30);
+    // A 72-column box on 100 columns starts at column 15.
+    let (out, _, title_row, targets) = a.overlay(100, 30).expect("overlay");
+    let (row, col) = targets
+        .iter()
+        .find_map(|t| match t.3 {
+            Target::Row(_) => Some((t.0, t.1)),
+            _ => None,
+        })
+        .expect("row target");
+    assert_eq!(row, title_row + 1, "the first item row is not under the title row");
+    assert_eq!(col, 15, "the item rows keep a left margin");
+    // The row above the title is blank padding.
+    let pad = format!("\x1b[{};15H", title_row - 1);
+    let start = out.find(&pad).expect("no padding row above the title");
+    let end = out[start + pad.len()..]
+        .find(&format!("\x1b[{};15H", title_row))
+        .map(|i| start + pad.len() + i)
+        .expect("no title row after the padding");
+    assert!(strip(&out[start + pad.len()..end]).trim().is_empty(), "the padding row is not blank");
 }
 
 #[test]

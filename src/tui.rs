@@ -7114,7 +7114,7 @@ impl App {
 
     /// Give the open picker the window for this terminal, before it is drawn.
     fn fit_picker(&mut self, cols: usize, rows: usize) {
-        let inner = modal_width(cols).saturating_sub(2);
+        let inner = modal_width(cols).saturating_sub(1);
         match self.pending.as_mut() {
             Some(Pending::Pick(picker)) => picker.fit(inner, rows),
             Some(Pending::ConfirmDelete { picker, .. }) => picker.fit(inner, rows),
@@ -7135,16 +7135,17 @@ impl App {
         if width < 4 || rows < 5 {
             return None;
         }
-        let inner = width.saturating_sub(2);
+        // No left margin: the content fills the box less its one right column.
+        let inner = width.saturating_sub(1);
         let matches = picker.matches();
-        // The box has a fixed height: the title row and the window's item rows.
-        // Short lists pad with blank rows, which take no click.
+        // The box has a fixed height: one padding row, the title row, and the
+        // window's item rows. Short lists pad with blank rows, which take no click.
         let window = picker.window.max(1);
         let mut lines = picker_lines(picker, &matches, window, inner, true);
         while lines.len() < window {
             lines.push((String::new(), usize::MAX, false));
         }
-        let height = window + 1;
+        let height = window + 2;
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
@@ -7186,8 +7187,8 @@ impl App {
         let gap = " ".repeat(inner.saturating_sub(left.chars().count() + right_w));
         let left = if placeholder { self.palette.paint(Role::Thinking, &left) } else { left };
         let title_row = format!("{left}{gap}{}", self.palette.paint(Role::Thinking, &right));
-        let mut block: Vec<String> = vec![format!(" {title_row} ")];
-        let wall = " ";
+        // A blank padding row above the title row, painted with the panel.
+        let mut block: Vec<String> = vec![" ".repeat(width), format!("{title_row} ")];
 
         let column = desc_column(picker, inner);
         for (text, at, selected) in &lines {
@@ -7202,14 +7203,14 @@ impl App {
                 }
                 None => styled_state(state, self.boxed(text, inner, *selected)),
             };
-            block.push(format!("{wall}{row}{wall}"));
+            block.push(format!("{row} "));
         }
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{}", y + i, x, self.palette.panel(line)));
         }
         // The filter text follows the indent and the one-column margin.
-        let cursor = (x + 1 + indent.len() + picker.filter.chars().count()).min(x + width - 2);
+        let cursor = (x + indent.len() + picker.filter.chars().count()).min(x + width - 2);
         // Only an open picker takes clicks; a delete confirmation keeps to keys.
         let mut targets = Vec::new();
         if matches!(self.pending, Some(Pending::Pick(_))) {
@@ -7218,14 +7219,14 @@ impl App {
                     if *at == usize::MAX {
                         continue;
                     }
-                    targets.push((y + 1 + row, x + 1, x + inner, Target::Row(*at)));
+                    targets.push((y + 2 + row, x, x + inner - 1, Target::Row(*at)));
                 }
             }
             // The title row's keys are clickable: `esc`, and any row action.
-            let start = (x + 1 + inner).saturating_sub(right_w);
-            targets.extend(footer_targets(y, start, &right));
+            let start = (x + inner).saturating_sub(right_w);
+            targets.extend(footer_targets(y + 1, start, &right));
         }
-        Some((out, cursor, y, targets))
+        Some((out, cursor, y + 1, targets))
     }
 
     /// Fit one row of text to the interior width and pad it with spaces.
