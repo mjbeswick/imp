@@ -7,12 +7,12 @@
 
 ## 2. Agent tool
 
-- [ ] 2.1 A `goal` tool with `set` stores a pending goal and asks the user to confirm it; yes starts round 1, no drops it and tells the agent; tests
-- [ ] 2.2 The agent cannot start rounds without the confirmation; tests
+- [x] 2.1 A `goal` tool with `set` stores a pending goal and asks the user to confirm it; yes starts round 1, no drops it and tells the agent; tests. Judgement call: the tool asks through `Hooks::confirm` in the same call and does not keep a separate pending state, so yes starts round 1 at once and no keeps nothing.
+- [x] 2.2 The agent cannot start rounds without the confirmation; tests
 
 ## 3. Persistence
 
-- [ ] 3.1 A goal is written to the session metadata when it changes and read back on open or resume; a running goal restores as paused; tests
+- [x] 3.1 A goal is written to the session metadata when it changes and read back on open or resume; a running goal restores as paused; tests. Covered by `a_goal_is_saved_with_the_session_and_restored_paused`.
 
 ## 4. Goal UX
 
@@ -20,4 +20,4 @@
 
 ## 5. Docs
 
-- [ ] 5.1 README describes the `/goal` subcommands, the `goal` tool, and goal persistence
+- [x] 5.1 README describes the `/goal` subcommands, the `goal` tool, and goal persistence. Added a paragraph after the commands block.

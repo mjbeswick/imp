@@ -404,6 +404,17 @@ pub struct Meta {
     pub model: String,
     pub messages: u64,
     pub updated: u64,
+    /// The session's goal, saved so it survives a restart.
+    pub goal: Option<SavedGoal>,
+}
+
+/// A goal as the session file keeps it. The agent restores it as paused.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedGoal {
+    pub text: String,
+    pub round: u32,
+    pub rounds: u32,
+    pub paused: bool,
 }
 
 #[derive(Clone)]
@@ -429,6 +440,7 @@ impl Log {
             model: model.to_string(),
             messages: 0,
             updated: now(),
+            goal: None,
         });
         log
     }
@@ -462,6 +474,7 @@ impl Log {
                 model: v["model"].as_str().unwrap_or("").to_string(),
                 messages: v["messages"].as_u64().unwrap_or(0),
                 updated: v["updated"].as_u64().unwrap_or(0),
+                goal: saved_goal(&v["goal"]),
             })
             .unwrap_or(Meta {
                 id: self.id.clone(),
@@ -470,6 +483,7 @@ impl Log {
                 model: String::new(),
                 messages: 0,
                 updated: 0,
+                goal: None,
             })
     }
 
@@ -522,8 +536,18 @@ impl Log {
             "model": meta.model,
             "messages": meta.messages,
             "updated": meta.updated,
+            "goal": meta.goal.as_ref().map(|g| serde_json::json!({
+                "text": g.text, "round": g.round, "rounds": g.rounds, "paused": g.paused,
+            })),
         });
         let _ = std::fs::write(&self.meta_path, v.to_string());
+    }
+
+    /// Save the session's goal, or clear it with `None`.
+    pub fn set_goal(&self, goal: Option<SavedGoal>) {
+        let mut meta = self.meta();
+        meta.goal = goal;
+        self.write_meta(&meta);
     }
 
     pub fn append(&self, message: &Message) {
@@ -946,6 +970,16 @@ pub fn skill_dirs(cfg: &Config, root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// The goal object in a session file, or `None` when there is none.
+fn saved_goal(v: &serde_json::Value) -> Option<SavedGoal> {
+    Some(SavedGoal {
+        text: v["text"].as_str()?.to_string(),
+        round: v["round"].as_u64()? as u32,
+        rounds: v["rounds"].as_u64()? as u32,
+        paused: v["paused"].as_bool().unwrap_or(true),
+    })
+}
+
 pub fn load_skills(cfg: &Config, root: &Path) -> Vec<Skill> {
     let mut out: Vec<Skill> = builtin_skills()
         .into_iter()
@@ -1240,6 +1274,7 @@ mod session_tests {
             model: "m".into(),
             messages,
             updated: 1_000,
+            goal: None,
         }
     }
 

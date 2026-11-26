@@ -128,6 +128,20 @@ one 16 MB output buffer budget.
 /effort    low, medium, high, or default
 ```
 
+A goal keeps the agent working in rounds until the goal is met, the limit is reached,
+or you stop it. `/goal <text>` asks before it replaces a running goal. `/goal` shows
+the text, round, limit and state; `/goal edit` changes the text without starting a
+round; `/goal pause` and `/goal resume` stop and restart its rounds; `/goal clear`
+removes it, and `/goal off` is an alias. The status line shows `goal n/m` or
+`goal paused`.
+
+The agent can propose a goal itself through its `goal` tool. Nothing runs until you
+answer yes: a yes starts round 1, and a no drops the goal and tells the agent you
+declined. The agent cannot start rounds without your confirmation.
+
+A goal is saved with the session. On resume a running goal comes back paused, so
+resuming never runs rounds unasked; use `/goal resume` to continue it.
+
 Shift+Tab switches agent, with or without a draft, and Tab completes. Ctrl+B
 steps the mode through normal, auto, yolo, and strict. Ctrl+C stops a turn and never clears the draft; idle, a
 second Ctrl+C within two seconds quits. Ctrl+L clears the transcript. In the draft, Option or Alt with ←/→ moves by
