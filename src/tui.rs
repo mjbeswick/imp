@@ -505,14 +505,35 @@ impl Palette {
             // Mono: no background, so the row is reversed.
             return self.styled("7", text.to_string());
         }
-        let back = self.theme.rgb(crate::theme::Slot::Select);
-        let bg = if self.truecolor {
-            format!("\x1b[48;2;{};{};{}m", back[0], back[1], back[2])
-        } else {
-            format!("\x1b[48;5;{}m", crate::theme::to_256(back))
-        };
+        let bg = self.background(self.theme.rgb(crate::theme::Slot::Select));
         // The fg reset inside `paint` keeps the background until the end.
         format!("{bg}{}\x1b[0m", self.paint(Role::User, text).replace("\x1b[0m", "\x1b[39m"))
+    }
+
+    /// The background escape for one colour: truecolour, or the 256-colour fallback.
+    fn background(&self, rgb: [u8; 3]) -> String {
+        if self.truecolor {
+            format!("\x1b[48;2;{};{};{}m", rgb[0], rgb[1], rgb[2])
+        } else {
+            format!("\x1b[48;5;{}m", crate::theme::to_256(rgb))
+        }
+    }
+
+    /// Fill a picker line with the panel background. The panel is derived from
+    /// the theme's text colour: near-white under dark text (a light theme),
+    /// near-black under light text. Mono has no fill. The fill is re-applied
+    /// after each reset, so it reaches the end of the line.
+    pub(crate) fn panel(&self, line: &str) -> String {
+        if !self.on {
+            return line.to_string();
+        }
+        let text = self.theme.rgb(crate::theme::Slot::Text);
+        // The same luma split the theme tests use: dark text means a light theme.
+        let luma = text[0] as u32 * 3 + text[1] as u32 * 6 + text[2] as u32;
+        let (target, keep) = if luma < 1280 { (255.0, 0.94) } else { (0.0, 0.88) };
+        let rgb = text.map(|c| (c as f32 + (target - c as f32) * keep).round() as u8);
+        let bg = self.background(rgb);
+        format!("{bg}{}\x1b[0m", line.replace("\x1b[0m", &format!("\x1b[0m{bg}")))
     }
 
     /// A run of a diff row: text colour on the row's tint, or on a tint
@@ -7140,7 +7161,7 @@ impl App {
         }
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
-            out.push_str(&format!("\x1b[{};{}H{line}", y + i, x));
+            out.push_str(&format!("\x1b[{};{}H{}", y + i, x, self.palette.panel(line)));
         }
         // The filter text follows the indent and the one-column margin.
         let cursor = (x + 1 + indent.len() + picker.filter.chars().count()).min(x + width - 2);

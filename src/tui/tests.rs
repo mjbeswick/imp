@@ -5363,6 +5363,29 @@ fn the_current_entry_has_a_square_marker() {
 }
 
 #[test]
+fn the_picker_block_has_a_panel_background() {
+    let mut a = colour_app();
+    open_many(&mut a, 3);
+    let out = a.frame(100, 30);
+    // The title placeholder is the first text of the title row; a fill must
+    // start it, after the last reset before it.
+    let at = out.find("agent").expect("title");
+    let before = &out[..at];
+    assert!(
+        before.rfind("\x1b[48;") > before.rfind("\x1b[0m"),
+        "no panel background before the title: {before:?}"
+    );
+}
+
+#[test]
+fn a_mono_picker_draws_no_panel() {
+    let mut a = app();
+    open_many(&mut a, 3);
+    let out = a.frame(100, 30);
+    assert!(!out.contains("\x1b[48;"), "mono picker has a fill: {out:?}");
+}
+
+#[test]
 fn the_filter_cursor_follows_the_typed_text() {
     let mut a = app();
     open_many(&mut a, 3);
