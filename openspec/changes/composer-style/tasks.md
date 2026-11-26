@@ -46,5 +46,5 @@
 - [x] 8.5 Implement the block bar, footer placement, capitalised agent, column alignment, and footer colours in `composer` and `paint_composer_row` (`src/tui.rs`).
 - [x] 8.6 Implement the one-row status bar with the directory at the left, and remove the slash hint from it (`paint_status`, `status_line`, the directory shortening).
 - [x] 8.7 Implement the menu rails, the removed gap above the composer block, and the highlighted row colours in `command_menu`.
-- [ ] 8.8 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [x] 8.8 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
 - [ ] 8.9 Check the block, footer, status bar, and menu in a real terminal against the design, and record the result in design.md.
