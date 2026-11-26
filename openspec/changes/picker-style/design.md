@@ -80,3 +80,10 @@ Expected change: a few hundred bytes of code, roughly flat. `./scripts/size.sh` 
    box keeps its width: the inner width becomes the box width less one, and the one-column right margin
    remains. Judgement call: the top padding is painted with the panel background, so it reads as part of
    the box. Cost if wrong: the padding can be removed by dropping one line in the frame.
+
+## Bottom padding (added after the top padding)
+
+10. **Bottom padding.** One blank row below the last item row, so the box has padding above and below. The
+    height becomes the window plus three: padding, title, items, padding. The padding row is painted with the
+    panel like the top one. Judgement call: one row is the same measure as the top padding. Cost if wrong: one
+    line in the frame.

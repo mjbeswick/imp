@@ -32,7 +32,7 @@ The system SHALL draw the picker as a centred block over the transcript with no 
 
 ### Requirement: The picker height follows the terminal
 
-The system SHALL give the picker a fixed height of one blank padding row above the title row, the title row, and item rows, the item rows being three fifths of the terminal rows less one, at least five, at most twenty, and at most the terminal rows less four, SHALL keep that height for any number of items by leaving spare rows blank, and SHALL keep the highlighted row in the window as the height changes.
+The system SHALL give the picker a fixed height of one blank padding row above the title row, the title row, the item rows, and one blank padding row below the item rows, the item rows being three fifths of the terminal rows less one, at least five, at most twenty, and at most the terminal rows less four, SHALL keep that height for any number of items by leaving spare rows blank, and SHALL keep the highlighted row in the window as the height changes.
 
 #### Scenario: Long list
 - **WHEN** forty profiles are available in a 30-row terminal

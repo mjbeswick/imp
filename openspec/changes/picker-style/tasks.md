@@ -44,3 +44,9 @@
 - [x] 8.1 Test: the title row and item rows start at the box's left edge with no padding column, and a blank padding row sits above the title row; the box keeps its width and the filter cursor follows the new column. Confirm the layout test fails before the change.
 - [x] 8.2 Implement: drop the left margin, add one blank row above the title row, and move the title, rows, cursor, and click targets to match (`src/tui.rs`).
 - [x] 8.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+
+## 9. Bottom padding
+
+- [ ] 9.1 Test: a blank padding row sits below the last item row, so the box is one row taller than before; the height test expects twenty rows for seventeen item rows. Confirm the bottom-padding test fails before the change.
+- [ ] 9.2 Implement: add one blank row after the item rows and count it in the height (`src/tui.rs`).
+- [ ] 9.3 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
