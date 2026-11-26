@@ -3703,9 +3703,11 @@ fn the_highlighted_command_description_wraps() {
         "no hanging indent: {:?}",
         row[1]
     );
-    // Rows that are not highlighted keep one line, so only the
-    // highlighted item adds a row.
-    assert_eq!(lines.len(), 9, "another row wrapped: {lines:?}");
+    // The box holds eight lines: the highlighted item's second line takes the
+    // row of the item at the bottom, so seven items show.
+    assert_eq!(lines.len(), 8, "the box height changed: {lines:?}");
+    let shown: std::collections::BTreeSet<usize> = lines.iter().map(|l| l.1).collect();
+    assert_eq!(shown.len(), 7, "the wrapped row did not take a row: {lines:?}");
 }
 
 #[test]
@@ -3751,8 +3753,8 @@ fn a_short_screen_cuts_the_description_on_one_line() {
     picker.index = at;
     picker.offset = at;
     a.pending = Some(Pending::Pick(picker));
-    // Ten rows: the box with its second line would need eleven, so the cut applies.
-    let frame = strip(&a.frame(60, 10));
+    // Five rows leave one item row: no spare row for the second line, so the cut applies.
+    let frame = strip(&a.frame(60, 5));
     assert!(frame.contains("/goal"), "no command row: {frame:?}");
     assert!(!frame.contains("off to stop"), "the box grew: {frame:?}");
 }
@@ -5309,21 +5311,49 @@ fn overlay_fills_a_narrow_terminal_with_a_margin() {
 }
 
 #[test]
-fn overlay_shows_eight_rows_and_scrolls() {
+fn overlay_shows_the_window_for_the_terminal_height() {
     let mut a = app();
     open_many(&mut a, 40);
     let frame = a.frame(100, 30);
     let rows = strip(&frame).matches("profile ").count();
-    assert_eq!(rows, 8, "wrong number of item rows in {frame:?}");
+    assert_eq!(rows, 17, "wrong number of item rows in {frame:?}");
     assert!(strip(&frame).contains("profile 0"), "{frame:?}");
 
     let (tx, _rx) = channel();
-    for _ in 0..8 {
+    for _ in 0..17 {
         a.handle_key(Key::Down, &tx);
     }
     let scrolled = strip(&a.frame(100, 30));
     assert!(!scrolled.contains("profile 0"), "the window did not scroll");
-    assert!(scrolled.contains("profile 8"), "{scrolled:?}");
+    assert!(scrolled.contains("profile 17"), "{scrolled:?}");
+}
+
+#[test]
+fn the_window_follows_the_terminal_rows() {
+    assert_eq!(picker_window(30), 17);
+    assert_eq!(picker_window(40), 20);
+    assert_eq!(picker_window(12), 6);
+    assert_eq!(picker_window(100), 20);
+    assert_eq!(picker_window(5), 1);
+}
+
+#[test]
+fn the_box_height_is_fixed_for_any_item_count() {
+    // The box is drawn one row per line at its own column: count those rows.
+    fn drawn_rows(a: &mut App, cols: usize, rows: usize) -> usize {
+        a.frame(cols, rows);
+        let (out, cursor, _, _) = a.overlay(cols, rows).expect("overlay");
+        let x = cursor - 4;
+        out.matches(&format!(";{x}H")).count()
+    }
+    let mut few = app();
+    open_many(&mut few, 3);
+    let mut many = app();
+    open_many(&mut many, 40);
+    let short = drawn_rows(&mut few, 100, 30);
+    let long = drawn_rows(&mut many, 100, 30);
+    assert_eq!(short, long, "the box changed height with the item count");
+    assert_eq!(long, 18, "one title row and seventeen item rows");
 }
 
 #[test]

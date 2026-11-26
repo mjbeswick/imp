@@ -2120,6 +2120,8 @@ struct Picker {
     items: Vec<PickItem>,
     index: usize,
     offset: usize,
+    /// Item rows the box shows, set from the terminal height on each frame.
+    window: usize,
     kind: PickKind,
     /// Text before the filter that the composer should show, when typed
     /// characters belong to a command line.
@@ -2376,17 +2378,28 @@ fn picker_lines(picker: &Picker, matches: &[usize], visible: usize, inner: usize
         };
         return vec![(text.into(), 0, false)];
     }
+    // Items are added while their lines fit in `visible`, the box's item rows.
+    // A row that would overflow is drawn on one line, and the list stops when
+    // even that does not fit.
     let mut out = Vec::new();
-    for row in 0..visible {
-        let at = picker.offset + row;
+    let mut at = picker.offset;
+    while out.len() < visible {
         let Some(&index) = matches.get(at) else { break };
         let selected = at == picker.index;
         // Provider rows wrap whether selected or not, so moving the selection
         // never changes the list's height.
         let wraps = wrap && (selected || picker.kind == PickKind::Provider);
-        for line in picker_row(picker, at, index, inner, wraps) {
+        let mut lines = picker_row(picker, at, index, inner, wraps);
+        if out.len() + lines.len() > visible {
+            lines = picker_row(picker, at, index, inner, false);
+        }
+        if out.len() + lines.len() > visible {
+            break;
+        }
+        for line in lines {
             out.push((line, at, selected));
         }
+        at += 1;
     }
     out
 }
@@ -2413,8 +2426,15 @@ fn first_run_outcome(result: Result<(), String>) -> KeyOutcome {
 /// Commands whose argument is typed rather than picked.
 const FREE_TEXT: &[&str] = &["queue", "rename", "diff"];
 
-/// Rows the picker shows at once. Paging moves by the same amount.
+/// Item rows a picker shows before its terminal is known. Paging moves by the window.
 const PICK_ROWS: usize = 8;
+
+/// The item rows a picker box shows on a terminal of this height: three fifths
+/// of the rows less one, between five and twenty, and never more than the rows
+/// less four, so the box always fits.
+fn picker_window(rows: usize) -> usize {
+    (rows * 3 / 5).saturating_sub(1).clamp(5, 20).min(rows.saturating_sub(4).max(1))
+}
 
 impl Picker {
     fn new(title: impl Into<String>, mut items: Vec<PickItem>, kind: PickKind) -> Self {
@@ -2431,6 +2451,7 @@ impl Picker {
             items,
             index: 0,
             offset: 0,
+            window: PICK_ROWS,
             kind,
             prefix: None,
             current: std::path::PathBuf::new(),
@@ -2566,11 +2587,24 @@ impl Picker {
         if self.index < self.offset {
             self.offset = self.index;
         }
-        if self.index >= self.offset + PICK_ROWS {
-            self.offset = self.index + 1 - PICK_ROWS;
+        if self.index >= self.offset + self.window {
+            self.offset = self.index + 1 - self.window;
         }
-        if self.offset + PICK_ROWS > count {
-            self.offset = count.saturating_sub(PICK_ROWS);
+        if self.offset + self.window > count {
+            self.offset = count.saturating_sub(self.window);
+        }
+    }
+
+    /// Size the window to the terminal and scroll until the highlight is drawn.
+    fn fit(&mut self, inner: usize, rows: usize) {
+        self.window = picker_window(rows);
+        let matches = self.matches();
+        while self.offset < self.index {
+            let shown = picker_lines(self, &matches, self.window, inner, true);
+            if shown.iter().any(|(_, at, _)| *at == self.index) {
+                break;
+            }
+            self.offset += 1;
         }
     }
 
@@ -5879,8 +5913,8 @@ impl App {
                     }
                     Key::Up => picker.move_by(-1),
                     Key::Down => picker.move_by(1),
-                    Key::PageUp => picker.move_by(-(PICK_ROWS as isize)),
-                    Key::PageDown => picker.move_by(PICK_ROWS as isize),
+                    Key::PageUp => picker.move_by(-(picker.window as isize)),
+                    Key::PageDown => picker.move_by(picker.window as isize),
                     Key::Backspace => {
                         if picker.prefix.is_some() && picker.filter.is_empty() {
                             if picker.kind == PickKind::Command {
@@ -6772,6 +6806,7 @@ impl App {
         }
 
         let mut tail = String::new();
+        self.fit_picker(cols, rows);
         if let Some((overlay, cursor_x, cursor_y, targets)) = self.overlay(cols, rows) {
             self.targets.extend(targets);
             tail.push_str("\x1b[?7l");
@@ -7077,6 +7112,16 @@ impl App {
         Some((out, x + 1 + col, y + row, Vec::new()))
     }
 
+    /// Give the open picker the window for this terminal, before it is drawn.
+    fn fit_picker(&mut self, cols: usize, rows: usize) {
+        let inner = modal_width(cols).saturating_sub(2);
+        match self.pending.as_mut() {
+            Some(Pending::Pick(picker)) => picker.fit(inner, rows),
+            Some(Pending::ConfirmDelete { picker, .. }) => picker.fit(inner, rows),
+            _ => {}
+        }
+    }
+
     fn overlay(&self, cols: usize, rows: usize) -> Option<(String, usize, usize, Vec<(usize, usize, usize, Target)>)> {
         if let Some(Pending::ProviderForm { name, fields, at }) = &self.pending {
             return self.provider_form_overlay(name, fields, *at, self.form_caret, cols, rows);
@@ -7092,19 +7137,19 @@ impl App {
         }
         let inner = width.saturating_sub(2);
         let matches = picker.matches();
-        let visible = matches.len().min(PICK_ROWS).max(1);
-        let mut lines = picker_lines(picker, &matches, visible, inner, true);
-        // The second line costs height; a short screen keeps the one-line cut.
-        if lines.len() + 1 > rows.saturating_sub(1) {
-            lines = picker_lines(picker, &matches, visible, inner, false);
+        // The box has a fixed height: the title row and the window's item rows.
+        // Short lists pad with blank rows, which take no click.
+        let window = picker.window.max(1);
+        let mut lines = picker_lines(picker, &matches, window, inner, true);
+        while lines.len() < window {
+            lines.push((String::new(), usize::MAX, false));
         }
-        // The title row, then the item rows: no border, rule, or hint line.
-        let height = lines.len() + 1;
+        let height = window + 1;
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let x = (cols.saturating_sub(width)) / 2 + 1;
         let y = (body.saturating_sub(height)) / 2 + 1;
 
-        let position = if matches.len() > visible {
+        let position = if matches.len() > window {
             format!("{}/{}", picker.index + 1, matches.len())
         } else {
             String::new()
@@ -7170,6 +7215,9 @@ impl App {
         if matches!(self.pending, Some(Pending::Pick(_))) {
             if !matches.is_empty() {
                 for (row, (_, at, _)) in lines.iter().enumerate() {
+                    if *at == usize::MAX {
+                        continue;
+                    }
                     targets.push((y + 1 + row, x + 1, x + inner, Target::Row(*at)));
                 }
             }
