@@ -12,7 +12,7 @@
 
 ## 3. Persistence
 
-- [ ] 3.1 A goal is written to the session metadata when it changes and read back on open or resume; a running goal restores as paused; tests
+- [x] 3.1 A goal is written to the session metadata when it changes and read back on open or resume; a running goal restores as paused; tests. Covered by `a_goal_is_saved_with_the_session_and_restored_paused`.
 
 ## 4. Goal UX
 
