@@ -3627,6 +3627,35 @@ fn a_reply_in_view_is_saved_as_read() {
 }
 
 #[test]
+fn a_reply_out_of_view_is_saved_unread_until_the_session_is_viewed() {
+    let mut a = multi_app("unread-view");
+    let dir = a.sessions_dir.clone();
+    let (tx, _rx) = channel();
+    // A blank first session has no log yet. Each new session creates one, so the
+    // second and third sessions have ids; the second ends up in a pane, out of view.
+    a.new_session(&tx);
+    let second_id = a.worker.as_ref().map(|w| w.2.lock().unwrap().clone()).unwrap_or_default();
+    a.new_session(&tx);
+    let third_id = a.worker.as_ref().map(|w| w.2.lock().unwrap().clone()).unwrap_or_default();
+    assert!(!second_id.is_empty() && second_id != third_id, "ids: {second_id:?} {third_id:?}");
+    // Both need a transcript file for `Log::open`.
+    for id in [&second_id, &third_id] {
+        std::fs::write(dir.join(format!("{id}.jsonl")), "").unwrap();
+    }
+    // The second session's reply finishes while it is out of view in a pane.
+    let pane_at = a.panes.iter().position(|p| p.as_ref().is_some_and(|p| p.worker.as_ref().is_some_and(|w| w.2.lock().unwrap().as_str() == second_id)));
+    let pane_at = pane_at.expect("the second session is in a pane");
+    a.panes[pane_at].as_mut().unwrap().replied = true;
+    a.sync_marks();
+    let saved = crate::store::Log::open(&dir, &second_id).expect("the second session");
+    assert!(saved.meta().unread, "the finished reply was not saved as unread");
+    // Viewing the session reads it, and the saved mark clears.
+    a.show(pane_at);
+    a.sync_marks();
+    assert!(!saved.meta().unread, "viewing the session did not clear the unread mark");
+}
+
+#[test]
 fn pickers_mark_the_current_entry_one_way() {
     let mut a = app();
     open_agent_picker(&mut a);
