@@ -24,7 +24,7 @@
 
 ## 5. Ctrl+P
 
-- [ ] 5.1 Bind Ctrl+P to open the command menu with an empty filter when the composer is empty.
+- [x] 5.1 Bind Ctrl+P to open the command menu with an empty filter when the composer is empty.
 
 ## 6. Command menu
 
