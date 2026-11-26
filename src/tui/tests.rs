@@ -7872,10 +7872,12 @@ fn the_footer_bar_lists_the_session_actions_left_then_right() {
 fn a_picker_without_row_actions_draws_no_footer_and_keeps_its_height() {
     let mut a = app();
     open_many(&mut a, 3);
-    let frame = strip(&a.frame(100, 30));
-    assert!(!frame.contains("ctrl+"), "footer drawn without actions: {frame}");
+    a.frame(100, 30);
     let window = open_picker(&a).window;
     let (out, _, _, _) = a.overlay(100, 30).expect("picker overlay");
+    // The composer's status bar may name a key; only the picker's rows are checked.
+    let rows = overlay_rows(&out).join("\n");
+    assert!(!rows.contains("ctrl+"), "footer drawn without actions: {rows}");
     assert_eq!(positioned_rows(&out), window + 4, "box height changed");
     let mut b = picker();
     b.frame(100, 30);
