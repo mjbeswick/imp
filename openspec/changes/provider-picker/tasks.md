@@ -7,7 +7,7 @@
 
 ## 2. Stable rows
 
-- [ ] 2.1 Test: with `wrap` on, an unselected provider row with a long description draws two lines, the same as the selected row. Other picker kinds still wrap only the selected row.
+- [x] 2.1 Test: with `wrap` on, an unselected provider row with a long description draws two lines, the same as the selected row. Other picker kinds still wrap only the selected row.
 - [x] 2.2 Test: the total line count of the provider list is the same for every selection.
 - [x] 2.3 Implement: `picker_lines` wraps provider rows regardless of selection.
 
