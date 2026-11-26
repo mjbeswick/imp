@@ -8001,3 +8001,30 @@ fn a_long_directory_is_cut_from_the_left_and_keeps_its_end() {
     assert!(rows.contains("…") && rows.contains("deep-end"), "not cut from the left: {rows}");
     assert!(!rows.contains("/work/segment"), "the start of the path was kept: {rows}");
 }
+
+#[test]
+fn ctrl_a_filters_to_the_current_directory_and_a_second_press_clears_it() {
+    let mut a = app();
+    let dir = scratch("here-filter");
+    a.sessions_dir = dir.clone();
+    a.root = std::path::PathBuf::from("/work/one");
+    let now = now_secs();
+    saved_session(&dir, "mine", "one note", "/work/one", now);
+    saved_session(&dir, "theirs", "two note", "/work/two", now - 60);
+    a.pending = Some(Pending::Pick(a.session_picker()));
+    let (tx, _rx) = channel();
+    for c in "note".chars() {
+        a.handle_key(Key::Char(c), &tx);
+    }
+    let sessions = |a: &App| -> Vec<String> {
+        let p = open_picker(a);
+        p.matches().iter().map(|&i| &p.items[i]).filter(|i| !is_heading(i)).map(|i| i.value.clone()).collect()
+    };
+    assert_eq!(sessions(&a), ["mine", "theirs"]);
+    a.handle_key(Key::Ctrl('a'), &tx);
+    assert_eq!(open_picker(&a).filter, "note", "the typed filter changed");
+    assert_eq!(sessions(&a), ["mine"], "ctrl+a did not filter to this directory");
+    a.handle_key(Key::Ctrl('a'), &tx);
+    assert_eq!(open_picker(&a).filter, "note", "the typed filter changed");
+    assert_eq!(sessions(&a), ["mine", "theirs"], "a second ctrl+a did not clear the filter");
+}

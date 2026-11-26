@@ -2177,6 +2177,8 @@ struct Picker {
     /// Row actions for the whole picker, shown in its footer bar. Empty means
     /// the highlighted row's own actions are shown.
     shared: Vec<(char, &'static str)>,
+    /// Ctrl+A is on: the session list shows only this directory's sessions.
+    here: bool,
 }
 
 /// Recently chosen models, newest first.
@@ -2498,6 +2500,7 @@ impl Picker {
         let shared = if kind == PickKind::Session { SESSION_ACTIONS.to_vec() } else { Vec::new() };
         let mut picker = Self {
             shared,
+            here: false,
             form: None,
             title: title.into(),
             filter: String::new(),
@@ -6090,6 +6093,15 @@ impl App {
                     // do: they always type into the filter.
                     Key::Ctrl(c) if picker.action(c).is_some() => {
                         match picker.action(c).unwrap_or_default() {
+                            // Ctrl+A toggles the sessions in this directory; the typed filter stays.
+                            "current directory" => {
+                                picker.here = !picker.here;
+                                let (title, items) = self.session_items(picker.here);
+                                picker.title = title;
+                                picker.items = items;
+                                picker.reset();
+                                self.pending = Some(Pending::Pick(picker));
+                            }
                             // `new` opens a provider config under a free name, through the
                             // same `provider add` path the command uses.
                             "new" if picker.kind == PickKind::Provider => {
@@ -6194,7 +6206,8 @@ impl App {
                                     });
                                 }
                             }
-                            _ => {}
+                            // A row action the picker does not run here keeps the picker open.
+                            _ => self.pending = Some(Pending::Pick(picker)),
                         }
                         self.dirty = true;
                         return;
