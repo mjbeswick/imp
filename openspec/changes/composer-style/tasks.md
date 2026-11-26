@@ -48,3 +48,11 @@
 - [x] 8.7 Implement the menu rails, the removed gap above the composer block, and the highlighted row colours in `command_menu`.
 - [x] 8.8 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
 - [ ] 8.9 Check the block, footer, status bar, and menu in a real terminal against the design, and record the result in design.md.
+
+## 9. Menu box lines and left scroll indicator
+
+- [ ] 9.1 Test: each command menu row has a `│` box line at its left and right edge in the border colour, and the menu has no top or bottom edge. Confirm it fails before the change.
+- [ ] 9.2 Test: when the list scrolls, the scroll indicator is drawn over the left box line on the thumb rows only, and no indicator appears on the right edge. Confirm it fails before the change.
+- [ ] 9.3 Implement the box lines and the left scroll indicator in `command_menu` (`src/tui.rs`), replacing the rail glyph and the right-edge indicator.
+- [ ] 9.4 Run `cargo test`, `openspec validate --all --strict`, and `./scripts/size.sh`, then reinstall with `cargo build --release && install -m 755 target/release/imp ~/.local/bin/imp`.
+- [ ] 9.5 Check the menu's box lines and scroll indicator in a real terminal and record the result in design.md.

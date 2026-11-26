@@ -64,7 +64,7 @@ The system SHALL open the command menu when the user presses Ctrl+P with the com
 
 ### Requirement: The interface is one chat column
 
-The system SHALL render a scrolling transcript, the composer block with its footer row, and one status bar row at the bottom, SHALL draw no rule above the input, SHALL NOT use panes, tabs, or widgets, SHALL draw no border around the picker or the command menu, and SHALL tell the model the terminal width, and the height when known, before a turn whenever either has changed since the previous turn.
+The system SHALL render a scrolling transcript, the composer block with its footer row, and one status bar row at the bottom, SHALL draw no rule above the input, SHALL NOT use panes, tabs, or widgets, SHALL draw no border around the picker, and SHALL draw the command menu's edges only as the box lines described under slash commands autocomplete, and SHALL tell the model the terminal width, and the height when known, before a turn whenever either has changed since the previous turn.
 
 #### Scenario: Quiet layout
 - **WHEN** the session is idle and the transcript is empty
@@ -156,11 +156,15 @@ The system SHALL draw the status bar as one row at the bottom with the session d
 
 ### Requirement: Slash commands autocomplete
 
-The system SHALL open the command menu above the composer when the input begins with `/`, SHALL show commands filtered by the word before the first space, SHALL rank prefix matches before substring matches, SHALL show no title row and no footer in the menu, SHALL draw a muted single-column rail at the left and right edge of each menu row, which is not a box border, SHALL draw the menu directly above the composer block with no blank row between them, SHALL draw the highlighted row's name and description in the accent colour on the select background, SHALL accept the highlighted command with Tab or Enter, SHALL open the value picker after a command word and space when that command has values, SHALL seed its filter with the text after the space, and SHALL keep it closed for free-text arguments.
+The system SHALL open the command menu above the composer when the input begins with `/`, SHALL show commands filtered by the word before the first space, SHALL rank prefix matches before substring matches, SHALL show no title row and no footer in the menu, SHALL draw a box line `│` in the border colour at the left and right edge of each menu row, forming a box with no top or bottom edge, SHALL draw the scroll indicator over the left box line on the rows of the scroll thumb when the list scrolls, and SHALL draw nothing over the right box line, SHALL draw the menu directly above the composer block with no blank row between them, SHALL draw the highlighted row's name and description in the accent colour on the select background, SHALL accept the highlighted command with Tab or Enter, SHALL open the value picker after a command word and space when that command has values, SHALL seed its filter with the text after the space, and SHALL keep it closed for free-text arguments.
 
-#### Scenario: Rails and gap
+#### Scenario: Box lines and gap
 - **WHEN** the command menu is open above the composer
-- **THEN** each menu row has a muted rail at its left and right edge, and the menu's last row touches the composer block with no blank row between
+- **THEN** each menu row has a `│` box line at its left and right edge, and the menu's last row touches the composer block with no blank row between
+
+#### Scenario: Scroll indicator on the left edge
+- **WHEN** the list holds more commands than the menu shows and the highlight is in the lower part of the list
+- **THEN** the scroll indicator is drawn over the left box line on the rows of the thumb, and every right box line stays `│`
 
 #### Scenario: Narrowing
 - **WHEN** the user types `/co`
