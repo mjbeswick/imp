@@ -5307,7 +5307,7 @@ fn overlay_fills_a_narrow_terminal_with_a_margin() {
         .iter()
         .find(|t| t.3 == Target::Key(Key::Esc))
         .expect("esc target");
-    assert_eq!(esc.2, x + 45, "esc does not end on the inner edge");
+    assert_eq!(esc.2, x + 44, "esc does not stop one column short of the edge");
 }
 
 #[test]
@@ -5469,6 +5469,38 @@ fn the_box_has_bottom_padding() {
         None => out.len(),
     };
     assert!(strip(&out[start + pad.len()..end]).trim().is_empty(), "the bottom row is not blank");
+}
+
+#[test]
+fn esc_stops_one_column_short_of_the_box_edge() {
+    let mut a = app();
+    open_many(&mut a, 40);
+    a.frame(100, 30);
+    let (out, _, title_row, targets) = a.overlay(100, 30).expect("overlay");
+    // A 72-column box on 100 columns starts at column 15 (1-based), so its
+    // right edge is column 86 and `esc` should end at column 85.
+    let (x, inner) = (15, 72);
+    let row_text = |row: usize| {
+        let from = out.find(&format!("\x1b[{row};{x}H")).expect("row not drawn");
+        let rest = &out[from..];
+        let to = rest.find(&format!("\x1b[{};{x}H", row + 1)).unwrap_or(rest.len());
+        strip(&rest[..to])
+    };
+    let title = row_text(title_row);
+    assert_eq!(title.chars().count(), inner, "title row width: {title:?}");
+    assert!(title.ends_with("esc "), "esc does not stop one column short of the edge: {title:?}");
+    let item = row_text(title_row + 2);
+    assert_eq!(item.chars().count(), inner, "item row width: {item:?}");
+    let esc = targets
+        .iter()
+        .find(|t| matches!(t.3, Target::Key(Key::Esc)))
+        .expect("no esc target");
+    assert_eq!(esc.2, x + inner - 2, "esc click target does not stop one column short of the edge");
+    let row = targets
+        .iter()
+        .find(|t| matches!(t.3, Target::Row(_)))
+        .expect("no row target");
+    assert_eq!(row.2, x + inner - 1, "item row target stops short of the edge");
 }
 
 #[test]

@@ -7184,9 +7184,10 @@ impl App {
         } else {
             (fit(&format!("{indent}{}", picker.filter), inner.saturating_sub(right_w + 1)), false)
         };
-        let gap = " ".repeat(inner.saturating_sub(left.chars().count() + right_w));
+        // One blank column stays to the right of `esc`; the item rows do not leave it.
+        let gap = " ".repeat(inner.saturating_sub(left.chars().count() + right_w + 1));
         let left = if placeholder { self.palette.paint(Role::Thinking, &left) } else { left };
-        let title_row = format!("{left}{gap}{}", self.palette.paint(Role::Thinking, &right));
+        let title_row = format!("{left}{gap}{}{}", self.palette.paint(Role::Thinking, &right), " ");
         // Padding above the title row, a blank gap under it, painted with the panel.
         let mut block: Vec<String> = vec![" ".repeat(width), title_row, " ".repeat(width)];
 
@@ -7225,7 +7226,7 @@ impl App {
                 }
             }
             // The title row's keys are clickable: `esc`, and any row action.
-            let start = (x + inner).saturating_sub(right_w);
+            let start = (x + inner).saturating_sub(right_w + 1);
             targets.extend(footer_targets(y + 1, start, &right));
         }
         Some((out, cursor, y + 1, targets))
