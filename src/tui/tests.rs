@@ -8560,22 +8560,24 @@ fn the_command_menu_draws_rails_no_gap_and_an_accent_highlight() {
     let mut a = app();
     a.handle_key(Key::Char('/'), &tx);
     let frame = a.frame(80, 20);
-    let plain: Vec<String> = strip(&frame).split("\r\n").map(str::to_string).collect();
-    let rails: Vec<usize> = plain
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.starts_with('▏') && r.trim_end().ends_with('▏'))
-        .map(|(i, _)| i)
-        .collect();
-    assert!(rails.len() >= 2, "no rails on the menu rows: {plain:?}");
-    let raw: Vec<&str> = frame.split("\r\n").collect();
-    assert!(raw.iter().any(|r| r.contains(&a.palette.paint(Role::Thinking, "▏"))), "the rail is not muted");
-    let last = *rails.last().expect("rails");
-    assert!(plain[last + 1].starts_with('▌'), "a blank row sits between the menu and the composer: {plain:?}");
-    let lit = plain.iter().find(|r| r.contains('▎')).expect("no highlighted row");
+    // Screen rows before the overlay: the composer block's first row is the
+    // first `▌` row, and the menu's last row is the last drawn target.
+    let screen = frame.split("\x1b[?7l").nth(1).unwrap_or("");
+    let screen_rows: Vec<String> = strip(screen).split("\r\n").map(str::to_string).collect();
+    let block_top = screen_rows.iter().position(|r| r.starts_with('▌')).expect("no composer block") + 1;
+    let (out, _, _, targets) = a.overlay(80, 20).expect("command menu");
+    let menu_last = targets.iter().map(|t| t.0).max().expect("menu rows");
+    assert_eq!(menu_last + 1, block_top, "a blank row sits between the menu and the composer block");
+    let rows = overlay_rows(&out);
+    let rails = rows.iter().filter(|r| r.starts_with('▏') && r.trim_end().ends_with('▏')).count();
+    assert_eq!(rails, rows.len(), "every menu row needs a rail at each edge: {rows:?}");
+    assert!(rails >= 2, "{rows:?}");
+    assert!(out.contains(&a.palette.paint(Role::Thinking, "▏")), "the rail is not muted");
+    // The highlighted row's name is in the accent colour.
+    let lit = rows.iter().find(|r| r.contains('▎')).expect("no highlighted row");
     let name: String = lit.split_once('▎').expect("marker").1.chars().skip(2).take_while(|c| !c.is_whitespace()).collect();
     assert!(name.starts_with('/'), "{lit:?}");
-    assert!(frame.contains(&a.palette.paint(Role::Info, &name)), "the highlighted name is not in the accent colour: {name:?}");
+    assert!(out.contains(&a.palette.paint(Role::Info, &name)), "the highlighted name is not in the accent colour: {name:?}");
 }
 
 /// The rows a picker overlay draws: each positioned row starts with a cursor move.

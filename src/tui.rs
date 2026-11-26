@@ -502,6 +502,16 @@ impl Palette {
     }
 
     /// The highlighted picker row: user text on the select background.
+    /// `text` already styled, on the select background. Every reset inside it
+    /// brings the background back, so the highlight holds across the row.
+    pub(crate) fn select_styled(&self, text: &str) -> String {
+        if !self.on {
+            return self.styled("7", text.to_string());
+        }
+        let bg = self.background(self.theme.rgb(crate::theme::Slot::Select));
+        format!("{bg}{}\x1b[0m", text.replace("\x1b[0m", &format!("\x1b[0m{bg}")))
+    }
+
     pub(crate) fn select(&self, text: &str) -> String {
         if !self.on {
             // Mono: no background, so the row is reversed.
@@ -7777,33 +7787,51 @@ impl App {
         if matches.is_empty() {
             return None;
         }
-        // The highlighted row wraps its description, as the picker's rows do.
-        // `picker_lines` takes a line budget: the menu may show up to PICK_ROWS lines.
-        let lines = picker_lines(picker, &matches, PICK_ROWS, cols, true);
+        // The menu's rails take a column at each edge, so the rows keep the inside.
+        // `picker_lines` takes a line budget: the menu may show up to PICK_ROWS
+        // lines, and the highlighted row wraps its description, as the picker's rows do.
+        let inner = cols.saturating_sub(2);
+        let lines = picker_lines(picker, &matches, PICK_ROWS, inner, true);
         // The last menu row sits on the transcript's last row, above the composer.
         let body = self.body_rows.clamp(1, rows.saturating_sub(1).max(1));
         let height = lines.len().min(body);
         let y = body + 1 - height;
-        let column = desc_column(picker, cols);
+        let column = desc_column(picker, inner);
+        let rail = self.palette.paint(Role::Thinking, "▏");
         let mut out = String::new();
         let mut targets = Vec::new();
         for (row, (text, at, selected)) in lines.iter().take(height).enumerate() {
-            // The description is muted, except on the highlighted row.
-            let line = match column.filter(|_| !*selected) {
-                Some(column) => {
-                    let plain = self.boxed(text, cols, false);
+            // The description is muted, except on the highlighted row, where the
+            // name and the description take the accent on the select background.
+            let text_row = match (column, *selected) {
+                (_, true) => self.accent_row(&self.boxed(text, inner, false)),
+                (Some(column), false) => {
+                    let plain = self.boxed(text, inner, false);
                     let cut = plain.char_indices().nth(column).map_or(plain.len(), |(i, _)| i);
                     format!("{}{}", &plain[..cut], self.palette.paint(Role::Thinking, &plain[cut..]))
                 }
-                None => self.boxed(text, cols, *selected),
+                (None, false) => self.boxed(text, inner, false),
             };
             let state = matches.get(*at).map_or("", |&i| picker.items[i].desc.as_str());
-            let line = styled_state(state, line);
-            let line = if *selected { line } else { self.fill(&line, cols) };
+            let line = format!("{rail}{}{rail}", styled_state(state, text_row));
+            let line = if *selected { self.palette.select_styled(&line) } else { self.fill(&line, cols) };
             out.push_str(&format!("\x1b[{};1H{line}", y + row));
             targets.push((y + row, 1, cols, Target::Row(*at)));
         }
         Some((out, 0, 0, targets))
+    }
+
+    /// A highlighted menu row, painted: its marker, then its name, then the rest
+    /// (the padding and the description), each in the accent colour.
+    fn accent_row(&self, plain: &str) -> String {
+        let start = plain.char_indices().nth(3).map_or(plain.len(), |(i, _)| i);
+        let end = plain[start..].find("  ").map_or(plain.len(), |i| start + i);
+        format!(
+            "{}{}{}",
+            self.palette.paint(Role::Info, &plain[..start]),
+            self.palette.paint(Role::Info, &plain[start..end]),
+            self.palette.paint(Role::Info, &plain[end..]),
+        )
     }
 
     /// The footer bar of a picker's row actions, as a row `inner` wide: the
