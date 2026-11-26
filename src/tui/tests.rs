@@ -63,7 +63,7 @@ fn the_wheel_scrolls_the_transcript_and_moves_a_picker() {
 fn a_click_does_not_answer_a_prompt() {
     let mut a = picker();
     let (tx, rx) = channel();
-    a.handle_key(Key::Char('d'), &tx);
+    a.handle_key(Key::Ctrl('d'), &tx);
     a.handle_key(Key::Unknown, &tx);
     a.handle_key(Key::WheelDown, &tx);
     assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })), "the question closed");
@@ -1667,7 +1667,7 @@ fn question_mark_opens_the_keys_card_only_from_an_empty_composer() {
     let Some(Pending::Pick(p)) = &a.pending else { panic!("no keys card") };
     assert_eq!(p.kind, PickKind::Keys);
     assert!(p.items.iter().any(|i| i.label == "Ctrl+O"));
-    assert_eq!(p.hints(), "");
+    assert_eq!(p.note(), "");
     assert!(a.input.is_empty(), "the ? reached the composer");
     a.handle_key(Key::Char('?'), &tx);
     assert!(a.pending.is_none(), "? did not close the card");
@@ -3925,7 +3925,7 @@ fn a_declined_shape_is_listed_and_one_key_allows_it() {
     if let Some(Pending::Pick(p)) = &mut a.pending {
         p.index = at;
     }
-    a.handle_key(Key::Char('a'), &tx);
+    a.handle_key(Key::Ctrl('a'), &tx);
     assert!(matches!(cmds.try_recv(), Ok(Cmd::AllowAlways(s)) if s == "npm test"));
     a.apply(Ev::Allow { shape: "npm test".into(), always: true });
     assert!(a.allows.contains(&("npm test".to_string(), true)), "not allowed");
@@ -3965,11 +3965,11 @@ fn the_mode_footer_offers_revoke_on_an_allow_row() {
         p.index = 4;
     }
     let frame = strip(&a.frame(100, 30));
-    assert!(frame.contains("d revoke"), "no revoke hint: {frame:?}");
+    assert!(frame.contains("revoke ctrl+r"), "no revoke hint: {frame:?}");
 }
 
 #[test]
-fn d_revokes_the_highlighted_allow() {
+fn ctrl_r_revokes_the_highlighted_allow() {
     let mut a = app();
     let (tx, rx) = channel();
     a.allows = vec![("npm test".into(), false), ("cargo test".into(), true)];
@@ -3977,7 +3977,7 @@ fn d_revokes_the_highlighted_allow() {
     if let Some(Pending::Pick(p)) = &mut a.pending {
         p.index = 4;
     }
-    a.handle_key(Key::Char('d'), &tx);
+    a.handle_key(Key::Ctrl('r'), &tx);
     assert_eq!(a.allows, vec![("cargo test".to_string(), true)]);
     match rx.try_recv() {
         Ok(Cmd::RevokeAllow { shape, always }) => {
@@ -4057,7 +4057,7 @@ fn the_listing_starts_with_this_folder_and_its_parent() {
     a.run_command("cd", &tx);
     let labels: Vec<String> = open_picker(&a).items.iter().map(|i| i.label.clone()).collect();
     assert_eq!(labels, vec!["./", "../", "leaf/"]);
-    assert!(open_picker(&a).hints().is_empty());
+    assert!(open_picker(&a).note().is_empty());
 
     // Tab on `../` opens the parent; Tab on `./` stays put.
     a.handle_key(Key::Down, &tx);
@@ -4215,7 +4215,7 @@ fn the_image_browser_opens_folders_with_right() {
     let mut a = app_at(root.clone());
     let (tx, _rx) = channel();
     a.run_command("image", &tx);
-    assert!(open_picker(&a).hints().is_empty());
+    assert!(open_picker(&a).note().is_empty());
     highlight(&mut a, &tx, "shots/");
     a.handle_key(Key::Right, &tx);
     let picker = open_picker(&a);
@@ -4912,7 +4912,7 @@ fn picker() -> App {
 fn picker_new_session_key() {
     let mut a = picker();
     let (tx, rx) = channel();
-    a.handle_key(Key::Char('n'), &tx);
+    a.handle_key(Key::Ctrl('n'), &tx);
     assert!(matches!(rx.try_recv(), Ok(Cmd::NewSession)));
 }
 
@@ -4920,7 +4920,7 @@ fn picker_new_session_key() {
 fn picker_delete_needs_confirmation() {
     let mut a = picker();
     let (tx, rx) = channel();
-    a.handle_key(Key::Char('d'), &tx);
+    a.handle_key(Key::Ctrl('d'), &tx);
     assert!(matches!(a.pending, Some(Pending::ConfirmDelete { .. })));
     let frame = strip(&a.frame(100, 30));
     assert!(frame.contains("delete abc123? y/N"), "{frame}");
@@ -4962,7 +4962,7 @@ fn text_prompts_use_the_block_caret() {
 fn picker_rename_edits_a_title() {
     let mut a = picker();
     let (tx, rx) = channel();
-    a.handle_key(Key::Char('r'), &tx);
+    a.handle_key(Key::Ctrl('r'), &tx);
     for c in "new name".chars() {
         a.handle_key(Key::Char(c), &tx);
     }
@@ -4977,13 +4977,13 @@ fn picker_rename_edits_a_title() {
 }
 
 #[test]
-fn a_row_shortcut_runs_only_while_the_filter_is_empty() {
+fn a_row_shortcut_is_a_ctrl_key_and_letters_filter() {
     let mut a = picker();
     let (tx, _rx) = channel();
-    a.handle_key(Key::Char('r'), &tx);
+    a.handle_key(Key::Ctrl('r'), &tx);
     assert!(
         matches!(a.pending, Some(Pending::Prompt { .. })),
-        "r did not rename the highlighted session"
+        "ctrl+r did not rename the highlighted session"
     );
 
     let mut a = picker();
@@ -4997,11 +4997,11 @@ fn a_row_shortcut_runs_only_while_the_filter_is_empty() {
 #[test]
 fn the_footer_names_the_row_actions() {
     let mut a = picker();
-    let frame = strip(&a.frame(80, 24));
+    let frame = strip(&a.frame(100, 24));
     assert!(frame.contains("esc"), "{frame}");
-    assert!(frame.contains("n new"), "{frame}");
-    assert!(frame.contains("r rename"), "{frame}");
-    assert!(frame.contains("d delete"), "{frame}");
+    assert!(frame.contains("new ctrl+n"), "{frame}");
+    assert!(frame.contains("rename ctrl+r"), "{frame}");
+    assert!(frame.contains("delete ctrl+d"), "{frame}");
 }
 
 #[test]
@@ -6462,7 +6462,7 @@ fn e_on_a_built_in_provider_opens_its_defaults_as_a_named_copy_form() {
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
     provider_row(&mut a, "deepseek");
-    a.handle_key(Key::Char('e'), &tx);
+    a.handle_key(Key::Ctrl('e'), &tx);
     match &a.pending {
         Some(Pending::ProviderForm { name, fields, at }) => {
             assert_eq!(name, "deepseek-custom");
@@ -6490,7 +6490,7 @@ fn e_on_a_custom_provider_opens_its_saved_profile() {
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
     provider_row(&mut a, "work");
-    a.handle_key(Key::Char('e'), &tx);
+    a.handle_key(Key::Ctrl('e'), &tx);
     match &a.pending {
         Some(Pending::ProviderForm { name, fields, .. }) => {
             assert_eq!(name, "work");
@@ -6508,7 +6508,7 @@ fn saving_a_built_in_change_adds_a_named_copy_and_keeps_the_built_in() {
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
     provider_row(&mut a, "deepseek");
-    a.handle_key(Key::Char('e'), &tx);
+    a.handle_key(Key::Ctrl('e'), &tx);
     a.handle_key(Key::Down, &tx);
     for _ in 0..crate::providers::Provider::DeepSeek.profile().model.len() {
         a.handle_key(Key::Backspace, &tx);
@@ -6545,7 +6545,7 @@ fn the_provider_footer_offers_use_and_configure() {
     a.run_command("provider", &tx);
     provider_row(&mut a, "ollama");
     let shown = strip(&a.frame(100, 30));
-    assert!(shown.contains("u use") && shown.contains("e configure"), "footer: {shown:?}");
+    assert!(shown.contains("use ctrl+u") && shown.contains("configure ctrl+e"), "footer: {shown:?}");
     assert_ne!(a.cfg.active_name, "ollama", "showing the footer switched the provider");
 }
 
@@ -6687,7 +6687,7 @@ fn e_on_the_custom_provider_row_shows_the_form() {
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
     provider_row(&mut a, "work");
-    a.handle_key(Key::Char('e'), &tx);
+    a.handle_key(Key::Ctrl('e'), &tx);
     let shown = strip(&a.frame(100, 30));
     assert!(shown.contains("provider work"), "the form is not on screen: {shown:?}");
 }
@@ -6698,7 +6698,7 @@ fn e_on_the_built_in_custom_row_shows_the_form_at_a_narrow_width() {
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
     provider_row(&mut a, "custom");
-    a.handle_key(Key::Char('e'), &tx);
+    a.handle_key(Key::Ctrl('e'), &tx);
     let shown = strip(&a.frame(60, 20));
     assert!(shown.contains("provider custom-custom"), "the form is not on screen: {shown:?}");
 }
@@ -6731,15 +6731,15 @@ fn the_provider_footer_names_the_key_for_the_way_the_picker_opened() {
     let (tx, _rx) = channel();
     a.run_command("provider", &tx);
     provider_row(&mut a, "ollama");
-    assert!(strip(&a.frame(100, 30)).contains("e configure"), "bare picker footer");
+    assert!(strip(&a.frame(100, 30)).contains("configure ctrl+e"), "bare picker footer");
     let (mut b, _config) = provider_app();
     b.input = "/provider ".into();
     b.cursor = b.input.len();
     b.sync_menu();
     provider_row(&mut b, "ollama");
     let shown = strip(&b.frame(100, 30));
-    assert!(shown.contains("^E configure"), "typed picker footer: {shown:?}");
-    assert!(!shown.contains(" e configure"), "typed picker offers e: {shown:?}");
+    assert!(shown.contains("configure ctrl+e"), "typed picker footer: {shown:?}");
+    assert!(!shown.contains("new ctrl+n"), "typed picker offers new: {shown:?}");
 }
 
 fn form_field(a: &App, label: &str) -> String {
@@ -6964,14 +6964,14 @@ fn d_deletes_a_named_provider_and_refuses_a_built_in() {
     // A built-in is refused, and nothing changes.
     a.run_command("provider", &tx);
     a.handle_key(Key::Down, &tx); // OpenAI
-    a.handle_key(Key::Char('d'), &tx);
+    a.handle_key(Key::Ctrl('d'), &tx);
     assert_eq!(a.cfg.named.len(), 1, "a built-in was deleted");
     // The named provider is deleted from the config.
     a.run_command("provider", &tx);
     for _ in 0..6 {
         a.handle_key(Key::Down, &tx); // past the six built-ins, to "local"
     }
-    a.handle_key(Key::Char('d'), &tx);
+    a.handle_key(Key::Ctrl('d'), &tx);
     assert!(a.cfg.named.is_empty(), "the named provider was not deleted");
     assert!(!std::fs::read_to_string(&config).unwrap().contains("local"), "deleted provider still in the file");
 }
@@ -6981,7 +6981,7 @@ fn n_opens_a_new_provider_config() {
     let mut a = app();
     let (tx, _cmds) = channel();
     a.run_command("provider", &tx);
-    a.handle_key(Key::Char('n'), &tx);
+    a.handle_key(Key::Ctrl('n'), &tx);
     assert!(matches!(a.pending, Some(Pending::ProviderForm { .. })), "n did not open the config");
     assert_eq!(form_field(&a, "base"), "", "a new config should start empty");
 }
@@ -7060,7 +7060,7 @@ fn plain_u_makes_the_selected_provider_active() {
     let (tx, _cmds) = channel();
     a.run_command("provider", &tx);
     a.handle_key(Key::Down, &tx); // OpenAI
-    a.handle_key(Key::Char('u'), &tx);
+    a.handle_key(Key::Ctrl('u'), &tx);
     assert_eq!(a.cfg.active_name, "openai", "u did not make OpenAI active");
 }
 
@@ -7366,8 +7366,8 @@ fn u_on_a_provider_row_switches_to_it() {
     a.run_command("provider", &tx);
     provider_row(&mut a, "ollama");
     let shown = strip(&a.frame(100, 30));
-    assert!(shown.contains("u use"), "the footer has no use hint: {shown:?}");
-    a.handle_key(Key::Char('u'), &tx);
+    assert!(shown.contains("use ctrl+u"), "the footer has no use hint: {shown:?}");
+    a.handle_key(Key::Ctrl('u'), &tx);
     assert_eq!(a.cfg.active_name, "ollama", "u did not switch");
     assert!(a.pending.is_none(), "the picker stayed open");
 }
@@ -7381,7 +7381,7 @@ fn ctrl_u_switches_from_a_typed_provider_picker() {
     a.sync_menu();
     provider_row(&mut a, "ollama");
     let shown = strip(&a.frame(100, 30));
-    assert!(shown.contains("^U use"), "the typed footer has no use hint: {shown:?}");
+    assert!(shown.contains("use ctrl+u"), "the typed footer has no use hint: {shown:?}");
     a.handle_key(Key::Ctrl('u'), &tx);
     assert_eq!(a.cfg.active_name, "ollama", "Ctrl+U did not switch");
     assert_eq!(a.input, "/provider ", "a letter reached the composer");
@@ -7677,7 +7677,7 @@ fn u_still_switches_to_the_highlighted_provider() {
     for _ in 0..at {
         a.handle_key(Key::Down, &tx);
     }
-    a.handle_key(Key::Char('u'), &tx);
+    a.handle_key(Key::Ctrl('u'), &tx);
     assert_eq!(a.cfg.active_name, "custom");
 }
 
@@ -7813,4 +7813,70 @@ fn the_command_menu_has_no_title_or_footer_and_keeps_its_keys() {
     a.handle_key(Key::Esc, &tx);
     assert!(a.pending.is_none(), "Esc did not close the menu");
     assert_eq!(a.input, "/", "Esc changed the typed text");
+}
+
+/// The rows a picker overlay draws: each positioned row starts with a cursor move.
+fn positioned_rows(out: &str) -> usize {
+    out.split("\x1b[")
+        .skip(1)
+        .filter(|seg| seg.split_once('H').is_some_and(|(p, _)| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit() || c == ';')))
+        .count()
+}
+
+/// The text of each row a picker overlay draws, top to bottom, with styling removed.
+fn overlay_rows(out: &str) -> Vec<String> {
+    let mut text = String::new();
+    for (i, seg) in out.split("\x1b[").enumerate() {
+        if i == 0 {
+            text.push_str(seg);
+            continue;
+        }
+        match seg.split_once('H') {
+            // A cursor move starts a new row.
+            Some((p, rest)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit() || c == ';') => {
+                text.push('\n');
+                text.push_str(rest);
+            }
+            // A style runs through its final letter.
+            _ => {
+                let end = seg.find(|c: char| c.is_ascii_alphabetic()).map_or(seg.len(), |e| e + 1);
+                text.push_str(&seg[end..]);
+            }
+        }
+    }
+    text.split('\n').skip(1).map(str::to_string).collect()
+}
+
+#[test]
+fn the_footer_bar_lists_the_session_actions_left_then_right() {
+    let a = picker();
+    let (out, _, _, _) = a.overlay(100, 30).expect("picker overlay");
+    let rows = overlay_rows(&out);
+    let footer = rows.last().expect("no rows");
+    let at = |s: &str| footer.find(s).unwrap_or_else(|| panic!("{s} missing from footer {footer:?}"));
+    assert!(footer.trim_start().starts_with("current directory ctrl+a"), "{footer:?}");
+    assert!(at("current directory ctrl+a") < at("new ctrl+n"), "{footer:?}");
+    assert!(at("new ctrl+n") < at("delete ctrl+d"), "{footer:?}");
+    assert!(at("delete ctrl+d") < at("rename ctrl+r"), "{footer:?}");
+    assert!(footer.trim_end().ends_with("rename ctrl+r"), "{footer:?}");
+    let title = &rows[1];
+    assert!(title.contains("esc") && !title.contains("ctrl+"), "key hints left in the title row: {title:?}");
+    let all = rows.join("\n");
+    assert!(!all.contains("n new") && !all.contains("r rename") && !all.contains("d delete"), "old hints: {all:?}");
+}
+
+#[test]
+fn a_picker_without_row_actions_draws_no_footer_and_keeps_its_height() {
+    let mut a = app();
+    open_many(&mut a, 3);
+    let frame = strip(&a.frame(100, 30));
+    assert!(!frame.contains("ctrl+"), "footer drawn without actions: {frame}");
+    let window = open_picker(&a).window;
+    let (out, _, _, _) = a.overlay(100, 30).expect("picker overlay");
+    assert_eq!(positioned_rows(&out), window + 4, "box height changed");
+    let mut b = picker();
+    b.frame(100, 30);
+    let window_b = open_picker(&b).window;
+    let (with, _, _, _) = b.overlay(100, 30).expect("picker overlay");
+    assert_eq!(positioned_rows(&with), window_b + 4, "footer changed the height");
 }

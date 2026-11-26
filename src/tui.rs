@@ -2121,10 +2121,13 @@ struct PickItem {
     value: String,
     /// A one-line description drawn in the right column.
     desc: String,
-    /// Single-key actions for this row, shown in the footer and run while the
-    /// filter is empty.
+    /// Ctrl-key actions for this row, shown in the footer bar and run with
+    /// the Ctrl letter; letters always type into the filter.
     actions: Vec<(char, &'static str)>,
 }
+
+/// The session picker's row actions, in footer order: the first sits at the left.
+const SESSION_ACTIONS: &[(char, &'static str)] = &[('a', "current directory"), ('n', "new"), ('d', "delete"), ('r', "rename")];
 
 /// The one picker: a title, a filter, a scrolling list, and a selection.
 struct Picker {
@@ -2144,6 +2147,9 @@ struct Picker {
     prefix: Option<String>,
     current: std::path::PathBuf,
     root: std::path::PathBuf,
+    /// Row actions for the whole picker, shown in its footer bar. Empty means
+    /// the highlighted row's own actions are shown.
+    shared: Vec<(char, &'static str)>,
 }
 
 /// Recently chosen models, newest first.
@@ -2453,14 +2459,11 @@ fn picker_window(rows: usize) -> usize {
 }
 
 impl Picker {
-    fn new(title: impl Into<String>, mut items: Vec<PickItem>, kind: PickKind) -> Self {
-        if kind == PickKind::Session {
-            // Every session row offers the same list actions.
-            for item in items.iter_mut() {
-                item.actions = vec![('n', "new"), ('r', "rename"), ('d', "delete")];
-            }
-        }
+    fn new(title: impl Into<String>, items: Vec<PickItem>, kind: PickKind) -> Self {
+        // Every session row offers the same list actions.
+        let shared = if kind == PickKind::Session { SESSION_ACTIONS.to_vec() } else { Vec::new() };
         Self {
+            shared,
             form: None,
             title: title.into(),
             filter: String::new(),
@@ -2550,36 +2553,33 @@ impl Picker {
         out
     }
 
-    /// The action a row declares for this key, if any.
-    fn action(&self, key: char) -> Option<&'static str> {
-        self.selected().and_then(|item| {
-            item.actions
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, label)| *label)
-        })
+    /// The row actions this picker offers now, as Ctrl letters and labels, in
+    /// footer order.
+    fn row_actions(&self) -> Vec<(char, &'static str)> {
+        // A typed `/provider` filters with letters, so only its Ctrl actions show.
+        if self.kind == PickKind::Provider && self.prefix.is_some() {
+            return if self.selected().is_some() { vec![('u', "use"), ('e', "configure")] } else { Vec::new() };
+        }
+        if !self.shared.is_empty() {
+            return self.shared.clone();
+        }
+        self.selected()
+            .or_else(|| self.items.first())
+            .map(|item| item.actions.clone())
+            .unwrap_or_default()
     }
 
-    /// The row-action keys that work here. They sit in the title row before
-    /// `esc`; the picker shows no other key hints.
-    fn hints(&self) -> String {
+    /// The action this Ctrl letter runs here, if the picker offers it.
+    fn action(&self, key: char) -> Option<&'static str> {
+        self.row_actions().into_iter().find(|(k, _)| *k == key).map(|(_, label)| label)
+    }
+
+    /// The title row's note: a plain line that names no key.
+    fn note(&self) -> String {
         if self.kind == PickKind::Settings {
             return "more in the config file".into();
         }
-        let mut parts: Vec<String> = Vec::new();
-        // Typed `/provider` filters with letters, so the key there is Ctrl+E.
-        let typed_provider = self.kind == PickKind::Provider && self.prefix.is_some();
-        if typed_provider {
-            if self.selected().is_some() {
-                parts.push("^U use".into());
-                parts.push("^E configure".into());
-            }
-        } else if let Some(item) = self.selected().or_else(|| self.items.first()) {
-            for (key, label) in &item.actions {
-                parts.push(format!("{key} {label}"));
-            }
-        }
-        parts.join(" · ")
+        String::new()
     }
 
     fn selected(&self) -> Option<&PickItem> {
@@ -4155,7 +4155,7 @@ impl App {
             label: shape.clone(),
             value: format!("allow:{shape}"),
             desc: if *always { "always" } else { "session" }.into(),
-            actions: vec![('d', "revoke")],
+            actions: vec![('r', "revoke")],
         }))
         .chain(std::iter::once(PickItem {
             label: "add a rule".into(),
@@ -5975,62 +5975,6 @@ impl App {
                         self.dirty = true;
                         return;
                     }
-                    // Ctrl+E configures the highlighted provider from a typed
-                    // `/provider`, where letters filter the list.
-                    Key::Ctrl('u') | Key::Char('u') if picker.kind == PickKind::Provider => {
-                        if let Some(choice) = picker.selected().cloned() {
-                            self.use_provider(&choice.value, tx);
-                        }
-                        self.dirty = true;
-                        return;
-                    }
-                    // Plain keys act on the provider list, but not while text typed
-                    // into the composer is still feeding the picker's prefix.
-                    Key::Char('u') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
-                        if let Some(choice) = picker.selected().cloned() {
-                            self.use_provider(&choice.value, tx);
-                        }
-                        self.dirty = true;
-                        return;
-                    }
-                    // `n` opens a new provider config under a free name, through the same
-                    // `provider add` path the command uses.
-                    Key::Char('n') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
-                        let mut name = "new".to_string();
-                        let mut count = 2;
-                        while crate::providers::Provider::parse(&name).is_ok()
-                            || self.cfg.named.iter().any(|p| p.name == name)
-                        {
-                            name = format!("new-{count}");
-                            count += 1;
-                        }
-                        self.dirty = true;
-                        self.run_command(&format!("provider add {name}"), tx);
-                        return;
-                    }
-                    // `d` deletes a named provider. A built-in cannot be deleted; it can
-                    // only be switched off with space.
-                    Key::Char('d') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
-                        if let Some(choice) = picker.selected().cloned() {
-                            let name = choice.value;
-                            if self.cfg.named.iter().any(|n| n.name == name) {
-                                self.cfg.named.retain(|n| n.name != name);
-                                match crate::config::save_named(&self.config_path, &self.cfg.named) {
-                                    Ok(()) => {
-                                        if self.cfg.active_name == name {
-                                            let _ = self.cfg.set_active("deepseek");
-                                        }
-                                        self.toast(format!("deleted {name}"));
-                                    }
-                                    Err(e) => self.push(Role::Error, e),
-                                }
-                            } else {
-                                self.toast(format!("{name} is built in; switch it off with space"));
-                            }
-                        }
-                        self.dirty = true;
-                        return;
-                    }
                     // Space switches the selected provider on or off, and saves it.
                     Key::Char(' ') if picker.kind == PickKind::Provider && picker.prefix.is_none() => {
                         if let Some(choice) = picker.selected().cloned() {
@@ -6067,10 +6011,27 @@ impl App {
                             return;
                         }
                     }
-                    Key::Char(c) if picker.filter.is_empty() && picker.action(c).is_some() => {
-                        match picker.action(c) {
-                            Some("new") => self.new_session_from_picker(tx),
-                            Some("rename") => {
+                    // A Ctrl key runs the row action the footer names. Letters never
+                    // do: they always type into the filter.
+                    Key::Ctrl(c) if picker.action(c).is_some() => {
+                        match picker.action(c).unwrap_or_default() {
+                            // `new` opens a provider config under a free name, through the
+                            // same `provider add` path the command uses.
+                            "new" if picker.kind == PickKind::Provider => {
+                                let mut name = "new".to_string();
+                                let mut count = 2;
+                                while crate::providers::Provider::parse(&name).is_ok()
+                                    || self.cfg.named.iter().any(|p| p.name == name)
+                                {
+                                    name = format!("new-{count}");
+                                    count += 1;
+                                }
+                                self.dirty = true;
+                                self.run_command(&format!("provider add {name}"), tx);
+                                return;
+                            }
+                            "new" => self.new_session_from_picker(tx),
+                            "rename" => {
                                 if let Some(choice) = picker.selected() {
                                     let id = choice.value.clone();
                                     self.pending = Some(Pending::Prompt {
@@ -6080,20 +6041,20 @@ impl App {
                                     });
                                 }
                             }
-                            Some("add") => {
+                            "add" => {
                                 self.pending = Some(Pending::AllowRule { value: String::new() });
                             }
-                            Some("configure") => {
+                            "configure" => {
                                 if let Some(choice) = picker.selected().cloned() {
                                     self.configure_provider(&choice.value);
                                 }
                             }
-                            Some("use") => {
+                            "use" => {
                                 if let Some(choice) = picker.selected().cloned() {
                                     self.use_provider(&choice.value, tx);
                                 }
                             }
-                            Some("allow") => {
+                            "allow" => {
                                 if let Some(choice) = picker.selected() {
                                     let shape = choice.value.trim_start_matches("asked:").to_string();
                                     self.save_rule(&shape, tx);
@@ -6102,7 +6063,7 @@ impl App {
                                 }
                                 self.pending = Some(Pending::Pick(picker));
                             }
-                            Some("revoke") => {
+                            "revoke" => {
                                 if let Some(choice) = picker.selected() {
                                     let value = choice.value.clone();
                                     let shape = value.trim_start_matches("allow:").to_string();
@@ -6122,7 +6083,28 @@ impl App {
                                     self.pending = Some(Pending::Pick(picker));
                                 }
                             }
-                            Some("delete") => {
+                            // A provider is deleted at once; a built-in cannot be
+                            // deleted, only switched off with space.
+                            "delete" if picker.kind == PickKind::Provider => {
+                                if let Some(choice) = picker.selected().cloned() {
+                                    let name = choice.value;
+                                    if self.cfg.named.iter().any(|n| n.name == name) {
+                                        self.cfg.named.retain(|n| n.name != name);
+                                        match crate::config::save_named(&self.config_path, &self.cfg.named) {
+                                            Ok(()) => {
+                                                if self.cfg.active_name == name {
+                                                    let _ = self.cfg.set_active("deepseek");
+                                                }
+                                                self.toast(format!("deleted {name}"));
+                                            }
+                                            Err(e) => self.push(Role::Error, e),
+                                        }
+                                    } else {
+                                        self.toast(format!("{name} is built in; switch it off with space"));
+                                    }
+                                }
+                            }
+                            "delete" => {
                                 if let Some(choice) = picker.selected() {
                                     let id = choice.value.clone();
                                     let title = crate::store::Log::list(&self.sessions_dir)
@@ -6151,7 +6133,7 @@ impl App {
                         return;
                     }
                     // The provider list is short, so its letters are keys, not a filter.
-                    Key::Char(c) if picker.kind != PickKind::Provider => picker.filter_push(c),
+                    Key::Char(c) => picker.filter_push(c),
                     Key::Tab if picker.kind == PickKind::Command => {
                         if let Some(choice) = picker.selected() {
                             let word = choice.value.trim_start_matches('/').to_string();
@@ -7190,9 +7172,9 @@ impl App {
         // The title row: the filter, or the title as a placeholder, at the left;
         // the row actions, the position, and `esc` at the right.
         let mut right_parts: Vec<String> = Vec::new();
-        let hints = picker.hints();
-        if !hints.is_empty() {
-            right_parts.push(hints);
+        let note = picker.note();
+        if !note.is_empty() {
+            right_parts.push(note);
         }
         if !position.is_empty() {
             right_parts.push(position);
@@ -7230,8 +7212,14 @@ impl App {
             };
             block.push(row);
         }
-        // A blank padding row below the item rows, painted with the panel.
-        block.push(" ".repeat(width));
+        // The bottom row: the footer bar when the picker has row actions, else a
+        // blank padding row. Either way the box keeps its height.
+        let actions = picker.row_actions();
+        let footer = self.footer_bar(&actions, inner);
+        block.push(match &footer {
+            Some((bar, _)) => bar.clone(),
+            None => " ".repeat(width),
+        });
         let mut out = String::new();
         for (i, line) in block.iter().enumerate() {
             out.push_str(&format!("\x1b[{};{}H{}", y + i, x, self.palette.panel(line)));
@@ -7249,9 +7237,15 @@ impl App {
                     targets.push((y + 3 + row, x, x + inner - 1, Target::Row(*at)));
                 }
             }
-            // The title row's keys are clickable: `esc`, and any row action.
+            // The title row's keys are clickable: `esc`. The footer's actions
+            // replay their Ctrl keys.
             let start = (x + inner).saturating_sub(right_w + 1);
             targets.extend(footer_targets(y + 1, start, &right));
+            if let Some((_, spans)) = &footer {
+                for (from, to, key) in spans {
+                    targets.push((y + 3 + window, x + from, x + to, Target::Key(Key::Ctrl(*key))));
+                }
+            }
         }
         Some((out, cursor, y + 1, targets))
     }
@@ -7295,6 +7289,40 @@ impl App {
             targets.push((y + row, 1, cols, Target::Row(*at)));
         }
         Some((out, 0, 0, targets))
+    }
+
+    /// The footer bar of a picker's row actions, as a row `inner` wide: the
+    /// first action at the left, the rest at the right in order, each as its
+    /// name and its Ctrl key with the key muted. Also returns each action's
+    /// clickable span as box columns and its key, or `None` without actions.
+    fn footer_bar(&self, actions: &[(char, &'static str)], inner: usize) -> Option<(String, Vec<(usize, usize, char)>)> {
+        let (first, rest) = actions.split_first()?;
+        let indent = 3;
+        let plain = |(key, label): &(char, &str)| format!("{label} ctrl+{key}");
+        let paint = |(key, label): &(char, &str)| format!("{label} {}", self.palette.paint(Role::Thinking, &format!("ctrl+{key}")));
+        let left_plain = plain(first);
+        let left_w = left_plain.chars().count();
+        let mut spans = vec![(indent, indent + left_w - 1, first.0)];
+        // The bar keeps one column of gap and one at the right. A narrow box drops
+        // whole actions from the end, so no name is cut.
+        let room = inner.saturating_sub(indent + left_w + 2);
+        let width_of = |list: &[(char, &str)]| list.iter().map(|a| plain(a).chars().count()).sum::<usize>() + 3 * list.len().saturating_sub(1);
+        let mut kept = rest.len();
+        while kept > 0 && width_of(&rest[..kept]) > room {
+            kept -= 1;
+        }
+        let shown = &rest[..kept];
+        let right_w = width_of(shown);
+        let mut col = inner.saturating_sub(right_w + 1);
+        for action in shown {
+            let w = plain(action).chars().count();
+            spans.push((col, col + w - 1, action.0));
+            col += w + 3;
+        }
+        let right: Vec<String> = shown.iter().map(|a| paint(a)).collect();
+        let gap = inner.saturating_sub(indent + left_w + right_w + 1);
+        let line = format!("{}{}{}{} ", " ".repeat(indent), paint(first), " ".repeat(gap), right.join(" · "));
+        Some((line, spans))
     }
 
     /// Fit one row of text to the interior width and pad it with spaces.
