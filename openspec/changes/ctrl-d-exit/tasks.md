@@ -9,7 +9,7 @@
 - [x] 1.1 Test: with text in the composer, Ctrl+D exits at once and the draft is discarded. Confirm it fails before the change.
 - [x] 1.2 Test: with a picker open, Ctrl+D exits and runs no row action.
 - [x] 1.3 Test: with a confirmation open, Ctrl+D exits.
-- [ ] 1.4 Test: Ctrl+X runs the highlighted session's delete action in the session picker, and Ctrl+D no longer does.
+- [x] 1.4 Test: Ctrl+X runs the highlighted session's delete action in the session picker, and Ctrl+D no longer does.
 
 ## 2. Implement
 
