@@ -262,6 +262,7 @@ pub fn schema() -> Vec<Value> {
         json!({"type":"function","function":{"name":"search","description":"Search the web; results are summaries with URLs. Read a page with fetch.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search"]},"query":{"type":"string"},"count":{"type":"integer"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"memory","description":"Search stored notes, or save a new one.","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","save"]},"query":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}},"required":["op"]}}}),
         json!({"type":"function","function":{"name":"skill_load","description":"Load the full instructions of a skill by name.","parameters":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}}),
+        json!({"type":"function","function":{"name":"goal","description":"Propose a goal for the user to confirm. It runs in rounds only after the user says yes; if the user says no, it is dropped.","parameters":{"type":"object","properties":{"operation":{"type":"string","enum":["set"]},"text":{"type":"string"}},"required":["operation","text"]}}}),
         json!({"type":"function","function":{"name":"ask","description":"Ask only when blocked on a decision. Prefer an ordered questions array, each with a short header and two to six described choices or free text; multiple selections are allowed. Recommend an option first. Batch results contain arrays of exact chosen labels; legacy single-question calls return a string.","parameters":{"type":"object","properties":{"questions":{"type":"array","minItems":1,"items":{"type":"object","properties":{"header":{"type":"string","description":"Short question label."},"question":{"type":"string"},"options":{"type":"array","minItems":2,"maxItems":6,"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label"]}},"multiple":{"type":"boolean"}},"required":["question"]}},"question":{"type":"string","description":"Legacy single-question form."},"options":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label"]}},"multiple":{"type":"boolean"}}}}}),
     ]
 }
@@ -1639,6 +1640,25 @@ impl Session {
                     other => (false, format!("refused: unknown memory op {other}")),
                 }
             }
+            "goal" => {
+                // The agent proposes; the user confirms. Nothing runs until a yes.
+                if args.get("operation").and_then(Value::as_str) != Some("set") {
+                    return (false, "refused: the goal tool supports only operation \"set\"".into());
+                }
+                let text = args.get("text").and_then(Value::as_str).unwrap_or("").trim().to_string();
+                if text.is_empty() {
+                    return (false, "refused: the goal text is empty".into());
+                }
+                if self.goal.is_some() {
+                    return (false, "refused: a goal is already set; the user must clear it first".into());
+                }
+                if hooks.confirm(&format!("set this goal: {text}?")) {
+                    self.start_goal(&text);
+                    (true, format!("goal confirmed; it runs in rounds after this reply: {text}"))
+                } else {
+                    (false, "the user declined the goal; do not set it again unless the user asks".into())
+                }
+            }
             "skill_load" => {
                 let name = args.get("name").and_then(Value::as_str).unwrap_or("");
                 match self.skills.iter().find(|s| s.name == name) {
@@ -2133,6 +2153,43 @@ mod tests {
         fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
             None
         }
+    }
+
+    /// Answers every confirmation with a fixed choice, for the goal tool.
+    struct Answer2(bool);
+    impl Hooks for Answer2 {
+        fn ui(&mut self, _: Ui) {}
+        fn confirm(&mut self, _: &str) -> bool {
+            self.0
+        }
+        fn ask(&mut self, _: &str, _: &[String]) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_goal_the_user_confirms_starts_round_one() {
+        let mut s = session(crate::config::Config::default());
+        let (ok, _) = s.run_tool("goal", &json!({"operation": "set", "text": "ship the parser"}), &mut Answer2(true));
+        assert!(ok, "the confirmed goal was refused");
+        let goal = s.goal.as_ref().expect("no goal was set");
+        assert_eq!((goal.text.as_str(), goal.round), ("ship the parser", 1));
+    }
+
+    #[test]
+    fn a_goal_the_user_declines_is_dropped_and_the_agent_is_told() {
+        let mut s = session(crate::config::Config::default());
+        let (ok, out) = s.run_tool("goal", &json!({"operation": "set", "text": "ship"}), &mut Answer2(false));
+        assert!(!ok, "a declined goal reported success");
+        assert!(s.goal.is_none(), "a declined goal was kept");
+        assert!(out.contains("declined"), "the agent was not told: {out}");
+    }
+
+    #[test]
+    fn the_agent_cannot_start_rounds_without_a_confirmed_goal() {
+        let mut s = session(crate::config::Config::default());
+        let _ = s.run_tool("goal", &json!({"operation": "set", "text": "ship"}), &mut Answer2(false));
+        assert!(s.goal_next().is_err(), "a round started for a declined goal");
     }
 
     fn session(cfg: crate::config::Config) -> Session {
