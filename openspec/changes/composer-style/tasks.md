@@ -28,7 +28,7 @@
 
 ## 6. Command menu
 
-- [ ] 6.1 Draw the slash menu above the composer block at full width, with no title row and no footer; the highlight keeps the select background.
+- [x] 6.1 Draw the slash menu above the composer block at full width, with no title row and no footer; the highlight keeps the select background.
 
 ## 7. Existing tests and validation
 
